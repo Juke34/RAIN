@@ -162,11 +162,15 @@ workflow {
             "--read_type ${params.read_type}",
             "--aligner ${params.aligner}",
         )
-        ALIGNMENT.out.output // The results folder
-        .map { dir -> file( dir.resolve("alignment_results/alignment/hisat2/*.bam"), checkIfExists: true ) } // The relative path to the sample sheet from `results/`
-        .set { aline_alignments } // Name the channel
-        aline_alignments.view()
+        ALIGNMENT.out.output
+            .map { dir -> 
+                files("$dir/alignment/*/*.bam", checkIfExists: true)  // Find BAM files inside the output directory
+            }
+            .flatten()  // Ensure we emit each file separately
+            .map { bam -> tuple(bam.baseName, bam) }  // Convert each BAM file into a tuple, with the base name as the first element
+            .set { aline_alignments }  // Store the channel
         
+        // aline_alignments.view()
         rain(aline_alignments)
 }
 
