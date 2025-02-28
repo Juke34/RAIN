@@ -13,6 +13,7 @@ RUN conda init ${SHELL} \
 RUN git clone --depth=1 https://github.com/BioinfoUNIBA/REDItools2.git reditools2
 RUN chmod +x reditools2/src/cineca/reditools.py
 RUN ln -n reditools2/src/cineca/reditools.py /usr/bin/reditools.py
+RUN ln -n reditools2/src/cineca/parallel_reditools.py /usr/bin/parallel_reditools.py
 
 RUN echo "conda activate myenv" >> ~/.bashrc
 
