@@ -1,0 +1,6 @@
+.nextflow/
+pipeline_report/
+work/*
+result/*
+data/*
+*nextflow.log*
