@@ -11,6 +11,7 @@ process AliNe {
     val genome       
     val read_type
     val aligner
+    val library_type
 
     when:
     task.ext.when == null || task.ext.when
@@ -28,6 +29,7 @@ process AliNe {
             genome,
             read_type,
             aligner,
+            library_type,
             "--outdir $task.workDir/results",
     ]
     // Copy command to shell script in work dir for reference/debugging.
