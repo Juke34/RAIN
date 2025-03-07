@@ -4,3 +4,4 @@ work/*
 result/*
 data/*
 *nextflow.log*
+.DS_Store
