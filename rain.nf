@@ -12,6 +12,7 @@ import java.nio.file.*
 // Input/output params
 params.reads = "/path/to/reads_{1,2}.fastq.gz/or/folder"
 params.genome = "/path/to/genome.fa"
+params.region = "chr21"
 params.outdir = "result"
 params.reads_extension = ".fastq.gz" // Extension used to detect reads in folder
 params.paired_reads_pattern = "_{1,2}"
@@ -114,7 +115,9 @@ include {fastqc as fastqc_raw; fastqc as fastqc_ali; fastqc as fastqc_dup; fastq
 include {hisat2_index; hisat2} from './modules/hisat2.nf'
 include {gatk_markduplicates } from './modules/gatk.nf'
 include {multiqc} from './modules/multiqc.nf' 
-include {samtools_sam_to_bam; samtools_sort} from './modules/samtools.nf' 
+include {samtools_sam_to_bam; samtools_sort; samtools_index; samtools_fasta_index} from './modules/samtools.nf'
+include {reditools2} from "./modules/reditools2.nf"
+include {jacusa2} from "./modules/jacusa2.nf"
 
 //*************************************************
 // STEP 3 - Deal with parameters
@@ -161,6 +164,7 @@ workflow {
             "--genome ${params.genome}",
             "--read_type ${params.read_type}",
             "--aligner ${params.aligner}",
+            "--library_type ${params.library_type}"
         )
         ALIGNMENT.out.output
             .map { dir -> 
@@ -198,6 +202,13 @@ workflow rain {
         // stat on bam with overlap clipped
         fastqc_clip(bamutil_clipoverlap.out.tuple_sample_clipoverbam, "clip")
         logs.concat(fastqc_clip.out).set{logs} // save log
+        // index bam
+        samtools_index(bamutil_clipoverlap.out.tuple_sample_clipoverbam)
         // report with multiqc
-        multiqc(logs.collect(),params.multiqc_config)
+        // multiqc(logs.collect(),params.multiqc_config)
+        // Detect RNA editing with reditools2
+        reditools2(samtools_index.out.tuple_sample_bam_bamindex, params.genome, params.region)
+        // Create a fasta index file of the reference genome
+        samtools_fasta_index(params.genome)
+        jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex)
 }
