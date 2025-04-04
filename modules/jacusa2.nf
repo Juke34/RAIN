@@ -13,6 +13,6 @@ process jacusa2 {
 
     script:
     """
-    java -jar /usr/local/bin/JACUSA_v2.0.4.jar call-1 -a D -f V -p 4 -r jacusa_out.txt -c 1 -s -R ${genome} ${bam}
+    java -jar /usr/local/bin/JACUSA_v2.0.4.jar call-1 -a D -f V -p ${task.cpus} -r jacusa_out.txt -c 1 -s -R ${genome} ${bam}
     """
 }
