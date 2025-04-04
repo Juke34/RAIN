@@ -16,13 +16,14 @@ params.region = "chr21"
 params.outdir = "result"
 params.reads_extension = ".fastq.gz" // Extension used to detect reads in folder
 params.paired_reads_pattern = "_{1,2}"
+params.aline_profiles = ""
 
 // Read feature params
 read_type_allowed = [ 'short_paired', 'short_single', 'pacbio', 'ont' ]
 params.read_type = "short_paired" // short_paired, short_single, pacbio, ont
 
 // Aligner params
-align_tools = ['hisat2']
+align_tools = ['hisat2', "STAR"]
 params.aligner = 'hisat2'
 params.bowtie2_options = ''
 params.hisat2_options = ''
@@ -158,8 +159,9 @@ workflow {
         main:
 
         ALIGNMENT (
-            'Juke34/AliNe -r v1.1.0',         // Select pipeline
+            'Juke34/AliNe -r v1.1.1',         // Select pipeline
             "-profile ${workflow.profile}",   // workflow opts supplied as params for flexibility
+            "-c ${params.aline_profiles}",
             "--reads ${params.reads}",
             "--genome ${params.genome}",
             "--read_type ${params.read_type}",
