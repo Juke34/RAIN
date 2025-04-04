@@ -1,0 +1,2 @@
+#!/usr/bin/env sh
+nextflow run rain.nf -profile docker --aline_profiles "/home/earx/IRDInternship/rain/config/ressources/custom_aline.config" --aligner STAR --reads /home/earx/IRDInternship/RNAEditingDatasets/data/simulated/reads/chr21_small_R1.fastq.gz --genome /home/earx/IRDInternship/RNAEditingDatasets/data/reference/Homo_sapiens/chr21.fasta --library_type "ISR" --read_type short_single -resume
