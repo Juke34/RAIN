@@ -12,6 +12,6 @@ process reditools2 {
 
     script:
     """
-    reditools.py -f ${bam} -r ${genome} -o serial_table.txt
+    reditools.py -f ${bam} -r ${genome} -S -o serial_table.txt
     """
 }
