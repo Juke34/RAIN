@@ -12,15 +12,22 @@ import java.nio.file.*
 // Input/output params
 params.reads = "/path/to/reads_{1,2}.fastq.gz/or/folder"
 params.genome = "/path/to/genome.fa"
-params.region = "chr21"
 params.outdir = "result"
 params.reads_extension = ".fastq.gz" // Extension used to detect reads in folder
 params.paired_reads_pattern = "_{1,2}"
-params.aline_profiles = ""
+
+
+/* Specific AliNe params (some are shared with RAIN)*/
 
 // Read feature params
 read_type_allowed = [ 'short_paired', 'short_single', 'pacbio', 'ont' ]
 params.read_type = "short_paired" // short_paired, short_single, pacbio, ont
+params.library_type = "auto" // can be 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' - see https://github.com/Juke34/AliNe for more information
+// Aline profiles
+aline_profile_allowed = [ 'docker', 'singularity', 'local', 'itrop' ]
+
+// Aline ressource config used
+params.aline_profiles = "$baseDir/config/ressources/custom_aline.config" // e.g. "docker, singularity,itrop,local"
 
 // Aligner params
 align_tools = ['hisat2', "STAR"]
@@ -28,6 +35,9 @@ params.aligner = 'hisat2'
 params.bowtie2_options = ''
 params.hisat2_options = ''
 params.star_options = ''
+
+/* Specific tool params */
+params.region = "" // e.g. chr21 - Used to limit the analysis to a specific region by REDITOOLS2 
 
 // Report params
 params.multiqc_config = "$baseDir/config/multiqc_conf.yml"
@@ -90,14 +100,17 @@ log.info """
 
 General Parameters
      genome                     : ${params.genome}
+     annotation                 : ${params.annotation}
      reads                      : ${params.reads}
-     read_type                 : ${params.read_type}
+     read_type                  : ${params.read_type}
      outdir                     : ${params.outdir}
   
 Alignment Parameters
- hisat2 parameters
-     hisat2_options             : ${params.hisat2_options}
-
+ aline_profiles                 : ${params.aline_profiles}
+     aligner                    : ${params.aligner}
+     library_type               : ${params.library_type}
+     paired_reads_pattern       : ${params.paired_reads_pattern}
+     reads_extension            : ${params.reads_extension}
 
 Report Parameters
  MultiQC parameters
@@ -113,10 +126,9 @@ include { AliNe as ALIGNMENT } from "./modules/aline.nf"
 include {bamutil_clipoverlap} from './modules/bamutil.nf'
 include {fastp} from './modules/fastp.nf'
 include {fastqc as fastqc_raw; fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from './modules/fastqc.nf'
-include {hisat2_index; hisat2} from './modules/hisat2.nf'
 include {gatk_markduplicates } from './modules/gatk.nf'
 include {multiqc} from './modules/multiqc.nf' 
-include {samtools_sam_to_bam; samtools_sort; samtools_index; samtools_fasta_index} from './modules/samtools.nf'
+include {samtools_index; samtools_fasta_index} from './modules/samtools.nf'
 include {reditools2} from "./modules/reditools2.nf"
 include {jacusa2} from "./modules/jacusa2.nf"
 
@@ -143,13 +155,22 @@ if( !params.aligner ){
     }
 }
 
-// check profile
+// check RAIN profile - /!\ profile must be sync with AliNe profile as much as possible
 if (
     workflow.profile.contains('singularity') ||
     workflow.profile.contains('docker')
   ) { "executer selected" }
 else { exit 1, "No executer selected: -profile docker/singularity"}
 
+// check AliNE profile
+def aline_profile_list=[]
+str_list = workflow.profile.tokenize(',')
+str_list.each {
+    if ( it in aline_profile_allowed ){
+         aline_profile_list.add(it)
+    }
+}
+def aline_profile = aline_profile_list.join(',')
 
 //*************************************************
 // STEP 4 -  Workflow
@@ -159,9 +180,9 @@ workflow {
         main:
 
         ALIGNMENT (
-            'Juke34/AliNe -r v1.1.1',         // Select pipeline
-            "-profile ${workflow.profile}",   // workflow opts supplied as params for flexibility
-            "-c ${params.aline_profiles}",
+            'Juke34/AliNe -r v1.3.0',         // Select pipeline
+            "-profile ${aline_profile}",   // workflow opts supplied as params for flexibility
+            "-config ${params.aline_profiles}",
             "--reads ${params.reads}",
             "--genome ${params.genome}",
             "--read_type ${params.read_type}",
