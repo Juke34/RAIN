@@ -7,7 +7,7 @@ process AliNe {
     input:
     val pipeline_name     // String
     val profile     // String
-    val c
+    val config
     val reads       
     val genome       
     val read_type
@@ -26,7 +26,7 @@ process AliNe {
         'nextflow run',
             pipeline_name,
             profile,
-            c,
+            config,
             reads,
             genome,
             read_type,
