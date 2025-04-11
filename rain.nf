@@ -37,7 +37,7 @@ params.hisat2_options = ''
 params.star_options = ''
 
 /* Specific tool params */
-params.region = "" // e.g. chr21 - Used to limit the analysis to a specific region by REDITOOLS2 
+params.region = "" // e.g. chr21 - Used to limit the analysis to a specific region by REDITOOLS2
 
 // Report params
 params.multiqc_config = "$baseDir/config/multiqc_conf.yml"
@@ -104,7 +104,7 @@ General Parameters
      reads                      : ${params.reads}
      read_type                  : ${params.read_type}
      outdir                     : ${params.outdir}
-  
+
 Alignment Parameters
  aline_profiles                 : ${params.aline_profiles}
      aligner                    : ${params.aligner}
@@ -127,7 +127,7 @@ include {bamutil_clipoverlap} from './modules/bamutil.nf'
 include {fastp} from './modules/fastp.nf'
 include {fastqc as fastqc_raw; fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from './modules/fastqc.nf'
 include {gatk_markduplicates } from './modules/gatk.nf'
-include {multiqc} from './modules/multiqc.nf' 
+include {multiqc} from './modules/multiqc.nf'
 include {samtools_index; samtools_fasta_index} from './modules/samtools.nf'
 include {reditools2} from "./modules/reditools2.nf"
 include {jacusa2} from "./modules/jacusa2.nf"
@@ -180,23 +180,24 @@ workflow {
         main:
 
         ALIGNMENT (
-            'Juke34/AliNe -r v1.3.0',         // Select pipeline
-            "-profile ${aline_profile}",   // workflow opts supplied as params for flexibility
+            'Juke34/AliNe -r v1.3.0', // Select pipeline
+            "${workflow.resume?'-resume':''} -profile ${aline_profile}", // workflow opts supplied as params for flexibility
             "-config ${params.aline_profiles}",
             "--reads ${params.reads}",
             "--genome ${params.genome}",
             "--read_type ${params.read_type}",
             "--aligner ${params.aligner}",
-            "--library_type ${params.library_type}"
+            "--library_type ${params.library_type}",
+            workflow.workDir.resolve('Juke34/AliNe').toUriString()
         )
         ALIGNMENT.out.output
-            .map { dir -> 
+            .map { dir ->
                 files("$dir/alignment/*/*.bam", checkIfExists: true)  // Find BAM files inside the output directory
             }
             .flatten()  // Ensure we emit each file separately
             .map { bam -> tuple(bam.baseName, bam) }  // Convert each BAM file into a tuple, with the base name as the first element
             .set { aline_alignments }  // Store the channel
-        
+
         // aline_alignments.view()
         rain(aline_alignments)
 }
@@ -210,7 +211,7 @@ workflow rain {
 
         // STEP 1 QC with fastp ?
         Channel.empty().set{logs}
- 
+
         // stat on aligned reads
         fastqc_ali(tuple_sample_sortedbam, "ali")
         logs.concat(fastqc_ali.out).set{logs} // save log
