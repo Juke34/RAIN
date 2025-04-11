@@ -131,6 +131,7 @@ include {multiqc} from './modules/multiqc.nf'
 include {samtools_index; samtools_fasta_index} from './modules/samtools.nf'
 include {reditools2} from "./modules/reditools2.nf"
 include {jacusa2} from "./modules/jacusa2.nf"
+include {sapin} from "./modules/sapin.nf"
 
 //*************************************************
 // STEP 3 - Deal with parameters
@@ -234,4 +235,5 @@ workflow rain {
         // Create a fasta index file of the reference genome
         samtools_fasta_index(params.genome)
         jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex)
+        sapin(bamutil_clipoverlap.out.tuple_sample_clipoverbam, params.genome)
 }
