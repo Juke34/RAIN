@@ -128,6 +128,7 @@ include {fastp} from './modules/fastp.nf'
 include {fastqc as fastqc_raw; fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from './modules/fastqc.nf'
 include {gatk_markduplicates } from './modules/gatk.nf'
 include {multiqc} from './modules/multiqc.nf'
+include {fasta_uncompress} from "$baseDir/modules/pigz.nf"
 include {samtools_index; samtools_fasta_index} from './modules/samtools.nf'
 include {reditools2} from "./modules/reditools2.nf"
 include {jacusa2} from "./modules/jacusa2.nf"
@@ -180,12 +181,21 @@ def aline_profile = aline_profile_list.join(',')
 workflow {
         main:
 
+        // check if genome exists
+        Channel.fromPath(params.genome, checkIfExists: true)
+            .ifEmpty { exit 1, "Cannot find genome matching ${params.genome}!\n" }
+            .set{genome_raw}
+        // uncompress it if needed
+        fasta_uncompress(genome_raw)
+        fasta_uncompress.out.genomeFa.set{genome_ch} // set genome to the output of fasta_uncompress
+
+
         ALIGNMENT (
             'Juke34/AliNe -r v1.3.0', // Select pipeline
             "${workflow.resume?'-resume':''} -profile ${aline_profile}", // workflow opts supplied as params for flexibility
             "-config ${params.aline_profiles}",
             "--reads ${params.reads}",
-            "--genome ${params.genome}",
+            genome_ch,
             "--read_type ${params.read_type}",
             "--aligner ${params.aligner}",
             "--library_type ${params.library_type}",
@@ -200,13 +210,14 @@ workflow {
             .set { aline_alignments }  // Store the channel
 
         // aline_alignments.view()
-        rain(aline_alignments)
+        rain(aline_alignments, genome_ch)
 }
 
 workflow rain {
 
     take:
         tuple_sample_sortedbam
+        genome
 
     main:
 
@@ -232,9 +243,9 @@ workflow rain {
         // report with multiqc
         // multiqc(logs.collect(),params.multiqc_config)
         // Detect RNA editing with reditools2
-        reditools2(samtools_index.out.tuple_sample_bam_bamindex, params.genome, params.region)
+        reditools2(samtools_index.out.tuple_sample_bam_bamindex, genome, params.region)
         // Create a fasta index file of the reference genome
-        samtools_fasta_index(params.genome)
+        samtools_fasta_index(genome)
         jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex)
-        sapin(bamutil_clipoverlap.out.tuple_sample_clipoverbam, params.genome)
+        sapin(bamutil_clipoverlap.out.tuple_sample_clipoverbam, genome)
 }
