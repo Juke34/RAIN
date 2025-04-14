@@ -22,6 +22,10 @@ jobs:
           - /var/run/docker.sock:/var/run/docker.sock:ro
           
     steps:
+
+      - name: Get the code
+        uses: actions/checkout@v3
+        
       # Install/cache OpenJDK
       - name: Cache OpenJDK
         id: cache-openjdk
