@@ -30,7 +30,7 @@ process AliNe {
                 profile,
                 config,
                 reads,
-                genome,
+                "--genome ${genome}",
                 read_type,
                 aligner,
                 library_type,
