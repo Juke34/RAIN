@@ -50,7 +50,7 @@ jobs:
             ${{ runner.os }}-nextflow
       - name: Install Nextflow
         if: ${{ steps.cache-nextflow.outputs.cache-hit != 'true' }}
-        run: bash .github/workflows/install_nextflow_v24.10.5.sh && mv nextflow /usr/local/bin && chmod +x /usr/local/bin/nextflow
+        run: bash .github/workflows/install_nextflow_v24.10.5.sh && ls && mv nextflow /usr/local/bin && chmod +x /usr/local/bin/nextflow
 
       # Build/cache containers
       - name: Cache containers
