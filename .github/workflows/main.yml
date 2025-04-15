@@ -45,6 +45,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: /usr/local/bin/nextflow
+          key: ${{ runner.os }}-nextflow
           restore-keys: |
             ${{ runner.os }}-nextflow
       - name: Install Nextflow
@@ -56,6 +57,7 @@ jobs:
         id: cache-containers
         uses: actions/cache@v3
         with:
+          key: ${{ runner.os }}-containers
           path: /var/lib/docker/overlay2
           restore-keys: |
             ${{ runner.os }}-containers
