@@ -12,6 +12,7 @@ import java.nio.file.*
 // Input/output params
 params.reads = "/path/to/reads_{1,2}.fastq.gz/or/folder"
 params.genome = "/path/to/genome.fa"
+params.annotation = "/path/to/annotations.gff3"
 params.outdir = "result"
 params.reads_extension = ".fastq.gz" // Extension used to detect reads in folder
 params.paired_reads_pattern = "_{1,2}"
@@ -80,6 +81,9 @@ def helpMSG() {
     --reads                     path to the illumina read file (fastq or fastq.gz) (default: $params.reads)
     --genome                    path to the genome (default: $params.genome)
 
+        Annotation input:
+    --annotation                path to a GFF3 file with annotations of genomic features
+
         Output:
     --output                    path to the output directory (default: $params.outdir)
 
@@ -133,6 +137,7 @@ include {samtools_index; samtools_fasta_index} from './modules/samtools.nf'
 include {reditools2} from "./modules/reditools2.nf"
 include {jacusa2} from "./modules/jacusa2.nf"
 include {sapin} from "./modules/sapin.nf"
+include {normalize_gxf} from "./modules/agat.nf"
 
 //*************************************************
 // STEP 3 - Deal with parameters
@@ -248,4 +253,5 @@ workflow rain {
         samtools_fasta_index(genome)
         jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex)
         sapin(bamutil_clipoverlap.out.tuple_sample_clipoverbam, genome)
+        normalize_gxf(params.annotation)
 }
