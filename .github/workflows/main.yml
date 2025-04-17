@@ -24,12 +24,12 @@ jobs:
     steps:
 
       - name: Get the code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         
       # Install/cache OpenJDK
       - name: Cache OpenJDK
         id: cache-openjdk
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: /usr/lib/jvm/java-11-openjdk-amd64
           key: ${{ runner.os }}-openjdk-11
@@ -42,7 +42,7 @@ jobs:
       # Install/cache Nextflow
       - name: Cache Nextflow
         id: cache-nextflow
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: /usr/local/bin/nextflow
           key: ${{ runner.os }}-nextflow
@@ -53,11 +53,11 @@ jobs:
         run: cat .github/workflows/install_nextflow_v24.10.5.sh | bash && mv nextflow /usr/local/bin && chmod +x /usr/local/bin/nextflow
         
       # Check-out the repo under $GITHUB_WORKSPACE so that the job can access it
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       # Build/cache containers
       - name: Set up Docker Buildx
-        uses: docker/setup-build-action@v3
+        uses: docker/setup-buildx-action@v3
 
       - name: Cache Docker layers
         uses: actions/cache@v4
