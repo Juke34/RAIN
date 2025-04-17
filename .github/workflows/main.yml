@@ -51,22 +51,24 @@ jobs:
       - name: Install Nextflow
         if: ${{ steps.cache-nextflow.outputs.cache-hit != 'true' }}
         run: cat .github/workflows/install_nextflow_v24.10.5.sh | bash && mv nextflow /usr/local/bin && chmod +x /usr/local/bin/nextflow
-
-      # Build/cache containers
-      - name: Cache containers
-        id: cache-containers
-        uses: actions/cache@v3
-        with:
-          key: ${{ runner.os }}-containers
-          path: /var/lib/docker/overlay2
-          restore-keys: |
-            ${{ runner.os }}-containers
-      - name: Build Containers
-        if: ${{ steps.cache-containers.outputs.cache-hit != 'true'}}
-        run: bash build_all.sh
-
+        
       # Check-out the repo under $GITHUB_WORKSPACE so that the job can access it
       - uses: actions/checkout@v3
+
+      # Build/cache containers
+      - name: Set up Docker Buildx
+        uses: docker/setup-build-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Build images
+        run: bash build_all.sh github_action
 
       # Run test(s)
       - name: test short single
