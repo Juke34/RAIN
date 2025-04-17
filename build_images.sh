@@ -17,13 +17,13 @@ docker_arch_option=""
 wd=$(pwd)
 
 # list of image names
-image_list=()
+image_list=( )
 
 for dir in docker/*
 do 
     cd ${dir}
     imgname=$(echo $dir | rev | cut -d/ -f1 | rev)
-    image_list+=($imgname)
+    image_list+=(${imgname})
 
     echo ██████████████████▓▒░   Building ${imgname}   ░▒▓██████████████████
     
@@ -43,6 +43,6 @@ done
 
 if [[ ${build_mode} == 'github_action' ]]; then
     echo "Saving docker images to cache..."
-    docker save ${image_list} -o docker-images.tar
+    docker save ${image_list[@]} -o docker-images.tar
     echo Archive size: $(stat --printf="%s" docker-images.tar)
 fi
