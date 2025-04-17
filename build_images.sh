@@ -1,5 +1,11 @@
 #!/usr/bin/env sh
 
+# Run this script with the argument "github_action" in order to save images in an archive for caching
+# Pass no arguments to run the script in "normal" build mode suitable for a local machine
+
+# Read first argument as the "build mode"
+# The build is used, for instance, for special build commands
+# for Github actions.
 build_mode=$1
 
 # get architecture
@@ -29,13 +35,7 @@ do
         fi
     fi
 
-    # Check "github_action" mode to enable cache
     docker build ${docker_arch_option} -t ${imgname} .
-    # if [[ ${build_mode} == 'github_action' ]]; then
-    #     echo ℹ️ == Building in github_action mode ==ℹ️
-    #     docker buildx build --cache-from type=local,src=/tmp/.buildx-cache --cache-to type=local,dest=/tmp/.buildx-cache --load ${docker_arch_option} -t ${imgname} .
-    # else
-    # fi
     
     # back to the original working directory
     cd $wd
@@ -44,5 +44,4 @@ done
 if [[ ${build_mode} == 'github_action' ]]; then
     echo "Saving docker images to cache..."
     docker save ${image_list} -o docker-images.tar
-    pwd
 fi
