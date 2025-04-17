@@ -60,10 +60,6 @@ jobs:
       # Check-out the repo under $GITHUB_WORKSPACE so that the job can access it
       - uses: actions/checkout@v4
 
-      # Build/cache containers
-      # - name: Set up Docker Buildx
-        # uses: docker/setup-buildx-action@v3
-
       - name: Cache Dockerfiles and TAR
         uses: actions/cache@v4
         id: cache-dockerfiles
@@ -78,7 +74,7 @@ jobs:
       - name: Load cached Docker images
         id: load-cache
         run: |
-          if [ -f /home/runner/work/rain/rain/docker-images.tar ]; then
+          if [ -f docker-images.tar ]; then
             echo "Loading cached Docker images..."
             docker load -i docker-images.tar || true
             echo "build=false" >> $GITHUB_ENV
