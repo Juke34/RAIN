@@ -26,6 +26,7 @@ do
 
     # Check "github_action" mode to enable cache
     if [[ ${build_mode} == 'github_action' ]]; then
+        echo ℹ️ Building in github_action mode.
         docker buildx build --cache-from type=local,src=/tmp/.buildx-cache --cache-to type=local,dest=/tmp/.buildx-cache ${docker_arch_option} -t ${imgname} .
     else
         docker build ${docker_arch_option} -t ${imgname} .
