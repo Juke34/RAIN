@@ -1,18 +1,17 @@
-process convert_sp_gxf2gxf {
+process normalize_gxf {
     label 'agat'
-    tag "$sample_id"
-    publishDir "${params.outdir}/bamutil_clipoverlap", mode: 'copy'
+    publishDir "${params.outdir}/agat_gff3", mode: 'copy'
 
     input:
         path(gxf)
 
     output:
-        path ("*.gff"), emit: gff
+        path ("*.gff3"), emit: gff
 
     script:
-        gff_file = genome_fasta.baseName.replaceAll(/\..+(\.gz)?$/, '')
+        base_name = gxf.baseName.replaceAll(/\..+(\.gz)?$/, '')
         """
-        agat_convert_sp_gxf2gxf.pl --gxf ${gxf} -o ${gff_file}.gff3
+        agat config --expose --tabix
+        agat_convert_sp_gxf2gxf.pl --gxf ${gxf} -o ${base_name}_normalized.gff3
         """
-
 }

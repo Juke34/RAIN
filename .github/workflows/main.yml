@@ -1,0 +1,78 @@
+name: CI
+on: [push, pull_request, workflow_dispatch]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  test_rain:
+
+    # Avoid running twice for a push + PR
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+    
+    runs-on: ubuntu-24.04
+    
+    services:
+      docker:
+        image: docker:dind
+        options: --privileged --shm-size=2g
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock:ro
+          
+    steps:
+
+      - name: Get the code
+        uses: actions/checkout@v3
+        
+      # Install/cache OpenJDK
+      - name: Cache OpenJDK
+        id: cache-openjdk
+        uses: actions/cache@v3
+        with:
+          path: /usr/lib/jvm/java-11-openjdk-amd64
+          key: ${{ runner.os }}-openjdk-11
+          restore-keys: |
+            ${{ runner.os }}-openjdk-11
+      - name: Install OpenJDK
+        if: ${{ steps.cache-openjdk.outputs.cache-hit != 'true' }}
+        run: sudo apt-get install openjdk-11-jdk
+
+      # Install/cache Nextflow
+      - name: Cache Nextflow
+        id: cache-nextflow
+        uses: actions/cache@v3
+        with:
+          path: /usr/local/bin/nextflow
+          key: ${{ runner.os }}-nextflow
+          restore-keys: |
+            ${{ runner.os }}-nextflow
+      - name: Install Nextflow
+        if: ${{ steps.cache-nextflow.outputs.cache-hit != 'true' }}
+        run: cat .github/workflows/install_nextflow_v24.10.5.sh | bash && mv nextflow /usr/local/bin && chmod +x /usr/local/bin/nextflow
+
+      # Build/cache containers
+      - name: Cache containers
+        id: cache-containers
+        uses: actions/cache@v3
+        with:
+          key: ${{ runner.os }}-containers
+          path: /var/lib/docker/overlay2
+          restore-keys: |
+            ${{ runner.os }}-containers
+      - name: Build Containers
+        if: ${{ steps.cache-containers.outputs.cache-hit != 'true'}}
+        run: bash build_all.sh
+
+      # Check-out the repo under $GITHUB_WORKSPACE so that the job can access it
+      - uses: actions/checkout@v3
+
+      # Run test(s)
+      - name: test short single
+        run: nextflow run rain.nf -profile docker,test
+
+      - name: test short paired
+        run: nextflow run rain.nf -profile docker,test2
+
+
