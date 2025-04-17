@@ -66,8 +66,6 @@ jobs:
         with:
           path: docker-images.tar
           key: ${{ runner.os }}-dockerfiles-${{ hashFiles('docker/*') }}
-          restore-keys: |
-            ${{ runner.os }}-dockerfiles-
 
       - name: Load cached Docker images
         id: load-cache
