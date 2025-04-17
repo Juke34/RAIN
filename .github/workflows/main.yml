@@ -61,13 +61,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Cache Dockerfiles and TAR
-        uses: actions/cache@v4
         id: cache-dockerfiles
+        uses: actions/cache@v4
         with:
-          path: |
-            docker/*/Dockerfile
-            docker-images.tar
-          key: ${{ runner.os }}-dockerfiles-${{ hashFiles('docker/*/Dockerfile') }}
+          path: docker-images.tar
+          key: ${{ runner.os }}-dockerfiles-${{ hashFiles('docker/*') }}
           restore-keys: |
             ${{ runner.os }}-dockerfiles-
 
