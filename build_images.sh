@@ -44,4 +44,5 @@ done
 if [[ ${build_mode} == 'github_action' ]]; then
     echo "Saving docker images to cache..."
     docker save ${image_list} -o docker-images.tar
+    echo Archive size: $(stat --printf="%s" docker-images.tar)
 fi
