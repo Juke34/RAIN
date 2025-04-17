@@ -73,7 +73,7 @@ jobs:
             ${{ runner.os }}-buildx-
 
       - name: Build images
-        run: bash build_all.sh github_action
+        run: bash build_images.sh github_action
 
       # Run test(s)
       - name: test short single
