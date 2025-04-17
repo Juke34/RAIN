@@ -1,5 +1,7 @@
 #!/usr/bin/env sh
 
+build_mode=$1
+
 # get architecture
 arch=$(uname -m)
 # set architecture to docker buildx
@@ -11,6 +13,8 @@ for dir in docker/*
 do 
     cd ${dir}
     imgname=$(echo $dir | rev | cut -d/ -f1 | rev)
+
+    echo ██████████████████▓▒░   Building ${imgname}   ░▒▓██████████████████
     
     # Reditools2 does not compile on arm64, force using amd64 compilation
     if [[ $dir =~ "reditools2" ]];then
@@ -19,8 +23,13 @@ do
             docker_arch_option=" --platform linux/amd64"
         fi
     fi
-    
-    docker build ${docker_arch_option} -t ${imgname} .
+
+    # Check "github_action" mode to enable cache
+    if [[ ${build_mode} == 'github_action' ]]; then
+        docker buildx build --cache-from type=local,src=/tmp/.buildx-cache --cache-to type=local,dest=/tmp/.buildx-cache ${docker_arch_option} -t ${imgname} .
+    else
+        docker build ${docker_arch_option} -t ${imgname} .
+    fi
     
     # back to the original working directory
     cd $wd
