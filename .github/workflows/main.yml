@@ -64,12 +64,13 @@ jobs:
       # - name: Set up Docker Buildx
         # uses: docker/setup-buildx-action@v3
 
-      - name: Cache Dockerfiles
+      - name: Cache Dockerfiles and TAR
         uses: actions/cache@v4
         id: cache-dockerfiles
         with:
           path: |
             docker/*/Dockerfile
+            docker-images.tar
           key: ${{ runner.os }}-dockerfiles-${{ hashFiles('docker/*/Dockerfile') }}
           restore-keys: |
             ${{ runner.os }}-dockerfiles-
