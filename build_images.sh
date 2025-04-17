@@ -9,10 +9,15 @@ docker_arch_option=""
 
 # save original working directory
 wd=$(pwd)
+
+# list of image names
+image_list=()
+
 for dir in docker/*
 do 
     cd ${dir}
     imgname=$(echo $dir | rev | cut -d/ -f1 | rev)
+    image_list+=($imgname)
 
     echo ██████████████████▓▒░   Building ${imgname}   ░▒▓██████████████████
     
@@ -25,13 +30,18 @@ do
     fi
 
     # Check "github_action" mode to enable cache
-    if [[ ${build_mode} == 'github_action' ]]; then
-        echo ℹ️ == Building in github_action mode ==ℹ️
-        docker buildx build --cache-from type=local,src=/tmp/.buildx-cache --cache-to type=local,dest=/tmp/.buildx-cache --load ${docker_arch_option} -t ${imgname} .
-    else
-        docker build ${docker_arch_option} -t ${imgname} .
-    fi
+    docker build ${docker_arch_option} -t ${imgname} .
+    # if [[ ${build_mode} == 'github_action' ]]; then
+    #     echo ℹ️ == Building in github_action mode ==ℹ️
+    #     docker buildx build --cache-from type=local,src=/tmp/.buildx-cache --cache-to type=local,dest=/tmp/.buildx-cache --load ${docker_arch_option} -t ${imgname} .
+    # else
+    # fi
     
     # back to the original working directory
     cd $wd
 done
+
+if [[ ${build_mode} == 'github_action' ]]; then
+    echo "Saving docker images to cache..."
+    docker save ${image_list} -o docker-images.tar
+fi

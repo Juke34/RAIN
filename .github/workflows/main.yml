@@ -61,18 +61,33 @@ jobs:
       - uses: actions/checkout@v4
 
       # Build/cache containers
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      # - name: Set up Docker Buildx
+        # uses: docker/setup-buildx-action@v3
 
-      - name: Cache Docker layers
+      - name: Cache Dockerfiles
         uses: actions/cache@v4
+        id: cache-dockerfiles
         with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          path: |
+            docker/*/Dockerfile
+          key: ${{ runner.os }}-dockerfiles-${{ hashFiles('docker/*/Dockerfile') }}
           restore-keys: |
-            ${{ runner.os }}-buildx-
+            ${{ runner.os }}-dockerfiles-
+
+      - name: Load cached Docker images
+        id: load-cache
+        run: |
+          if [ -f docker-images.tar ]; then
+            echo "Loading cached Docker images..."
+            docker load -i docker-images.tar || true
+            echo "build=false" >> $GITHUB_ENV
+          else
+            echo "No Docker cache found"
+            echo "build=true" >> $GITHUB_ENV
+          fi
 
       - name: Build images
+        if: env.build == 'true' || steps.cache-dockerfiles.outputs.cache-hit != 'true'
         run: bash build_images.sh github_action
 
       # Run test(s)
