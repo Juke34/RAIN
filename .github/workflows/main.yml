@@ -78,7 +78,7 @@ jobs:
       - name: Load cached Docker images
         id: load-cache
         run: |
-          if [ -f docker-images.tar ]; then
+          if [ -f /home/runner/work/rain/rain/docker-images.tar ]; then
             echo "Loading cached Docker images..."
             docker load -i docker-images.tar || true
             echo "build=false" >> $GITHUB_ENV
