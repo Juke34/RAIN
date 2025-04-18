@@ -65,7 +65,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: docker-images.tar
-          key: ${{ runner.os }}-dockerfiles-${{ hashFiles('docker/*') }}
+          key: ${{ runner.os }}-dockerfiles-${{ hashFiles('docker/**/*') }}
 
       - name: Load cached Docker images
         id: load-cache
