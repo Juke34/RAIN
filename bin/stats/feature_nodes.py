@@ -18,7 +18,7 @@ class FeatureNode:
         """Add a child node"""
         if self == child:
             raise Exception(
-                "Attempted to link node \"{self.identifier}\" to itself"
+                f"Attempted to link node \"{self.identifier}\" to itself"
             )
 
         if self.region != child.region:
