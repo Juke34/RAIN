@@ -63,11 +63,11 @@ class FeatureNode:
         s = ''
         if not self.is_outer():
             s += '('
-            first_child = True
+            subsequent = False
             for child in self.children:
-                s += first_child * ','
+                s += subsequent * ','
                 s += child._newick()
-                first_child = False
+                subsequent = True
             
             s += ')'
 
