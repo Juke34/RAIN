@@ -1,8 +1,9 @@
-import typing
 import numpy as np
 from enum import IntEnum, auto
+from dataclasses import dataclass
+from numpy.typing import NDArray
+from typing import TextIO
 from utils import SiteVariantData
-
 
 class ReditoolsFields(IntEnum):
     REGION = 0
@@ -32,9 +33,8 @@ class ReditoolsReader:
         "gFrequency",
     )
 
-    def __init__(self, file: str) -> None:
-        self.data_state: SiteVariantData = SiteVariantData()
-        self.file_handle: typing.TextIO = open(file)
+    def __init__(self, file_handle: TextIO) -> None:
+        self.file_handle: TextIO = file_handle
 
         line = self.file_handle.readline()
         if line == "":
@@ -49,7 +49,7 @@ class ReditoolsReader:
         return None
 
     def _get_parts(self, line: str) -> None:
-        self.parts: list[str] = line.split("\t")
+        self.parts: list[str] = [s.strip() for s in line.split("\t")]
 
     def _validate_header(self) -> None:
         l1 = len(self.header_strings)
@@ -60,7 +60,7 @@ class ReditoolsReader:
                 f"The header of the input file contains {l2} fields instead of {l1} fields."
             )
 
-        for a, b in zip(self.header_strings, self.source_parts):
+        for a, b in zip(self.header_strings, self.parts):
             if a != b:
                 raise Exception(
                     f'Unexpected field name "{b}" in the header of the input file (expected "{a}")'
@@ -69,16 +69,25 @@ class ReditoolsReader:
         return None
 
     def _parse_parts(self) -> SiteVariantData:
+        strand = np.int32(self.parts[ReditoolsFields.STRAND])
+        match strand:
+            case 1:
+                strand = 1
+            case 2:
+                strand = -1
+            case _:
+                raise Exception(f"Invalid strand value: {strand}")
+        
         return SiteVariantData(
             region=self.parts[ReditoolsFields.REGION],
-            position=np.int64(self.parts.POSITION),
+            position=np.int64(self.parts[ReditoolsFields.POSITION]),
             reference=self.parts[ReditoolsFields.REFERENCE],
-            strand=np.int32(self.parts[ReditoolsFields.STRAND]),
+            strand=strand,
             coverage=np.float32(self.parts[ReditoolsFields.COVERAGE]),
             mean_quality=np.float32(self.parts[ReditoolsFields.MEANQ]),
             frequencies=np.array(
                 [
-                    np.float32(x)
+                    np.int32(x)
                     for x in self.parts[ReditoolsFields.FREQUENCIES][1:-1].split(",")
                 ]
             ),
@@ -86,7 +95,7 @@ class ReditoolsReader:
 
     def read(self) -> SiteVariantData | None:
         """Read the data of the next variant site"""
-        line = self.file_handle.read()
+        line = self.file_handle.readline()
 
         if line == "":
             # End of file reached
@@ -95,3 +104,8 @@ class ReditoolsReader:
         self._get_parts(line)
 
         return self._parse_parts()
+    
+    def close(self):
+        """Close the file"""
+        self.file_handle.close()
+    
