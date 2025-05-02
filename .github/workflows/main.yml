@@ -1,5 +1,10 @@
 name: CI
-on: [push, pull_request, workflow_dispatch]
+on: 
+  push:
+    branches:
+      - "main"
+  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -24,12 +29,12 @@ jobs:
     steps:
 
       - name: Get the code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         
       # Install/cache OpenJDK
       - name: Cache OpenJDK
         id: cache-openjdk
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: /usr/lib/jvm/java-11-openjdk-amd64
           key: ${{ runner.os }}-openjdk-11
@@ -42,7 +47,7 @@ jobs:
       # Install/cache Nextflow
       - name: Cache Nextflow
         id: cache-nextflow
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: /usr/local/bin/nextflow
           key: ${{ runner.os }}-nextflow
@@ -51,22 +56,32 @@ jobs:
       - name: Install Nextflow
         if: ${{ steps.cache-nextflow.outputs.cache-hit != 'true' }}
         run: cat .github/workflows/install_nextflow_v24.10.5.sh | bash && mv nextflow /usr/local/bin && chmod +x /usr/local/bin/nextflow
-
-      # Build/cache containers
-      - name: Cache containers
-        id: cache-containers
-        uses: actions/cache@v3
-        with:
-          key: ${{ runner.os }}-containers
-          path: /var/lib/docker/overlay2
-          restore-keys: |
-            ${{ runner.os }}-containers
-      - name: Build Containers
-        if: ${{ steps.cache-containers.outputs.cache-hit != 'true'}}
-        run: bash build_all.sh
-
+        
       # Check-out the repo under $GITHUB_WORKSPACE so that the job can access it
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+
+      - name: Cache Dockerfiles and TAR
+        id: cache-dockerfiles
+        uses: actions/cache@v4
+        with:
+          path: docker-images.tar
+          key: ${{ runner.os }}-dockerfiles-${{ hashFiles('docker/**/*') }}
+
+      - name: Load cached Docker images
+        id: load-cache
+        run: |
+          if [ -f docker-images.tar ]; then
+            echo "Loading cached Docker images..."
+            docker load -i docker-images.tar || true
+            echo "build=false" >> $GITHUB_ENV
+          else
+            echo "No Docker cache found"
+            echo "build=true" >> $GITHUB_ENV
+          fi
+
+      - name: Build images
+        if: env.build == 'true' || steps.cache-dockerfiles.outputs.cache-hit != 'true'
+        run: bash build_images.sh github_action
 
       # Run test(s)
       - name: test short single
