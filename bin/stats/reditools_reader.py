@@ -1,12 +1,12 @@
 import numpy as np
 from enum import IntEnum, auto
-from dataclasses import dataclass
 from numpy.typing import NDArray
-from typing import TextIO
-from utils import SiteVariantData
+from typing import TextIO, Optional
+from utils import SiteVariantData, NUC_CODE
+from abc import ABC, abstractmethod
 
 class ReditoolsFields(IntEnum):
-    REGION = 0
+    SEQID = 0
     POSITION = auto()
     REFERENCE = auto()
     STRAND = auto()
@@ -15,7 +15,51 @@ class ReditoolsFields(IntEnum):
     FREQUENCIES = auto()
 
 
-class ReditoolsReader:
+class RNAVariantReader(ABC):
+    """Abstract class defining the API for readers"""
+
+    @abstractmethod
+    def __init__(self, file_handle: TextIO):
+        pass
+
+    @abstractmethod
+    def read(self) -> Optional[SiteVariantData]:
+        pass
+
+    @abstractmethod
+    def close(self) -> None:
+        pass
+
+
+class TestReader(RNAVariantReader):
+    def __init__(self, file_handle: TextIO):
+        self.nsites: int = sum(1 for _ in file_handle) - 1
+        self.position: int = 1
+        self.frequencies: NDArray[np.int32] = np.zeros(4, dtype=np.int32)
+        self.frequencies[NUC_CODE['C']] = np.int32(1)
+
+    def read(self) -> Optional[SiteVariantData]:
+        if self.position <= 999603:
+            data = SiteVariantData(
+                seqid="test",
+                position=self.position,
+                reference='A',
+                strand=np.int32(1),
+                coverage=np.int32(1.0),
+                mean_quality=np.float32(30.0),
+                frequencies=self.frequencies
+            )
+            self.position += 1
+
+            return data
+        else:
+            return None
+        
+    def close(self) -> None:
+        pass
+
+
+class ReditoolsReader(RNAVariantReader):
     header_strings = (
         "Region",
         "Position",
@@ -79,11 +123,11 @@ class ReditoolsReader:
                 raise Exception(f"Invalid strand value: {strand}")
         
         return SiteVariantData(
-            region=self.parts[ReditoolsFields.REGION],
+            seqid=self.parts[ReditoolsFields.SEQID],
             position=np.int64(self.parts[ReditoolsFields.POSITION]),
             reference=self.parts[ReditoolsFields.REFERENCE],
             strand=strand,
-            coverage=np.float32(self.parts[ReditoolsFields.COVERAGE]),
+            coverage=np.int32(self.parts[ReditoolsFields.COVERAGE]),
             mean_quality=np.float32(self.parts[ReditoolsFields.MEANQ]),
             frequencies=np.array(
                 [
