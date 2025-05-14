@@ -11,6 +11,9 @@ process reditools2 {
     tuple(val(sample), path("edit_table.txt"), emit: tuple_sample_serial_table)
 
     script:
+
+    // Set the strand orientation parameter from the library type parameter
+    // Terms explained in https://salmon.readthedocs.io/en/latest/library_type.html
     if (params.library_type in ["ISR", "SR"]) {
         // First-strand oriented
         strand_orientation = "2"
@@ -25,6 +28,7 @@ process reditools2 {
         // the reditools error message
         strand_orientation = params.library_type
     }
+    
     """
     reditools.py -f ${bam} -r ${genome} -s ${strand_orientation} -o edit_table.txt
     """
