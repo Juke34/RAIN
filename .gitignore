@@ -3,4 +3,5 @@ pipeline_report/
 work/*
 result/*
 *nextflow.log*
+**/__pycache__/
 .DS_Store
