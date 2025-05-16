@@ -195,28 +195,16 @@ def write_base_array(output_handle: TextIO, x: NDArray) -> int:
     return output_handle.write(",".join(str(value) for value in x))
 
 def write_edit_array(output_handle: TextIO, x: NDArray) -> int:
-    if x.dtype == np.float64:
-        return output_handle.write(
+    return output_handle.write(
+        ",".join(
             ",".join(
-                ",".join(
-                    # Skip indices where i == j, because they don't represent editions
-                    f"{x[i, j]:.3f}" 
-                    for j in filter(lambda j: j != i, range(4))
-                )
-                for i in range(4)
+                # Skip indices where i == j, because they don't represent editions
+                str(x[i, j])
+                for j in filter(lambda j: j != i, range(4))
             )
+            for i in range(4)
         )
-    else:
-        return output_handle.write(
-            ",".join(
-                ",".join(
-                    # Skip indices where i == j, because they don't represent editions
-                    str(x[i, j])
-                    for j in filter(lambda j: j != i, range(4))
-                )
-                for i in range(4)
-            )
-        )
+    )
 
 
 class FeatureGroupManager:
@@ -251,6 +239,11 @@ class FeatureGroupManager:
         return None
 
     def add_root(self, feature: SeqRecord) -> None:
+        try:
+            self.roots[0].id == feature.id
+        except Exception:
+            print(f"Cannot add feature with id {feature.id} to the roots of feature group manager with id {self.roots[0].id}")
+
         self.roots.append(feature)
         self.init_children(feature)
 
@@ -294,6 +287,8 @@ class FeatureGroupManager:
 
 
 class ManagedFeature(NamedTuple):
+    """Wrapper for keeping the association between a feature and its feature group manager
+    """
     feature: SeqFeature
     manager: FeatureGroupManager
 
