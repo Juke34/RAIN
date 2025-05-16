@@ -133,12 +133,8 @@ class MultiCounter:
     def report(self, output_handle: TextIO) -> int:
         b = 0
 
-        # Write sums of base coverages
-        b += write_base_array(output_handle, self.ref_coverage_by_base_type)
-        output_handle.write("\t")
-
-        # Write edit frequencies
-        b += write_edit_array(output_handle, self.edit_read_freqs)
+        # Write the number of covered sites
+        b += output_handle.write(str(self.ref_base_freqs.sum()))
         output_handle.write("\t")
 
         # Write reference base frequencies
@@ -147,6 +143,14 @@ class MultiCounter:
 
         # Write edited sites
         b += write_edit_array(output_handle, self.edit_site_freqs)
+        output_handle.write("\t")
+
+        # Write sums of base coverages
+        b += write_base_array(output_handle, self.ref_coverage_by_base_type)
+        output_handle.write("\t")
+
+        # Write edit frequencies
+        b += write_edit_array(output_handle, self.edit_read_freqs)
         output_handle.write("\t")
 
         # Write proportion of edited reads
@@ -445,17 +449,17 @@ class RecordManager:
         skipped: int = 0
 
         self.output_handle.write(
-            "SeqID\tFeatureID\tType\tStrand\t"
-            + "RefCov["
-            + ",".join(BASE_TYPES)
-            + "]"
-            + "\tEditReads["
-            + ",".join(EDIT_TYPES)
-            + "]"
+            "SeqID\tFeatureID\tType\tStrand\tCoveredSites"
             + "\tRefBaseFreqs["
             + ",".join(BASE_TYPES)
             + "]"
             + "\tEditSites["
+            + ",".join(EDIT_TYPES)
+            + "]"
+            + "\tRefCov["
+            + ",".join(BASE_TYPES)
+            + "]"
+            + "\tEditReads["
             + ",".join(EDIT_TYPES)
             + "]"
             + "\tPropEditReads["
