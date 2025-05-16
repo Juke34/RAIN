@@ -1,25 +1,17 @@
 import numpy as np
-from enum import IntEnum, auto
 from numpy.typing import NDArray
 from typing import TextIO, Optional
-from utils import SiteVariantData, NUC_CODE
+from utils import SiteVariantData, NUC_STR_TO_IND, EDIT_TYPES, NONEDIT_TYPES
 from abc import ABC, abstractmethod
 
-class ReditoolsFields(IntEnum):
-    SEQID = 0
-    POSITION = auto()
-    REFERENCE = auto()
-    STRAND = auto()
-    COVERAGE = auto()
-    MEANQ = auto()
-    FREQUENCIES = auto()
-
+REDITOOLS_FIELDS = ["Seqid", "Position", "Reference", "Strand", "Coverage", "MeanQ", "Frequencies"]
+REDITOOLS_FIELD_INDEX = {field: i for i, field in  enumerate(REDITOOLS_FIELDS)}
 
 class RNAVariantReader(ABC):
     """Abstract class defining the API for readers"""
 
     @abstractmethod
-    def __init__(self, file_handle: TextIO):
+    def __init__(self, file_handle: TextIO) -> None:
         pass
 
     @abstractmethod
@@ -32,28 +24,35 @@ class RNAVariantReader(ABC):
 
 
 class TestReader(RNAVariantReader):
-    def __init__(self, file_handle: TextIO):
-        self.nsites: int = sum(1 for _ in file_handle) - 1
-        self.position: int = 1
+    def __init__(self, strand: int, edit: str) -> None:
+        """Create a TestReader that returns SiteVariantData objects with only one read for one type of edition.
+        Arguments:
+        - strand: Strand of the simulated features
+        - edit: Kind of edit (or non-edit) to simulate. Examples: AA, AC, AG, AT, CC, CA. 
+        """
+        self.position: int = 0
+        self.strand:int = strand
+        assert edit in EDIT_TYPES + NONEDIT_TYPES
+        self.reference: int = NUC_STR_TO_IND[edit[0]]
+        self.edited: str = edit[1]
         self.frequencies: NDArray[np.int32] = np.zeros(4, dtype=np.int32)
-        self.frequencies[NUC_CODE['C']] = np.int32(1)
+        self.frequencies[NUC_STR_TO_IND[self.edited]] = 1
+
+        return None
 
     def read(self) -> Optional[SiteVariantData]:
-        if self.position <= 999603:
-            data = SiteVariantData(
-                seqid="test",
-                position=self.position,
-                reference='A',
-                strand=np.int32(1),
-                coverage=np.int32(1.0),
-                mean_quality=np.float32(30.0),
-                frequencies=self.frequencies
-            )
-            self.position += 1
+        data = SiteVariantData(
+            seqid="test",
+            position=self.position,
+            reference=self.reference,
+            strand=self.strand,
+            coverage=1,
+            mean_quality=30.0,
+            frequencies=self.frequencies
+        )
+        self.position += 1
 
-            return data
-        else:
-            return None
+        return data
         
     def close(self) -> None:
         pass
@@ -95,6 +94,8 @@ class ReditoolsReader(RNAVariantReader):
     def _get_parts(self, line: str) -> None:
         self.parts: list[str] = [s.strip() for s in line.split("\t")]
 
+        return None
+
     def _validate_header(self) -> None:
         l1 = len(self.header_strings)
         l2 = len(self.parts)
@@ -113,31 +114,30 @@ class ReditoolsReader(RNAVariantReader):
         return None
 
     def _parse_parts(self) -> SiteVariantData:
-        strand = np.int32(self.parts[ReditoolsFields.STRAND])
+        strand = int(self.parts[REDITOOLS_FIELD_INDEX["Strand"]])
         match strand:
+            case 0:
+                strand = -1
             case 1:
                 strand = 1
             case 2:
-                strand = -1
+                strand = 0
             case _:
                 raise Exception(f"Invalid strand value: {strand}")
+            
+        reference_nuc_str: str = self.parts[REDITOOLS_FIELD_INDEX["Reference"]]
         
         return SiteVariantData(
-            seqid=self.parts[ReditoolsFields.SEQID],
-            position=np.int64(self.parts[ReditoolsFields.POSITION]),
-            reference=self.parts[ReditoolsFields.REFERENCE],
+            seqid=self.parts[REDITOOLS_FIELD_INDEX["Seqid"]],
+            position=int(self.parts[REDITOOLS_FIELD_INDEX["Position"]]) - 1,    # Convert Reditools 1-based index to Python's 0-based index
+            reference=NUC_STR_TO_IND[reference_nuc_str],
             strand=strand,
-            coverage=np.int32(self.parts[ReditoolsFields.COVERAGE]),
-            mean_quality=np.float32(self.parts[ReditoolsFields.MEANQ]),
-            frequencies=np.array(
-                [
-                    np.int32(x)
-                    for x in self.parts[ReditoolsFields.FREQUENCIES][1:-1].split(",")
-                ]
-            ),
+            coverage=int(self.parts[REDITOOLS_FIELD_INDEX["Coverage"]]),
+            mean_quality=float(self.parts[REDITOOLS_FIELD_INDEX["MeanQ"]]),
+            frequencies=np.int32(self.parts[REDITOOLS_FIELD_INDEX["Frequencies"]][1:-1].split(","))
         )
 
-    def read(self) -> SiteVariantData | None:
+    def read(self) -> Optional[SiteVariantData]:
         """Read the data of the next variant site"""
         line = self.file_handle.readline()
 
@@ -149,7 +149,7 @@ class ReditoolsReader(RNAVariantReader):
 
         return self._parse_parts()
     
-    def close(self):
+    def close(self) -> None:
         """Close the file"""
         self.file_handle.close()
     

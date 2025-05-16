@@ -1,25 +1,39 @@
 import numpy as np
-import enum
 from numpy.typing import NDArray
 from dataclasses import dataclass
-from frozendict import frozendict
+import itertools
 
-class NucCode(enum.IntEnum):
-    A = 0
-    C = 1
-    G = 2
-    T = 3
+BASE_TYPES = ["A", "C", "G", "T"]
 
+# Map bases to indices for use in many arrays
+NUC_STR_TO_IND = dict(A=0, C=1, G=2, T=3)
 
-NUC_CODE = frozendict(A=0, C=1, G=2, T=3)
+# Map bases to their complement
+NUC_COMPLEMENT = dict(A="T", C="G", G="C", T="A")
 
+# Generator of possible base edits types, sorted alphabetically
+EDIT_TYPES = list((
+    "".join(pair)
+    for pair in itertools.permutations(BASE_TYPES, 2)
+))
+
+# Possible base non-edits, sorted alphabetically
+NONEDIT_TYPES = ["AA", "CC", "GG", "TT"]
+
+def only(collection):
+    """Unwrap the item from a collection that should contain a single item.
+    """
+    assert len(collection) == 1
+
+    for item in collection:
+        return item
 
 @dataclass(frozen=True, slots=True)
 class SiteVariantData:
     seqid: str
-    position: np.int64
-    reference: str
-    strand: np.int32
-    coverage: np.int32
-    mean_quality: np.float32
+    position: int
+    reference: int
+    strand: int
+    coverage: int
+    mean_quality: float
     frequencies: NDArray[np.int32]
