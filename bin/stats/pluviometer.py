@@ -7,16 +7,16 @@
 #####################
 
 from BCBio import GFF
-from Bio import SeqIO, SeqRecord
+from Bio.SeqRecord import SeqRecord
 from Bio.SeqFeature import SeqFeature
 import numpy as np
 from numpy.typing import NDArray
-from typing import TextIO, NamedTuple, Optional
-from site_variant_readers import RNAVariantReader, ReditoolsReader, TestReader
+from typing import TextIO, NamedTuple, Optional, Generator
+from site_variant_readers import RNAVariantReader, ReditoolsReader
 import argparse
 from contextlib import nullcontext
 import sys
-from utils import SiteVariantData, BASE_TYPES, NUC_STR_TO_IND, EDIT_TYPES
+from utils import SiteVariantData, BASE_TYPES, EDIT_TYPES
 from collections import deque
 import progressbar
 import math
@@ -30,7 +30,6 @@ def parse_cli_input() -> argparse.Namespace:
     parser.add_argument(
         "--gff", "-g", type=str, required=True, help="Reference genome annotations (GFF3 file)"
     )
-    parser.add_argument("--ref", "-r", type=str, help="Reference genome (FASTA file)")
     parser.add_argument(
         "--output",
         "-o",
@@ -42,7 +41,7 @@ def parse_cli_input() -> argparse.Namespace:
         "--format",
         "-f",
         type=str,
-        choices=["reditools", "jacusa2", "sapin", "test"],
+        choices=["reditools", "jacusa2", "sapin"],
         default="reditools",
         help="Sites file format",
     )
@@ -373,16 +372,8 @@ class RecordManager:
 
 if __name__ == "__main__":
     args = parse_cli_input()
-
-    with open(args.ref) as ref_handle:
-        ref_record_dict = SeqIO.to_dict(SeqIO.parse(ref_handle, "fasta"))
-
-    with open(args.gff) as gff_handle:
-        ref_record_dict = {
-            rec.id: rec for rec in GFF.parse(gff_handle, base_dict=ref_record_dict)
-        }
-
     with (
+        open(args.gff) as gff_handle,
         open(args.sites) as sv_handle,
         open(args.output, "w")
         if len(args.output) > 0
@@ -394,16 +385,11 @@ if __name__ == "__main__":
                 sv_reader: RNAVariantReader = ReditoolsReader(sv_handle)
             case _:
                 raise Exception(f'Unimplemented format "{args.format}"')
+            
+        records: Generator[SeqRecord, None, None] = GFF.parse(gff_handle)
 
         sv_data: SiteVariantData = sv_reader.read()
 
-        try:
-            ref_record = ref_record_dict[sv_data.seqid]
-        except Exception(
-            f'The record "{sv_data.seqid}" is not found in the reference genome'
-        ):
-            pass
-
-        for record_id, record in ref_record_dict.items():
+        for record in records:
             manager: RecordManager = RecordManager(record, output_handle)
             manager.scan_and_count(sv_reader)
