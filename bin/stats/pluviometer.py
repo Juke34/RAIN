@@ -303,7 +303,7 @@ class RecordManager:
     def __init__(self, record: SeqRecord, output_handle: TextIO):
         self.record = record
         self.pos = 0
-        self.final_pos = len(record.seq) - 1
+        self.final_pos = len(record.seq)
         self.downstream_queue: deque[ManagedFeature] = deque()
         self.active_queue: deque[ManagedFeature] = deque()
         self.next_start: int = -1
@@ -313,12 +313,10 @@ class RecordManager:
         self.output_handle = output_handle
         self.counter = MultiCounter()
 
-        self.start = record.features[0].location.start
-        self.end = record.features[0].location.end
+        self.start_pos = record.features[0].location.start
 
         for feature in record.features:
-            self.start = min(self.start, feature.location.start)
-            self.end = max(self.end, feature.location.end)
+            self.start_pos = min(self.start_pos, feature.location.start)
             if feature.id in self.feature_managers:
                 self.feature_managers[feature.id].add_root(feature)
             else:
@@ -439,7 +437,7 @@ class RecordManager:
 
     def write_total_data(self):
         b: int = 0
-        b += self.output_handle.write(f"{self.record.id}\tTOTAL\t.\t{self.start}\t{self.end}\t0\t")
+        b += self.output_handle.write(f"{self.record.id}\tTOTAL\t.\t{self.start_pos}\t{self.final_pos}\t0\t")
 
         self.counter.report(self.output_handle)
 
