@@ -4,7 +4,7 @@
 # Conventions:
 #   - Both internally and in the output, when base type information is represented in an array, the array indices follow the order ACGT
 #   - Always use explicit return
-#   - Test that collections are empty (or not) by comparing their lengths to zero
+#   - Test that collections are empty (or not) by comparing their lengths to zero (don't test "if x" as though x where False or None)
 #####################
 
 from BCBio import GFF
