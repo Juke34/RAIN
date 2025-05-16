@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 
 #####################
-# Code style:
+# Conventions:
+#   - Both internally and in the output, when base type information is represented in an array, the array indices follow the order ACGT
 #   - Always use explicit return
 #   - Test that collections are empty (or not) by comparing their lengths to zero
 #####################
@@ -23,12 +24,21 @@ import math
 
 
 def parse_cli_input() -> argparse.Namespace:
+    """Parse command line input"""
     parser = argparse.ArgumentParser(description="Rain counter")
     parser.add_argument(
-        "--sites", "-s", type=str, required=True, help="File containing per-site base alteration data"
+        "--sites",
+        "-s",
+        type=str,
+        required=True,
+        help="File containing per-site base alteration data",
     )
     parser.add_argument(
-        "--gff", "-g", type=str, required=True, help="Reference genome annotations (GFF3 file)"
+        "--gff",
+        "-g",
+        type=str,
+        required=True,
+        help="Reference genome annotations (GFF3 file)",
     )
     parser.add_argument(
         "--output",
@@ -45,37 +55,159 @@ def parse_cli_input() -> argparse.Namespace:
         default="reditools",
         help="Sites file format",
     )
+    parser.add_argument(
+        "--cov",
+        "-c",
+        type=int,
+        default=0,
+        help="Site coverage threshold for counting editions",
+    )
+    parser.add_argument(
+        "--edit_threshold",
+        "-t",
+        type=int,
+        default=1,
+        help="Minimum number of edited reads for counting a site as edited",
+    )
 
     return parser.parse_args()
 
 
+class SiteFilter:
+    def __init__(self, cov_threshold: int, edit_threshold: int) -> None:
+        self.cov_threshold: int = cov_threshold
+        self.edit_threshold: int = edit_threshold
+        self.frequencies: NDArray[np.int32] = np.zeros(4, np.int32)
+
+    def apply(self, variant_data: SiteVariantData) -> None:
+        if variant_data.coverage >= self.cov_threshold:
+            np.copyto(self.frequencies, variant_data.frequencies > self.edit_threshold)
+        else:
+            self.frequencies.fill(0)
+
+        return None
+
+
 class MultiCounter:
-    def __init__(self):
-        self.threshold: int = 1
-        self.total_sites: int = 0
-        self.base_freqs: NDArray[np.int32] = np.zeros(4, dtype=np.int32)
-        self.edit_freqs: NDArray[np.int32] = np.zeros((4, 4), dtype=np.int32)
+    """Holds the counter data and logic for a feature, feature aggregate, or record"""
 
-    def update_total_sites(self, x: int = 1) -> None:
-        self.total_sites += x
+    def __init__(self) -> None:
+        """
+        Tallies of the number of times that a read has been mapped a site in the genome with base X.
+        It is *not* the number of times a base appears in a read
+        """
+        self.ref_coverage_by_base_type: NDArray[np.int32] = np.zeros(4, dtype=np.int32)
+
+        """
+        Number of times that each base type occurs in the reference genome
+        """
+        self.ref_base_freqs: NDArray[np.int32] = np.zeros(4, dtype=np.int32)
+
+        """
+        Tallies of the numbers of reads per edit type
+        This is a numpy matrix where the rows represent the reference base and the columns the edited base
+        Rows and column indices correspond to bases in alphabetic order (ACGT)
+        Row-columns corresponding to the same base (e.g. (0,0) -> (A,A)) do not represent edits, and should remain 0
+        """
+        self.edit_read_freqs: NDArray[np.int32] = np.zeros((4, 4), dtype=np.int32)
+
+        self.edit_site_freqs: NDArray[np.int32] = np.zeros((4, 4), dtype=np.int32)
 
         return None
 
-    def update_freqs(self, variant_data: SiteVariantData) -> None:
-        self.base_freqs[variant_data.reference] += variant_data.coverage
-        self.edit_freqs[variant_data.reference, :] += variant_data.frequencies
+    def update(self, variant_data: SiteVariantData) -> None:
+        """Increment the counters from the data in a SiteVariantData object."""
+        i: int = variant_data.reference
+
+        # TODO: Decide whether to count the coverage of bases when it is below the coverage threshold used for counting edits
+        self.ref_coverage_by_base_type[i] += variant_data.coverage
+        self.ref_base_freqs[i] += variant_data.coverage > 0
+
+        self.edit_read_freqs[i, :] += variant_data.frequencies
+
+        GLOBAL_FILTER.apply(variant_data)
+        self.edit_site_freqs[i, :] += GLOBAL_FILTER.frequencies
 
         return None
     
-    def write_base_freqs(self, output_handle: TextIO) -> int:
-        return output_handle.write(",".join(str(value) for value in self.base_freqs))
-    
+    def report(self, output_handle: TextIO) -> int:
+        b = 0
+
+        # Write sums of base coverages
+        b += write_base_array(output_handle, self.ref_coverage_by_base_type)
+        output_handle.write("\t")
+
+        # Write edit frequencies
+        b += write_edit_array(output_handle, self.edit_read_freqs)
+        output_handle.write("\t")
+
+        # Write reference base frequencies
+        b += write_base_array(output_handle, self.ref_base_freqs)
+        output_handle.write("\t")
+
+        # Write edited sites
+        b += write_edit_array(output_handle, self.edit_site_freqs)
+        output_handle.write("\t")
+
+        # Write proportion of edited reads
+        b += write_edit_array(output_handle, self.compute_proportions())
+
+        return b
+
+    def write_ref_coverage_by_base(self, output_handle: TextIO) -> int:
+        """Writes out the reference base read frequencies in comma-separated format"""
+        return output_handle.write(
+            ",".join(str(value) for value in self.ref_coverage_by_base_type)
+        )
+
     def write_edit_freqs(self, output_handle: TextIO) -> int:
-        # Sorry, this begins to look like Lisp
+        """Writes the edit frequencies in a comma-separated format"""
+        # Yes, this looks like lisp
         return output_handle.write(
             ",".join(
                 ",".join(
-                    str(self.edit_freqs[i, j])
+                    # Skip indices where i == j, because they don't represent editions
+                    str(self.edit_read_freqs[i, j])
+                    for j in filter(lambda j: j != i, range(4))
+                )
+                for i in range(4)
+            )
+        )
+
+    def write_edited_sites(self, output_handle: TextIO) -> int:
+        return output_handle.write(
+            ",".join(str(value) for value in self.edit_site_freqs)
+        )
+
+    def compute_proportions(self) -> NDArray[np.float64]:
+        return np.divide(
+            self.edit_read_freqs,
+            # Add ones to bases with zero reads to avoid division by 0
+            self.ref_coverage_by_base_type + (self.ref_coverage_by_base_type == 0),
+        )
+
+
+def write_base_array(output_handle: TextIO, x: NDArray) -> int:
+    return output_handle.write(",".join(str(value) for value in x))
+
+def write_edit_array(output_handle: TextIO, x: NDArray) -> int:
+    if x.dtype == np.float64:
+        return output_handle.write(
+            ",".join(
+                ",".join(
+                    # Skip indices where i == j, because they don't represent editions
+                    f"{x[i, j]:.3f}" 
+                    for j in filter(lambda j: j != i, range(4))
+                )
+                for i in range(4)
+            )
+        )
+    else:
+        return output_handle.write(
+            ",".join(
+                ",".join(
+                    # Skip indices where i == j, because they don't represent editions
+                    str(x[i, j])
                     for j in filter(lambda j: j != i, range(4))
                 )
                 for i in range(4)
@@ -83,8 +215,14 @@ class MultiCounter:
         )
 
 
-class FeatureManager:
+class FeatureGroupManager:
+    """
+    Manages a collection of level-1 features and all their sub-features, plus the associated counters
+    A feature collection contains roots
+    """
+
     def __init__(self, root: SeqFeature, recman: "RecordManager"):
+        """Level-1 features"""
         self.roots: list[SeqFeature] = [root]
         self.counters: dict[str, MultiCounter] = dict()
         self.recman: "RecordManager" = recman
@@ -118,8 +256,7 @@ class FeatureManager:
         self, feature: SeqFeature, variant_data: SiteVariantData
     ) -> None:
         if feature.location.strand == variant_data.strand:
-            self.counters[feature.id].update_total_sites()
-            self.counters[feature.id].update_freqs(variant_data)
+            self.counters[feature.id].update(variant_data)
 
         return None
 
@@ -129,15 +266,7 @@ class FeatureManager:
             f"{self.recman.record.id}\t{feature.id}\t{feature.type}\t{feature.location.strand}\t"
         )
 
-        counter = self.counters[feature.id]
-
-        # Write base frequencies
-        b += counter.write_base_freqs(output_handle)
-        output_handle.write("\t")
-
-        # Write edit sequences
-        b += counter.write_edit_freqs(output_handle)
-
+        b += self.counters[feature.id].report(output_handle)
         b += output_handle.write("\n")
 
         return b
@@ -160,7 +289,7 @@ class FeatureManager:
 
 class ManagedFeature(NamedTuple):
     feature: SeqFeature
-    manager: FeatureManager
+    manager: FeatureGroupManager
 
 
 class QueueUpdates(NamedTuple):
@@ -179,7 +308,7 @@ class RecordManager:
         self.next_start: int = -1
         self.next_end: int = -1
         self.sorted_target_features: list[ManagedFeature] = []
-        self.feature_managers: dict[str, FeatureManager] = dict()
+        self.feature_managers: dict[str, FeatureGroupManager] = dict()
         self.output_handle = output_handle
         self.counter = MultiCounter()
 
@@ -187,7 +316,7 @@ class RecordManager:
             if feature.id in self.feature_managers:
                 self.feature_managers[feature.id].add_root(feature)
             else:
-                feature_manager = FeatureManager(feature, self)
+                feature_manager = FeatureGroupManager(feature, self)
                 self.feature_managers[feature.id] = feature_manager
 
         self.sorted_target_features.sort(
@@ -299,24 +428,15 @@ class RecordManager:
             self.progress_bar.next()
 
         return QueueUpdates(0, deactivated, skipped)
-    
+
     def write_total_data(self):
         b: int = 0
-        b += self.output_handle.write(
-            f"{self.record.id}\tTOTAL\t.\t0\t"
-        )
+        b += self.output_handle.write(f"{self.record.id}\tTOTAL\t.\t0\t")
 
-        counter = self.counter
-
-        # Write base frequencies
-        b += counter.write_base_freqs(self.output_handle)
-        self.output_handle.write("\t")
-
-        # Write edit sequences
-        b += counter.write_edit_freqs(self.output_handle)
+        self.counter.report(self.output_handle)
 
         b += self.output_handle.write("\n")
-    
+
         return b
 
     def scan_and_count(self, reader: RNAVariantReader) -> None:
@@ -326,18 +446,29 @@ class RecordManager:
 
         self.output_handle.write(
             "SeqID\tFeatureID\tType\tStrand\t"
-            + "Bases["
+            + "RefCov["
             + ",".join(BASE_TYPES)
             + "]"
-            + "\t"
-            "Edits[" + ",".join(EDIT_TYPES) + "]" + "\n"
+            + "\tEditReads["
+            + ",".join(EDIT_TYPES)
+            + "]"
+            + "\tRefBaseFreqs["
+            + ",".join(BASE_TYPES)
+            + "]"
+            + "\tEditSites["
+            + ",".join(EDIT_TYPES)
+            + "]"
+            + "\tPropEditReads["
+            + ",".join(EDIT_TYPES)
+            + "]"
+            + "\n"
         )
 
         variant_data: Optional[SiteVariantData] = reader.read()
 
         while variant_data and not self.is_finished():
             # Global tally
-            self.counter.update_freqs(variant_data)
+            self.counter.update(variant_data)
 
             # Feature tallies
             updates = self.update_queues(variant_data.position)
@@ -348,7 +479,7 @@ class RecordManager:
 
             for item in self.active_queue:
                 feature: SeqFeature = item.feature
-                manager: FeatureManager = item.manager
+                manager: FeatureGroupManager = item.manager
                 manager.update_counters(feature, variant_data)
 
             # The reader returns None when it reaches EOF, breaking the loop
@@ -385,10 +516,14 @@ if __name__ == "__main__":
                 sv_reader: RNAVariantReader = ReditoolsReader(sv_handle)
             case _:
                 raise Exception(f'Unimplemented format "{args.format}"')
-            
+
         records: Generator[SeqRecord, None, None] = GFF.parse(gff_handle)
 
         sv_data: SiteVariantData = sv_reader.read()
+
+        GLOBAL_FILTER: SiteFilter = SiteFilter(
+            cov_threshold=args.cov, edit_threshold=args.edit_threshold
+        )
 
         for record in records:
             manager: RecordManager = RecordManager(record, output_handle)
