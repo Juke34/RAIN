@@ -151,10 +151,10 @@ class MultiCounter:
 
         # Write edit frequencies
         b += write_edit_array(output_handle, self.edit_read_freqs)
-        output_handle.write("\t")
+        # output_handle.write("\t")
 
-        # Write proportion of edited reads
-        b += write_edit_array(output_handle, self.compute_proportions())
+        # # Write proportion of edited reads
+        # b += write_edit_array(output_handle, self.compute_proportions())
 
         return b
 
@@ -267,7 +267,9 @@ class FeatureGroupManager:
     def write_feature_data(self, feature, output_handle: TextIO) -> None:
         b: int = 0
         b += output_handle.write(
-            f"{self.recman.record.id}\t{feature.id}\t{feature.type}\t{feature.location.strand}\t"
+            f"{self.recman.record.id}\t{feature.id}\t{feature.type}\t" +
+            # Shift start location to GFF 1-based index
+            f"{feature.location.start + 1}\t{feature.location.end}\t{feature.location.strand}\t"
         )
 
         b += self.counters[feature.id].report(output_handle)
@@ -449,7 +451,7 @@ class RecordManager:
         skipped: int = 0
 
         self.output_handle.write(
-            "SeqID\tFeatureID\tType\tStrand\tCoveredSites"
+            "SeqID\tFeatureID\tType\tStart\tEnd\tStrand\tCoveredSites"
             + "\tRefBaseFreqs["
             + ",".join(BASE_TYPES)
             + "]"
@@ -462,9 +464,9 @@ class RecordManager:
             + "\tEditReads["
             + ",".join(EDIT_TYPES)
             + "]"
-            + "\tPropEditReads["
-            + ",".join(EDIT_TYPES)
-            + "]"
+            # + "\tPropEditReads["
+            # + ",".join(EDIT_TYPES)
+            # + "]"
             + "\n"
         )
 
