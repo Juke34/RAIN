@@ -318,7 +318,12 @@ class RecordManager:
         self.output_handle = output_handle
         self.counter = MultiCounter()
 
+        self.start = record.features[0].location.start
+        self.end = record.features[0].location.end
+
         for feature in record.features:
+            self.start = min(self.start, feature.location.start)
+            self.end = max(self.end, feature.location.end)
             if feature.id in self.feature_managers:
                 self.feature_managers[feature.id].add_root(feature)
             else:
@@ -437,7 +442,7 @@ class RecordManager:
 
     def write_total_data(self):
         b: int = 0
-        b += self.output_handle.write(f"{self.record.id}\tTOTAL\t.\t0\t")
+        b += self.output_handle.write(f"{self.record.id}\tTOTAL\t.\t{self.start}\t{self.end}\t0\t")
 
         self.counter.report(self.output_handle)
 
