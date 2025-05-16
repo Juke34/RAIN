@@ -418,6 +418,8 @@ class RecordManager:
         return QueueUpdates(activated, deactivated, skipped)
 
     def flush(self) -> QueueUpdates:
+        """Process remaining items in the queues after the reader has reached its end.
+        """
         deactivated: int = 0
         skipped: int = 0
 
@@ -445,30 +447,35 @@ class RecordManager:
 
         return b
 
-    def scan_and_count(self, reader: RNAVariantReader) -> None:
+    def scan_and_count(self, reader: RNAVariantReader, header=True) -> None:
+        """Count and write to output
+        all the site variation data of interest of the features in this record, based
+        on the variation data stream of a reader.
+        """
         activated: int = 0
         deactivated: int = 0
         skipped: int = 0
 
-        self.output_handle.write(
-            "SeqID\tFeatureID\tType\tStart\tEnd\tStrand\tCoveredSites"
-            + "\tRefBaseFreqs["
-            + ",".join(BASE_TYPES)
-            + "]"
-            + "\tEditSites["
-            + ",".join(EDIT_TYPES)
-            + "]"
-            + "\tRefCov["
-            + ",".join(BASE_TYPES)
-            + "]"
-            + "\tEditReads["
-            + ",".join(EDIT_TYPES)
-            + "]"
-            # + "\tPropEditReads["
-            # + ",".join(EDIT_TYPES)
-            # + "]"
-            + "\n"
-        )
+        if header:
+            self.output_handle.write(
+                "SeqID\tFeatureID\tType\tStart\tEnd\tStrand\tCoveredSites"
+                + "\tRefBaseFreqs["
+                + ",".join(BASE_TYPES)
+                + "]"
+                + "\tEditSites["
+                + ",".join(EDIT_TYPES)
+                + "]"
+                + "\tRefCov["
+                + ",".join(BASE_TYPES)
+                + "]"
+                + "\tEditReads["
+                + ",".join(EDIT_TYPES)
+                + "]"
+                # + "\tPropEditReads["
+                # + ",".join(EDIT_TYPES)
+                # + "]"
+                + "\n"
+            )
 
         variant_data: Optional[SiteVariantData] = reader.read()
 
@@ -533,4 +540,4 @@ if __name__ == "__main__":
 
         for record in records:
             manager: RecordManager = RecordManager(record, output_handle)
-            manager.scan_and_count(sv_reader)
+            manager.scan_and_count(sv_reader, header=True)
