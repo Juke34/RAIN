@@ -127,6 +127,7 @@ Report Parameters
 // STEP 2 - Include needed modules
 //*************************************************
 include { AliNe as ALIGNMENT } from "./modules/aline.nf"
+include { extract_libtype } from "./modules/bash.nf"
 include {bamutil_clipoverlap} from './modules/bamutil.nf'
 include {fastp} from './modules/fastp.nf'
 include {fastqc as fastqc_raw; fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from './modules/fastqc.nf'
@@ -194,9 +195,9 @@ workflow {
         fasta_uncompress(genome_raw)
         fasta_uncompress.out.genomeFa.set{genome_ch} // set genome to the output of fasta_uncompress
 
-
+        // Perform AliNe alignment
         ALIGNMENT (
-            'Juke34/AliNe -r v1.3.0', // Select pipeline
+            'Juke34/AliNe -r v1.4.0', // Select pipeline
             "${workflow.resume?'-resume':''} -profile ${aline_profile}", // workflow opts supplied as params for flexibility
             "-config ${params.aline_profiles}",
             "--reads ${params.reads}",
@@ -206,16 +207,52 @@ workflow {
             "--library_type ${params.library_type}",
             workflow.workDir.resolve('Juke34/AliNe').toUriString()
         )
+
+        // GET TUPLE [ID, BAM] FILES
         ALIGNMENT.out.output
             .map { dir ->
                 files("$dir/alignment/*/*.bam", checkIfExists: true)  // Find BAM files inside the output directory
             }
             .flatten()  // Ensure we emit each file separately
-            .map { bam -> tuple(bam.baseName, bam) }  // Convert each BAM file into a tuple, with the base name as the first element
+            .map { bam -> 
+                        def name = bam.getName().split('_seqkit')[0]  // Extract the base name of the BAM file. _seqkit is the separator.
+                        tuple(name, bam)
+                 }  // Convert each BAM file into a tuple, with the base name as the first element
             .set { aline_alignments }  // Store the channel
+        
+        if (params.library_type.contains("auto") ) {
+            log.info "Library type is set to auto, extracting it from salmon output"
+            // GET TUPLE [ID, OUTPUT_SALMON_LIBTYPE] FILES
+            ALIGNMENT.out.output
+                .map { dir ->
+                    files("$dir/salmon_libtype/*/*.json", checkIfExists: true)  // Find BAM files inside the output directory
+                }
+                .flatten()  // Ensure we emit each file separately
+                .map { json -> 
+                            def name = json.getParent().getName().split('_seqkit')[0]  // Extract the base name of the BAM file. _seqkit is the separator. The name is in the fodler containing the json file. Why take this one? Because it is the same as teh bam name set by Aline. It will be used to sync both values
+                            tuple(name, json)
+                    }  // Convert each BAM file into a tuple, with the base name as the first element
+                .set { aline_libtype }  // Store the channel
+            // Extract the library type from the JSON file
+            aline_libtype = extract_libtype(aline_libtype)
+            aline_alignments.join(aline_libtype)
+                .map { key, val1, val2 -> tuple(key, val1, val2) }
+                .set { aline_alignments_all }
+        } else {
+            log.info "Library type is set to ${params.library_type}, no need to extract it from salmon output"
+            aline_alignments_all = aline_alignments.map { name, bam -> tuple(name, bam, params.library_type) }
+        }
 
-        // aline_alignments.view()
-        rain(aline_alignments, genome_ch)
+        // transform [ID, BAM, LIBTYPE] into [[id: 'ID', libtype: 'LIBTYPE'], file('BAM')]
+        aline_alignments_all = aline_alignments_all.map { id, file, lib ->
+            def meta = [ id: id, libtype: lib ]
+            tuple(meta, file)
+        }
+        
+    aline_alignments_all.view()
+
+        // call rain
+        rain(aline_alignments_all, genome_ch)
 }
 
 workflow rain {
