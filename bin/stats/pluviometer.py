@@ -129,7 +129,7 @@ class MultiCounter:
         self.edit_site_freqs[i, :] += GLOBAL_FILTER.frequencies
 
         return None
-    
+
     def report(self, output_handle: TextIO) -> int:
         b = 0
 
@@ -194,6 +194,7 @@ class MultiCounter:
 def write_base_array(output_handle: TextIO, x: NDArray) -> int:
     return output_handle.write(",".join(str(value) for value in x))
 
+
 def write_edit_array(output_handle: TextIO, x: NDArray) -> int:
     return output_handle.write(
         ",".join(
@@ -239,10 +240,10 @@ class FeatureGroupManager:
         return None
 
     def add_root(self, feature: SeqRecord) -> None:
-        try:
-            self.roots[0].id == feature.id
-        except Exception:
-            print(f"Cannot add feature with id {feature.id} to the roots of feature group manager with id {self.roots[0].id}")
+        if self.roots[0].id != feature.id:
+            raise Exception(
+                f"Cannot add feature with id {feature.id} to the roots of feature group manager with id {self.roots[0].id}"
+            )
 
         self.roots.append(feature)
         self.init_children(feature)
@@ -260,7 +261,8 @@ class FeatureGroupManager:
     def write_feature_data(self, feature, output_handle: TextIO) -> None:
         b: int = 0
         b += output_handle.write(
-            f"{self.recman.record.id}\t{feature.id}\t{feature.type}\t" +
+            f"{self.recman.record.id}\t{feature.id}\t{feature.type}\t"
+            +
             # Shift start location to GFF 1-based index
             f"{feature.location.start + 1}\t{feature.location.end}\t{feature.location.strand}\t"
         )
@@ -287,8 +289,8 @@ class FeatureGroupManager:
 
 
 class ManagedFeature(NamedTuple):
-    """Wrapper for keeping the association between a feature and its feature group manager
-    """
+    """Wrapper for keeping the association between a feature and its feature group manager"""
+
     feature: SeqFeature
     manager: FeatureGroupManager
 
@@ -416,8 +418,7 @@ class RecordManager:
         return QueueUpdates(activated, deactivated, skipped)
 
     def flush(self) -> QueueUpdates:
-        """Process remaining items in the queues after the reader has reached its end.
-        """
+        """Process remaining items in the queues after the reader has reached its end."""
         deactivated: int = 0
         skipped: int = 0
 
@@ -437,7 +438,9 @@ class RecordManager:
 
     def write_total_data(self):
         b: int = 0
-        b += self.output_handle.write(f"{self.record.id}\tTOTAL\t.\t{self.start_pos}\t{self.final_pos}\t0\t")
+        b += self.output_handle.write(
+            f"{self.record.id}\tTOTAL\t.\t{self.start_pos}\t{self.final_pos}\t0\t"
+        )
 
         self.counter.report(self.output_handle)
 
