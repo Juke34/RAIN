@@ -10,7 +10,8 @@ import java.nio.file.*
 //*************************************************
 
 // Input/output params
-params.reads = "/path/to/reads_{1,2}.fastq.gz/or/folder"
+params.reads = null // "/path/to/reads_{1,2}.fastq.gz/or/folder"
+params.bams = null // "/path/to/reads.bam/or/folder"
 params.genome = "/path/to/genome.fa"
 params.annotation = "/path/to/annotations.gff3"
 params.outdir = "result"
@@ -43,35 +44,21 @@ params.region = "" // e.g. chr21 - Used to limit the analysis to a specific regi
 // Report params
 params.multiqc_config = "$baseDir/config/multiqc_conf.yml"
 
+// other
+params.help = null
+params.monochrome_logs = false // if true, no color in logs
+
 //*************************************************
-// STEP 1 - LOG INFO
+// STEP 1 - HELP
 //*************************************************
 
-// Header message
-log.info """
-IRD
-.-./`) .-------.     ______
-\\ .-.')|  _ _   \\   |    _ `''.
-/ `-' \\| ( ' )  |   | _ | ) _  \\
- `-'`\"`|(_ o _) /   |( ''_'  ) |
- .---. | (_,_).' __ | . (_) `. |
- |   | |  |\\ \\  |  ||(_    ._) '
- |   | |  | \\ `'   /|  (_.\\.' /
- |   | |  |  \\    / |       .'
- '---' ''-'   `'-'  '-----'`
-
-
-RAIN - RNA Alterations Investigation using Nextflow
-===================================================
-
-"""
-
+log.info header()
 if (params.help) { exit 0, helpMSG() }
 
 // Help Message
 def helpMSG() {
     log.info """
-    ********* RAIN - RNA Alterations Investigation using Nextflow *********
+    RAIN - RNA Alterations Investigation using Nextflow - v${workflow.manifest.version}
 
         Usage example:
     nextflow run main.nf --illumina short_reads_Ecoli --genus Escherichia --species coli --species_taxid 562 -profile docker -resume
@@ -187,7 +174,8 @@ def aline_profile = aline_profile_list.join(',')
 workflow {
         main:
 
-        // check if genome exists
+        // --- DEAL WITH REFERENCE ---
+        // check if reference exists
         Channel.fromPath(params.genome, checkIfExists: true)
             .ifEmpty { exit 1, "Cannot find genome matching ${params.genome}!\n" }
             .set{genome_raw}
@@ -195,62 +183,118 @@ workflow {
         fasta_uncompress(genome_raw)
         fasta_uncompress.out.genomeFa.set{genome_ch} // set genome to the output of fasta_uncompress
 
-        // Perform AliNe alignment
-        ALIGNMENT (
-            'Juke34/AliNe -r v1.4.0', // Select pipeline
-            "${workflow.resume?'-resume':''} -profile ${aline_profile}", // workflow opts supplied as params for flexibility
-            "-config ${params.aline_profiles}",
-            "--reads ${params.reads}",
-            genome_ch,
-            "--read_type ${params.read_type}",
-            "--aligner ${params.aligner}",
-            "--library_type ${params.library_type}",
-            workflow.workDir.resolve('Juke34/AliNe').toUriString()
-        )
+        // DEAL WITH BAM FILES
+        if ( params.bams ) {
 
-        // GET TUPLE [ID, BAM] FILES
-        ALIGNMENT.out.output
-            .map { dir ->
-                files("$dir/alignment/*/*.bam", checkIfExists: true)  // Find BAM files inside the output directory
+            def bam_list=[]
+            def path_bams = params.bams
+            def via_URL = false
+            if( path_bams.indexOf(',') >= 0) {
+                // Cut into list with coma separator
+                str_list = path_bams.tokenize(',')
+                // loop over elements
+                str_list.each {
+                    str_list2 = it.tokenize(' ')
+                    str_list2.each {
+                        if ( it.endsWith('.bam') ){
+                            if (it.startsWith('https:') || it.startsWith('s3:') || it.startsWith('az:') || it.startsWith('gs:') || it.startsWith('ftp:') ) {
+                                log.info "This bam input is an URL: ${it}"
+                                via_URL = true
+                            }
+                            bam_list.add(file(it)) // use file insted of File for URL
+                        }
+                    }
+                }
             }
-            .flatten()  // Ensure we emit each file separately
-            .map { bam -> 
-                        def name = bam.getName().split('_seqkit')[0]  // Extract the base name of the BAM file. _seqkit is the separator.
-                        tuple(name, bam)
-                 }  // Convert each BAM file into a tuple, with the base name as the first element
-            .set { aline_alignments }  // Store the channel
-        
-        if (params.library_type.contains("auto") ) {
-            log.info "Library type is set to auto, extracting it from salmon output"
-            // GET TUPLE [ID, OUTPUT_SALMON_LIBTYPE] FILES
+            else {
+                File input_reads = new File(path_bams)
+                if(input_reads.exists()){
+                    if ( input_reads.isDirectory()) {
+                        log.info "The input ${path_bams} is a folder!\n"
+                        // in case of folder provided, add a trailing slash if missing
+                        path_bams = "${input_reads}" + "/"
+                    }
+                    else {
+                        log.info "The input ${path_bams} is a file!\n"
+                        if ( path_bams.endsWith('.bam') ){
+                            if (path_bams.startsWith('https:') || path_bams.startsWith('s3:') || path_bams.startsWith('az:') || path_bams.startsWith('gs:') || path_bams.startsWith('ftp:') ) {
+                                log.info "This bam input is an URL: ${it}"
+                                via_URL = true
+                            }
+                            bam_list = path_bams
+                        }
+                    }
+                }
+            }
+            if (via_URL ){
+                my_samples = Channel.of(bam_list)
+                bams = my_samples.flatten().map { it -> [it.name.split('_')[0], it] }
+                                .groupTuple()
+                                .ifEmpty { exit 1, "Cannot find reads matching ${path_reads}!\n" }
+            } else {
+                bams = Channel.fromFilePairs("${path_bams}/*.bam", size: 1, checkIfExists: true)
+                    .ifEmpty { exit 1, "Cannot find reads matching ${path_bams}!\n" }
+            }
+            bams
+        }
+
+        // DEAL WITH FASTQ FILES
+        // Perform AliNe alignment
+        if (params.reads) {
+
+            ALIGNMENT (
+                'Juke34/AliNe -r v1.4.0', // Select pipeline
+                "${workflow.resume?'-resume':''} -profile ${aline_profile}", // workflow opts supplied as params for flexibility
+                "-config ${params.aline_profiles}",
+                "--reads ${params.reads}",
+                genome_ch,
+                "--read_type ${params.read_type}",
+                "--aligner ${params.aligner}",
+                "--library_type ${params.library_type}",
+                workflow.workDir.resolve('Juke34/AliNe').toUriString()
+            )
+
+            // GET TUPLE [ID, BAM] FILES
             ALIGNMENT.out.output
                 .map { dir ->
-                    files("$dir/salmon_libtype/*/*.json", checkIfExists: true)  // Find BAM files inside the output directory
+                    files("$dir/alignment/*/*.bam", checkIfExists: true)  // Find BAM files inside the output directory
                 }
                 .flatten()  // Ensure we emit each file separately
-                .map { json -> 
-                            def name = json.getParent().getName().split('_seqkit')[0]  // Extract the base name of the BAM file. _seqkit is the separator. The name is in the fodler containing the json file. Why take this one? Because it is the same as teh bam name set by Aline. It will be used to sync both values
-                            tuple(name, json)
+                .map { bam -> 
+                            def name = bam.getName().split('_seqkit')[0]  // Extract the base name of the BAM file. _seqkit is the separator.
+                            tuple(name, bam)
                     }  // Convert each BAM file into a tuple, with the base name as the first element
-                .set { aline_libtype }  // Store the channel
-            // Extract the library type from the JSON file
-            aline_libtype = extract_libtype(aline_libtype)
-            aline_alignments.join(aline_libtype)
-                .map { key, val1, val2 -> tuple(key, val1, val2) }
-                .set { aline_alignments_all }
-        } else {
-            log.info "Library type is set to ${params.library_type}, no need to extract it from salmon output"
-            aline_alignments_all = aline_alignments.map { name, bam -> tuple(name, bam, params.library_type) }
-        }
+                .set { aline_alignments }  // Store the channel
+            
+            if (params.library_type.contains("auto") ) {
+                log.info "Library type is set to auto, extracting it from salmon output"
+                // GET TUPLE [ID, OUTPUT_SALMON_LIBTYPE] FILES
+                ALIGNMENT.out.output
+                    .map { dir ->
+                        files("$dir/salmon_libtype/*/*.json", checkIfExists: true)  // Find BAM files inside the output directory
+                    }
+                    .flatten()  // Ensure we emit each file separately
+                    .map { json -> 
+                                def name = json.getParent().getName().split('_seqkit')[0]  // Extract the base name of the BAM file. _seqkit is the separator. The name is in the fodler containing the json file. Why take this one? Because it is the same as teh bam name set by Aline. It will be used to sync both values
+                                tuple(name, json)
+                        }  // Convert each BAM file into a tuple, with the base name as the first element
+                    .set { aline_libtype }  // Store the channel
+                // Extract the library type from the JSON file
+                aline_libtype = extract_libtype(aline_libtype)
+                aline_alignments.join(aline_libtype)
+                    .map { key, val1, val2 -> tuple(key, val1, val2) }
+                    .set { aline_alignments_all }
+            } else {
+                log.info "Library type is set to ${params.library_type}, no need to extract it from salmon output"
+                aline_alignments_all = aline_alignments.map { name, bam -> tuple(name, bam, params.library_type) }
+            }
 
-        // transform [ID, BAM, LIBTYPE] into [[id: 'ID', libtype: 'LIBTYPE'], file('BAM')]
-        aline_alignments_all = aline_alignments_all.map { id, file, lib ->
-            def meta = [ id: id, libtype: lib ]
-            tuple(meta, file)
+            // transform [ID, BAM, LIBTYPE] into [[id: 'ID', libtype: 'LIBTYPE'], file('BAM')]
+            aline_alignments_all = aline_alignments_all.map { id, file, lib ->
+                def meta = [ id: id, libtype: lib ]
+                tuple(meta, file)
+            }
         }
-        
-    aline_alignments_all.view()
-
         // call rain
         rain(aline_alignments_all, genome_ch)
 }
@@ -291,4 +335,68 @@ workflow rain {
         jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex)
         sapin(bamutil_clipoverlap.out.tuple_sample_clipoverbam, genome)
         normalize_gxf(params.annotation)
+}
+
+
+//*************************************************
+def header(){
+    // Log colors ANSI codes
+    c_reset = params.monochrome_logs ? '' : "\033[0m";
+    c_dim = params.monochrome_logs ? '' : "\033[2m";
+    c_black = params.monochrome_logs ? '' : "\033[0;30m";
+    c_green = params.monochrome_logs ? '' : "\033[0;32m";
+    c_yellow = params.monochrome_logs ? '' : "\033[0;33m";
+    c_blue = params.monochrome_logs ? '' : "\033[0;34m";
+    c_purple = params.monochrome_logs ? '' : "\033[0;35m";
+    c_cyan = params.monochrome_logs ? '' : "\033[0;36m";
+    c_white = params.monochrome_logs ? '' : "\033[0;37m";
+    c_red = params.monochrome_logs ? '' : "\033[0;31m";
+
+    return """
+    -${c_dim}--------------------------------------------------${c_reset}-
+    ${c_blue}.-./`) ${c_white}.-------.    ${c_red} ______${c_reset}
+    ${c_blue}\\ .-.')${c_white}|  _ _   \\  ${c_red} |    _ `''.${c_reset}     French National   
+    ${c_blue}/ `-' \\${c_white}| ( ' )  |  ${c_red} | _ | ) _  \\${c_reset}    
+    ${c_blue} `-'`\"`${c_white}|(_ o _) /  ${c_red} |( ''_'  ) |${c_reset}    Research Institute for    
+    ${c_blue} .---. ${c_white}| (_,_).' __ ${c_red}| . (_) `. |${c_reset}
+    ${c_blue} |   | ${c_white}|  |\\ \\  |  |${c_red}|(_    ._) '${c_reset}    Sustainable Development
+    ${c_blue} |   | ${c_white}|  | \\ `'   /${c_red}|  (_.\\.' /${c_reset}
+    ${c_blue} |   | ${c_white}|  |  \\    / ${c_red}|       .'${c_reset}
+    ${c_blue} '---' ${c_white}''-'   `'-'  ${c_red}'-----'`${c_reset}
+    ${c_purple} RAIN - RNA Alterations Investigation using Nextflow - v${workflow.manifest.version}${c_reset}
+    -${c_dim}--------------------------------------------------${c_reset}-
+    """.stripIndent()
+}
+
+/**************         onComplete         ***************/
+
+workflow.onComplete {
+
+    // Log colors ANSI codes
+    c_reset = params.monochrome_logs ? '' : "\033[0m";
+    c_green = params.monochrome_logs ? '' : "\033[0;32m";
+    c_red = params.monochrome_logs ? '' : "\033[0;31m";
+
+    if (workflow.success) {
+        log.info "\n${c_green}    RAIN pipeline complete!"
+    } else {
+        log.error "${c_red}Oops .. something went wrong}"
+    }
+
+    log.info "    The results are available in the ‘${params.outdir}’ directory."
+    
+    def dateComplete = workflow.complete.format("dd-MMM-yyyy HH:mm:ss")
+    def duration     = workflow.duration
+    def succeeded    = workflow.stats['succeededCount'] ?: 0
+    def cached       = workflow.stats['cachedCount'] ?: 0
+    log.info """
+    ================ RAIN Pipeline Summary ================
+    Completed at: ${dateComplete}
+    UUID        : ${workflow.sessionId}
+    Duration    : ${duration}
+    Succeeded   : ${succeeded}
+    Cached      : ${cached}
+    =======================================================
+    ${c_reset}
+    """
 }
