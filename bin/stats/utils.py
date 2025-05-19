@@ -28,12 +28,12 @@ def only(collection):
     for item in collection:
         return item
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class SiteVariantData:
-    seqid: str
-    position: int
-    reference: int
-    strand: int
-    coverage: int
-    mean_quality: float
-    frequencies: NDArray[np.int32]
+    seqid: str = ""
+    position: int = -1
+    reference: int = -1
+    strand: int = 0
+    coverage: int = 0
+    mean_quality: float = 0.0
+    frequencies: NDArray[np.int32] = np.zeros(4, dtype=np.int32)

@@ -89,6 +89,16 @@ class ReditoolsReader(RNAVariantReader):
         self.file_position: int = 1
         self.genomic_position: int = 0
 
+        self.data = SiteVariantData(
+            seqid="",
+            position=-1,
+            reference=-1,
+            strand=0,
+            coverage=0,
+            mean_quality=0.0,
+            frequencies=np.zeros(4, dtype=np.int32)
+        )
+
         return None
 
     def _get_parts(self, line: str) -> None:
@@ -127,15 +137,15 @@ class ReditoolsReader(RNAVariantReader):
             
         reference_nuc_str: str = self.parts[REDITOOLS_FIELD_INDEX["Reference"]]
         
-        return SiteVariantData(
-            seqid=self.parts[REDITOOLS_FIELD_INDEX["Seqid"]],
-            position=int(self.parts[REDITOOLS_FIELD_INDEX["Position"]]) - 1,    # Convert Reditools 1-based index to Python's 0-based index
-            reference=NUC_STR_TO_IND[reference_nuc_str],
-            strand=strand,
-            coverage=int(self.parts[REDITOOLS_FIELD_INDEX["Coverage"]]),
-            mean_quality=float(self.parts[REDITOOLS_FIELD_INDEX["MeanQ"]]),
-            frequencies=np.int32(self.parts[REDITOOLS_FIELD_INDEX["Frequencies"]][1:-1].split(","))
-        )
+        self.data.seqid = self.parts[REDITOOLS_FIELD_INDEX["Seqid"]]
+        self.data.position = int(self.parts[REDITOOLS_FIELD_INDEX["Position"]]) - 1    # Convert Reditools 1-based index to Python's 0-based index
+        self.data.reference = NUC_STR_TO_IND[reference_nuc_str]
+        self.strand=strand
+        self.data.coverage=int(self.parts[REDITOOLS_FIELD_INDEX["Coverage"]])
+        self.data.mean_quality=float(self.parts[REDITOOLS_FIELD_INDEX["MeanQ"]])
+        self.data.frequencies=np.int32(self.parts[REDITOOLS_FIELD_INDEX["Frequencies"]][1:-1].split(","))
+
+        return self.data
 
     def read(self) -> Optional[SiteVariantData]:
         """Read the data of the next variant site"""
