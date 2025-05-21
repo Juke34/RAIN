@@ -81,7 +81,7 @@ class SiteFilter:
 
     def apply(self, variant_data: SiteVariantData) -> None:
         if variant_data.coverage >= self.cov_threshold:
-            np.copyto(self.frequencies, variant_data.frequencies >= self.edit_threshold)
+            np.copyto(self.frequencies, variant_data.frequencies * variant_data.frequencies >= self.edit_threshold)
         else:
             self.frequencies.fill(0)
 
