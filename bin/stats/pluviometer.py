@@ -21,6 +21,7 @@ from utils import SiteVariantData, BASE_TYPES, EDIT_TYPES
 from collections import deque
 import progressbar
 import math
+from feature_aggregator import FeatureAggregator
 
 
 def parse_cli_input() -> argparse.Namespace:
@@ -223,6 +224,8 @@ class FeatureGroupManager:
         self.recman: "RecordManager" = recman
         self.nb_remaining_target_nodes: int = 0
 
+        self.recman.aggregator.aggregate_sub_features(root)
+
         self.init_children(root)
 
     def init_children(self, feature: SeqRecord) -> None:
@@ -232,7 +235,7 @@ class FeatureGroupManager:
         if feature.location.strand:
             self.recman.sorted_target_features.append(ManagedFeature(feature, self))
             if feature.id in self.counters:
-                counter = self.counters[feature.id]
+                counter = self.counters[feature.id]   # Doesn't do anything!
             else:
                 counter = MultiCounter(self.recman.filter)
                 self.counters[feature.id] = counter
@@ -248,6 +251,9 @@ class FeatureGroupManager:
             )
 
         self.roots.append(feature)
+
+        self.recman.aggregator.aggregate_sub_features(feature)
+
         self.init_children(feature)
 
         return None
@@ -260,10 +266,10 @@ class FeatureGroupManager:
 
         return None
 
-    def write_feature_data(self, feature, output_handle: TextIO) -> None:
+    def write_feature_data(self, feature: SeqFeature, parent: str, output_handle: TextIO) -> None:
         b: int = 0
         b += output_handle.write(
-            f"{self.recman.record.id}\t{feature.id}\t{feature.type}\t"
+            f"{self.recman.record.id}\t{parent}\t{feature.id}\t{feature.type}\t"
             +
             # Shift start location to GFF 1-based index
             f"{feature.location.start + 1}\t{feature.location.end}\t{feature.location.strand}\t"
@@ -274,10 +280,13 @@ class FeatureGroupManager:
 
         return b
 
-    def checkout(self, feature: SeqFeature, output_handle: TextIO) -> None:
-        self.write_feature_data(feature, output_handle)
+    def checkout(self, feature: SeqFeature, parent: str, output_handle: TextIO) -> None:
+        if feature.id in self.counters:
+            self.write_feature_data(feature, parent, output_handle)
+            self.counters.pop(feature.id, None)
+
         for child in feature.sub_features:
-            self.checkout(child, output_handle)
+            self.checkout(child, feature.id, output_handle)
 
         return None
 
@@ -285,7 +294,7 @@ class FeatureGroupManager:
         self.nb_remaining_target_nodes -= 1
         if self.nb_remaining_target_nodes == 0:
             for root in self.roots:
-                self.checkout(root, output_handle)
+                self.checkout(root, ".", output_handle)
 
         return None
 
@@ -305,18 +314,19 @@ class QueueUpdates(NamedTuple):
 
 class RecordManager:
     def __init__(self, record: SeqRecord, global_filter: SiteFilter, output_handle: TextIO):
-        self.record = record
-        self.pos = 0
-        self.final_pos = len(record.seq)
+        self.record: SeqRecord = record
+        self.pos: int = 0
+        self.final_pos: int = len(record.seq)
         self.downstream_queue: deque[ManagedFeature] = deque()
         self.active_queue: deque[ManagedFeature] = deque()
         self.next_start: int = -1
         self.next_end: int = -1
         self.sorted_target_features: list[ManagedFeature] = []
         self.feature_managers: dict[str, FeatureGroupManager] = dict()
-        self.output_handle = output_handle
-        self.filter = global_filter
-        self.counter = MultiCounter(self.filter)
+        self.output_handle: TextIO = output_handle
+        self.filter: SiteFilter = global_filter
+        self.counter: MultiCounter = MultiCounter(self.filter)
+        self.aggregator: FeatureAggregator = FeatureAggregator()
 
         self.start_pos = record.features[0].location.start
 
@@ -442,7 +452,7 @@ class RecordManager:
     def write_total_data(self):
         b: int = 0
         b += self.output_handle.write(
-            f"{self.record.id}\tTOTAL\t.\t{self.start_pos}\t{self.final_pos}\t0\t"
+            f"{self.record.id}\t.\t.\taggregate\t{self.start_pos}\t{self.final_pos}\t0\t"
         )
 
         self.counter.report(self.output_handle)
@@ -462,7 +472,7 @@ class RecordManager:
 
         if header:
             self.output_handle.write(
-                "SeqID\tFeatureID\tType\tStart\tEnd\tStrand\tCoveredSites"
+                "SeqID\tParentID\tFeatureID\tType\tStart\tEnd\tStrand\tCoveredSites"
                 + "\tRefBaseFreqs["
                 + ",".join(BASE_TYPES)
                 + "]"
