@@ -91,7 +91,7 @@ class SiteFilter:
 class MultiCounter:
     """Holds the counter data and logic for a feature, feature aggregate, or record"""
 
-    def __init__(self) -> None:
+    def __init__(self, site_filter: SiteFilter) -> None:
         """
         Tallies of the number of times that a read has been mapped a site in the genome with base X.
         It is *not* the number of times a base appears in a read
@@ -113,6 +113,8 @@ class MultiCounter:
 
         self.edit_site_freqs: NDArray[np.int32] = np.zeros((4, 4), dtype=np.int32)
 
+        self.filter = site_filter
+
         return None
 
     def update(self, variant_data: SiteVariantData) -> None:
@@ -125,8 +127,8 @@ class MultiCounter:
 
         self.edit_read_freqs[i, :] += variant_data.frequencies
 
-        GLOBAL_FILTER.apply(variant_data)
-        self.edit_site_freqs[i, :] += GLOBAL_FILTER.frequencies
+        self.filter.apply(variant_data)
+        self.edit_site_freqs[i, :] += self.filter.frequencies
 
         return None
 
@@ -232,7 +234,7 @@ class FeatureGroupManager:
             if feature.id in self.counters:
                 counter = self.counters[feature.id]
             else:
-                counter = MultiCounter()
+                counter = MultiCounter(self.recman.filter)
                 self.counters[feature.id] = counter
 
             self.nb_remaining_target_nodes += 1
@@ -302,7 +304,7 @@ class QueueUpdates(NamedTuple):
 
 
 class RecordManager:
-    def __init__(self, record: SeqRecord, output_handle: TextIO):
+    def __init__(self, record: SeqRecord, global_filter: SiteFilter, output_handle: TextIO):
         self.record = record
         self.pos = 0
         self.final_pos = len(record.seq)
@@ -313,7 +315,8 @@ class RecordManager:
         self.sorted_target_features: list[ManagedFeature] = []
         self.feature_managers: dict[str, FeatureGroupManager] = dict()
         self.output_handle = output_handle
-        self.counter = MultiCounter()
+        self.filter = global_filter
+        self.counter = MultiCounter(self.filter)
 
         self.start_pos = record.features[0].location.start
 
@@ -535,10 +538,10 @@ if __name__ == "__main__":
 
         sv_data: SiteVariantData = sv_reader.read()
 
-        GLOBAL_FILTER: SiteFilter = SiteFilter(
+        global_filter: SiteFilter = SiteFilter(
             cov_threshold=args.cov, edit_threshold=args.edit_threshold
         )
 
         for record in records:
-            manager: RecordManager = RecordManager(record, output_handle)
+            manager: RecordManager = RecordManager(record, global_filter, output_handle)
             manager.scan_and_count(sv_reader, header=True)
