@@ -1,15 +1,11 @@
 FROM condaforge/miniforge3:24.7.1-2
 
-# Auto-activating Conda setup for Python 2.7
-RUN conda config --add channels bioconda \
-    && conda config --add channels conda-forge \
-    && conda create -n myenv \
-    && echo "conda activate myenv" >> ~/.bashrc
-
 # Tool-specific dependencies
 COPY env_reditools2.yml .
-RUN conda env update -n myenv --file env_reditools2.yml \
-    && conda clean --all -f -y
+RUN conda env create -n myenv --file env_reditools2.yml \
+    && conda clean --all -f -y \
+    && echo "conda activate myenv" >> ~/.bashrc # Auto-activating Conda setup for Python 2.7
+    
 
 # Get and install tools
 RUN git clone --depth=1 https://github.com/BioinfoUNIBA/REDItools2.git reditools2
