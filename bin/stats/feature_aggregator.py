@@ -1,38 +1,7 @@
-from typing import Generator
 from Bio.SeqFeature import SeqFeature
 import numpy as np
 from numpy.typing import NDArray
 from utils import argmax
-
-
-def _get_feature_descendants(root: SeqFeature) -> Generator[SeqFeature, None, None]:
-    yield root
-
-    for child in root.sub_features:
-        yield from _get_feature_descendants(child)
-
-
-def get_feature_descendants(root: SeqFeature) -> Generator[SeqFeature, None, None]:
-    for child in root.sub_features:
-        yield from _get_feature_descendants(child)
-
-
-def _get_feature_descendants_of_type(
-    root: SeqFeature, feature_types: str | list[str] | set[str]
-) -> Generator[SeqFeature, None, None]:
-    if root.type in feature_types:
-        yield root
-
-    for child in root.sub_features:
-        yield from _get_feature_descendants_of_type(child, feature_types)
-
-
-def get_feature_descendants_of_type(
-    root: SeqFeature, feature_types: str | list[str] | set[str]
-) -> Generator[SeqFeature, None, None]:
-    for child in root.sub_features:
-        yield from _get_feature_descendants_of_type(child, feature_types)
-
 
 class FeatureAggregator:
     def __init__(self, mode: str) -> None:
@@ -121,12 +90,9 @@ class FeatureAggregator:
         # The sub_feature attribute must be created manually because it is deprecated in BioPython
         new_feature.sub_features = []
 
-        # parent.sub_features += [new_feature]
-
         new_subfeatures = []
 
         for child in feature.sub_features:
-            # print("BAD THING")
             new_subfeatures.append(self.create_aggregated(new_feature, gene_index, child, transcript_num))
 
         feature.sub_features += new_subfeatures
