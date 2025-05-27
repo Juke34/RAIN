@@ -338,7 +338,7 @@ workflow {
         Channel.empty().set{aline_alignments_all}
         if (path_reads || ( path_csv && has_fastq) ) {
             
-            if ( path_csv.endsWith('.csv') ){  
+            if ( path_csv && path_csv.endsWith('.csv') ){  
                 path_reads = path_csv
             }
 
