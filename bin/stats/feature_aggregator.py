@@ -3,6 +3,7 @@ import numpy as np
 from numpy.typing import NDArray
 from utils import argmax
 
+
 class FeatureAggregator:
     def __init__(self, mode: str) -> None:
         # Variables for ID creation
@@ -77,13 +78,10 @@ class FeatureAggregator:
         else:
             return [gene.sub_features[argmax(self.exon_lengths)]]
 
-    def create_aggregated(
-        self, parent: SeqFeature, gene_index, feature: SeqFeature, transcript_num: int
-    ) -> SeqFeature:
+    def create_aggregated(self, parent: SeqFeature, feature: SeqFeature) -> SeqFeature:
         new_feature = SeqFeature(
             location=feature.location,
-            # TODO: Fix using gene index. Use individual IDs for each feature type instead.
-            id=f"{feature.type}-aggregate-{gene_index}_{transcript_num + 1}",
+            id=f"{feature.type}-aggregate-{parent.id}",
             type=feature.type + "-aggregate",
             qualifiers={"Parent": [parent.id]},
         )
@@ -92,8 +90,9 @@ class FeatureAggregator:
 
         new_subfeatures = []
 
+        # Copy the entire hierarchy, but this won't work for aggregating features beyond this point
         for child in feature.sub_features:
-            new_subfeatures.append(self.create_aggregated(new_feature, gene_index, child, transcript_num))
+            new_subfeatures.append(self.create_aggregated(new_feature, child))
 
         feature.sub_features += new_subfeatures
 
@@ -107,15 +106,15 @@ class FeatureAggregator:
             self.gene_counter += 1
             self.gene_indices[gene.id] = self.gene_counter
 
-        gene_index: int = self.gene_indices[gene.id]
-
         target_transcripts: list[SeqFeature] = self.select_targets(gene)
 
-        for i, transcript in enumerate(target_transcripts):
+        for transcript in target_transcripts:
             new_features = []
 
             for child in transcript.sub_features:
-                new_features.append(self.create_aggregated(transcript, gene_index, child, i))
+                new_features.append(
+                    self.create_aggregated(transcript, child)
+                )
 
             transcript.sub_features += new_features
 
