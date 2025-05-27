@@ -1,19 +1,19 @@
 process fastqc {
     label 'fastqc'
-    tag "$sample_id"
+    tag "${meta.id}"
     publishDir "${params.outdir}/FastQC", mode: 'copy'
 
     input:
-    tuple val(sample_id), path(reads)
-    val (suffix)
+        tuple val(meta), path(reads)
+        val (suffix)
 
     output:
-    path ("fastqc_${sample_id}_logs_${suffix}")
+        path ("fastqc_${meta.id}_logs_${suffix}")
 
     script:
-    """
-    mkdir fastqc_${sample_id}_logs_${suffix}
-    fastqc -t ${task.cpus} -o fastqc_${sample_id}_logs_${suffix} -q ${reads}
-    """
+        """
+        mkdir fastqc_${meta.id}_logs_${suffix}
+        fastqc -t ${task.cpus} -o fastqc_${meta.id}_logs_${suffix} -q ${reads}
+        """
 
 }
