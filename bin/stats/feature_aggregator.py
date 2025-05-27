@@ -40,6 +40,19 @@ class FeatureAggregator:
         self.gene_indices: dict[str, int] = dict()
         self.gene_counter: int = 0
 
+        self.gene_subfeature_ids: dict[int, int] = dict()
+
+        # Variables for ID creation
+        self.feature_indices: dict[str, int] = dict()
+        self.feature_counter: int = 0
+
+        self.feature_ids: dict[str, int] = (
+            dict()
+        )  # Used for checking if the feature has already been seen
+        self.feature_counters: dict[str, int] = (
+            dict()
+        )  # Used for assigning incremental IDs
+
         # Variables for target selection
         self.has_cds: bool = False
         self.cds_lengths: NDArray
@@ -96,34 +109,46 @@ class FeatureAggregator:
             return [gene.sub_features[argmax(self.exon_lengths)]]
 
     def create_aggregated(
-        self, parent: SeqFeature, gene_index, feature: SeqFeature
-    ) -> None:
+        self, parent: SeqFeature, gene_index, feature: SeqFeature, transcript_num: int
+    ) -> SeqFeature:
         new_feature = SeqFeature(
             location=feature.location,
             # TODO: Fix using gene index. Use individual IDs for each feature type instead.
-            id=f"{feature.type}-aggregate-{gene_index}",
+            id=f"{feature.type}-aggregate-{gene_index}_{transcript_num + 1}",
             type=feature.type + "-aggregate",
             qualifiers={"Parent": [parent.id]},
         )
+        # The sub_feature attribute must be created manually because it is deprecated in BioPython
         new_feature.sub_features = []
-        parent.sub_features += [new_feature]
+
+        # parent.sub_features += [new_feature]
+
+        new_subfeatures = []
 
         for child in feature.sub_features:
-            self.create_aggregated(new_feature, gene_index, child)
+            # print("BAD THING")
+            new_subfeatures.append(self.create_aggregated(new_feature, gene_index, child, transcript_num))
 
-        return None
+        feature.sub_features += new_subfeatures
 
-    def aggregate_sub_features(self, gene: SeqFeature, drop_others: bool = True) -> None:
+        return new_feature
+
+    def aggregate_sub_features(self, gene: SeqFeature) -> None:
         if gene.id not in self.gene_indices:
             self.gene_counter += 1
             self.gene_indices[gene.id] = self.gene_counter
 
-        gene_index = self.gene_indices[gene.id]
+        gene_index: int = self.gene_indices[gene.id]
 
-        targets: list[SeqFeature] = self.select_targets(gene)
+        target_transcripts: list[SeqFeature] = self.select_targets(gene)
 
-        for target in targets:
-            for child in target.sub_features:
-                self.create_aggregated(gene, gene_index, child)
+        for i, transcript in enumerate(target_transcripts):
+            # self.create_aggregated(gene, gene_index, transcript, i)
+            new_features = []
+
+            for child in transcript.sub_features:
+                new_features.append(self.create_aggregated(transcript, gene_index, child, i))
+
+            transcript.sub_features += new_features
 
         return None
