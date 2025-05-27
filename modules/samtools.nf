@@ -31,3 +31,30 @@ process samtools_fasta_index {
         samtools faidx ${fasta}
         """
 }
+
+/*
+http://www.htslib.org/doc/samtools-sort.html
+Sort alignments by leftmost coordinates 
+*/
+process samtools_sort_bam {
+    label "samtools"
+    tag "${meta.id}"
+
+    input:
+        tuple val(meta), path(bam)
+
+    output:
+        tuple val(meta), path ("*_sorted.bam"), emit: tuple_sample_sortedbam
+
+    script:
+
+        """
+            if [[ \$(samtools view -H ${bam}| awk '/^@HD/ { for(i=1;i<=NF;i++) if(\$i ~ /^SO:/) print \$i }') == *"coordinate"* ]]; then
+                echo "Already sorted by coordinate"
+                ln -s ${bam} ${bam.baseName}_sorted.bam
+            else
+                echo "Not sorted by coordinate"
+                samtools sort -@ ${task.cpus} ${bam} -o ${bam.baseName}_sorted.bam  
+            fi
+        """
+}
