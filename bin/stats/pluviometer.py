@@ -70,6 +70,14 @@ def parse_cli_input() -> argparse.Namespace:
         default=1,
         help="Minimum number of edited reads for counting a site as edited",
     )
+    parser.add_argument(
+        "--aggregation_mode",
+        "-a",
+        type=str,
+        default="all",
+        choices=["all", "cds_longest"],
+        help="Mode for aggregating counts: \"all\" aggregates features of every transcript; \"cds_longest\" aggregates features of the longest CDS or non-coding transcript",
+    )
 
     return parser.parse_args()
 
@@ -266,10 +274,10 @@ class FeatureGroupManager:
 
         return None
 
-    def write_feature_data(self, feature: SeqFeature, parent: str, output_handle: TextIO) -> None:
+    def write_feature_data(self, feature: SeqFeature, grandparent:str, parent: str, output_handle: TextIO) -> None:
         b: int = 0
         b += output_handle.write(
-            f"{self.recman.record.id}\t{parent}\t{feature.id}\t{feature.type}\t"
+            f"{self.recman.record.id}\t{grandparent}\t{parent}\t{feature.id}\t{feature.type}\t"
             +
             # Shift start location to GFF 1-based index
             f"{feature.location.start + 1}\t{feature.location.end}\t{feature.location.strand}\t"
@@ -280,13 +288,13 @@ class FeatureGroupManager:
 
         return b
 
-    def checkout(self, feature: SeqFeature, parent: str, output_handle: TextIO) -> None:
+    def checkout(self, feature: SeqFeature, grandparent: str, parent: str, output_handle: TextIO) -> None:
         if feature.id in self.counters:
-            self.write_feature_data(feature, parent, output_handle)
+            self.write_feature_data(feature, grandparent, parent, output_handle)
             self.counters.pop(feature.id, None)
 
         for child in feature.sub_features:
-            self.checkout(child, feature.id, output_handle)
+            self.checkout(child, parent, feature.id, output_handle)
 
         return None
 
@@ -294,7 +302,7 @@ class FeatureGroupManager:
         self.nb_remaining_target_nodes -= 1
         if self.nb_remaining_target_nodes == 0:
             for root in self.roots:
-                self.checkout(root, ".", output_handle)
+                self.checkout(root, ".", ".", output_handle)
 
         return None
 
@@ -313,7 +321,7 @@ class QueueUpdates(NamedTuple):
 
 
 class RecordManager:
-    def __init__(self, record: SeqRecord, global_filter: SiteFilter, output_handle: TextIO):
+    def __init__(self, record: SeqRecord, global_filter: SiteFilter, output_handle: TextIO, aggregation_mode: str):
         self.record: SeqRecord = record
         self.pos: int = 0
         self.final_pos: int = len(record.seq)
@@ -326,7 +334,7 @@ class RecordManager:
         self.output_handle: TextIO = output_handle
         self.filter: SiteFilter = global_filter
         self.counter: MultiCounter = MultiCounter(self.filter)
-        self.aggregator: FeatureAggregator = FeatureAggregator()
+        self.aggregator: FeatureAggregator = FeatureAggregator(aggregation_mode)
 
         self.start_pos = record.features[0].location.start
 
@@ -452,7 +460,7 @@ class RecordManager:
     def write_total_data(self):
         b: int = 0
         b += self.output_handle.write(
-            f"{self.record.id}\t.\t.\taggregate\t{self.start_pos}\t{self.final_pos}\t0\t"
+            f"{self.record.id}\t.\t.\t.\taggregate\t{self.start_pos}\t{self.final_pos}\t0\t"
         )
 
         self.counter.report(self.output_handle)
@@ -472,7 +480,7 @@ class RecordManager:
 
         if header:
             self.output_handle.write(
-                "SeqID\tParentID\tFeatureID\tType\tStart\tEnd\tStrand\tCoveredSites"
+                "SeqID\tGrandParentID\tParentID\tFeatureID\tType\tStart\tEnd\tStrand\tCoveredSites"
                 + "\tRefBaseFreqs["
                 + ",".join(BASE_TYPES)
                 + "]"
@@ -553,5 +561,10 @@ if __name__ == "__main__":
         )
 
         for record in records:
-            manager: RecordManager = RecordManager(record, global_filter, output_handle)
+            manager: RecordManager = RecordManager(
+                record=record,
+                global_filter=global_filter,
+                output_handle=output_handle,
+                aggregation_mode=args.aggregation_mode
+                )
             manager.scan_and_count(sv_reader, header=True)
