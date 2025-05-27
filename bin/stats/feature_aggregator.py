@@ -62,7 +62,7 @@ class FeatureAggregator:
         match mode:
             case "all":
                 self.select_targets = self._select_all_targets
-            case "longest_cds_or_exon":
+            case "cds_longest":
                 self.select_targets = self._select_target_with_longest_aggr_cds_or_exon
             case _:
                 raise Exception(f"Invalid target selection mode {mode}")
@@ -134,6 +134,9 @@ class FeatureAggregator:
         return new_feature
 
     def aggregate_sub_features(self, gene: SeqFeature) -> None:
+        if len(gene.sub_features) == 0:
+            return None
+
         if gene.id not in self.gene_indices:
             self.gene_counter += 1
             self.gene_indices[gene.id] = self.gene_counter
@@ -143,7 +146,6 @@ class FeatureAggregator:
         target_transcripts: list[SeqFeature] = self.select_targets(gene)
 
         for i, transcript in enumerate(target_transcripts):
-            # self.create_aggregated(gene, gene_index, transcript, i)
             new_features = []
 
             for child in transcript.sub_features:
