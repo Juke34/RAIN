@@ -1,0 +1,26 @@
+process pluviometer {
+    label "pluviometer"
+    publishDir("${params.outdir}/feature_edits", mode: "copy")
+    tag "${meta.id}"
+
+    input:
+        tuple(val(meta), path(site_edits))
+        path(gff)
+
+    output:
+        tuple(val(meta), path("feature_edits.tsv"), emit: tuple_sample_feature_edits)
+
+
+    script:
+        """
+        # cp ${workflow.projectDir}/bin/stats/*.py ./
+        python ${workflow.projectDir}/bin/stats/pluviometer.py \
+            --sites ${site_edits} \
+            --gff ${gff} \
+            --format reditools \
+            --cov 1 \
+            --edit_threshold 1 \
+            --aggregation_mode all \
+            --output feature_edits.tsv
+        """
+}

@@ -131,6 +131,7 @@ include {reditools2} from "./modules/reditools2.nf"
 include {jacusa2} from "./modules/jacusa2.nf"
 include {sapin} from "./modules/sapin.nf"
 include {normalize_gxf} from "./modules/agat.nf"
+include {pluviometer} from "./modules/pluviometer.nf"
 
 //*************************************************
 // STEP 3 - Deal with parameters
@@ -440,6 +441,7 @@ workflow rain {
         jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex)
         sapin(bamutil_clipoverlap.out.tuple_sample_clipoverbam, genome)
         normalize_gxf(annnotation)
+        pluviometer(reditools2.out.tuple_sample_serial_table, normalize_gxf.out.gff)
 }
 
 
