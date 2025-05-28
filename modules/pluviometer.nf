@@ -6,6 +6,7 @@ process pluviometer {
     input:
         tuple(val(meta), path(site_edits))
         path(gff)
+        val(tool_format)
 
     output:
         tuple(val(meta), path("feature_edits.tsv"), emit: tuple_sample_feature_edits)
@@ -17,7 +18,7 @@ process pluviometer {
         python ${workflow.projectDir}/bin/stats/pluviometer.py \
             --sites ${site_edits} \
             --gff ${gff} \
-            --format reditools \
+            --format ${tool_format} \
             --cov 1 \
             --edit_threshold 1 \
             --aggregation_mode all \
