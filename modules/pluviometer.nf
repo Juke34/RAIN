@@ -20,8 +20,8 @@ process pluviometer {
             --gff ${gff} \
             --format ${tool_format} \
             --cov 1 \
-            --edit_threshold 1 \
-            --aggregation_mode all \
+            --edit_threshold ${params.edit_threshold} \
+            --aggregation_mode ${params.aggregation_mode} \
             --output feature_edits.tsv
         """
 }
