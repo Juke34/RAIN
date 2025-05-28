@@ -13,7 +13,7 @@ process bamutil_clipoverlap {
     script:
 
         """
-        bam clipOverlap --storeOrig CG --poolSize 50000000 --in ${bam} --out ${bam}_clipoverlap.bam --stats > ${meta.id}_bamutil_clipoverlap.log
+        bam clipOverlap --storeOrig CG --poolSize 5000000 --in ${bam} --out ${bam}_clipoverlap.bam --stats > ${meta.id}_bamutil_clipoverlap.log
         """
 
 }
