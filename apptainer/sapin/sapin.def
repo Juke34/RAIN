@@ -1,0 +1,31 @@
+Bootstrap: docker
+From: python:slim-bullseye
+
+%files
+    constraints.txt /SAPiN/constraints.txt
+
+%post
+    apt-get update && apt-get install -y \
+        procps \
+        git \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Cloner le dépôt SAPiN
+    git clone --depth=1 https://github.com/Juke34/SAPiN.git /SAPiN
+
+    # Installer le paquet avec contraintes
+    pip install --constraint /SAPiN/constraints.txt /SAPiN
+
+%environment
+    export PATH=/usr/local/bin:$PATH
+
+%runscript
+    exec bash "$@"
+
+%labels
+    Author jacques.dainat@ird.fr
+    Tool SAPiN
+
+%help
+    Conteneur pour SAPiN avec ses dépendances installées via pip et contraintes.
+    Lancement : singularity run sapin.sif
