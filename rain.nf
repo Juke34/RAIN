@@ -25,6 +25,10 @@ params.read_type = "short_paired" // short_paired, short_single, pacbio, ont
 params.library_type = "auto" // can be 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' - see https://github.com/Juke34/AliNe for more information
 params.bam_library_type = null // can be 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' - see https://github.com/Juke34/AliNe for more information
 
+// Edit counting params
+params.edit_threshold = 1
+params.aggregation_mode = "all"
+
 // Aline profiles
 aline_profile_allowed = [ 'docker', 'singularity', 'local', 'itrop' ]
 
@@ -81,7 +85,8 @@ def helpMSG() {
     --read_type                 Type of reads among this list ${read_type_allowed} (default: short_paired)
     --library_type              Set the library_type of your fastq reads (default: auto). In auto mode salmon will guess the library type for each sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
     --bam_library_type          Set the library_type of your BAM reads (default: null). When using BAM you must set a library type: [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
-
+    --edit_threshold            Minimal number of edited reads to count a site as edited (default: 1)
+    --aggregation_mode          Mode for aggregating edition counts mapped on genomic features. See documentation for details. Options are: "all" (default) or "cds_longest"
 
         Nextflow options:
     -profile                    Change the profile of nextflow both the engine and executor more details on github README [debug, test, itrop, singularity, local, docker]
@@ -107,6 +112,7 @@ Alignment Parameters
  aline_profiles                : ${params.aline_profiles}
     aligner                    : ${params.aligner}
     reads_library_type         : ${params.library_type}
+    edit_threshold             : ${params.edit_threshold}
 
 Report Parameters
  MultiQC parameters
@@ -147,7 +153,7 @@ if( !params.aligner ){
         str_list2 = it.tokenize(' ')
         str_list2.each {
             if ( ! (it in align_tools) ){
-                exit 1, "Error: <${it}> aligner not acepted, please provide aligner(s) among this list ${align_tools}.\n"
+                exit 1, "Error: <${it}> aligner not accepted, please provide aligner(s) among this list ${align_tools}.\n"
             }
             else{
                 aligner_list.add(it)
