@@ -26,6 +26,8 @@ params.library_type = "auto" // can be 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF
 params.bam_library_type = null // can be 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' - see https://github.com/Juke34/AliNe for more information
 
 // Edit counting params
+edit_site_tools = ["reditools2", "jacusa2", "sapin"]
+params.edit_site_tool = "reditools2"
 params.edit_threshold = 1
 params.aggregation_mode = "all"
 
@@ -82,6 +84,7 @@ def helpMSG() {
 
        Optional input:
     --aligner                   Aligner to use [default: $params.aligner]
+    --edit_site_tool            Tool used for detecting edited sites. Default: $params.edit_site_tool
     --read_type                 Type of reads among this list ${read_type_allowed} (default: short_paired)
     --library_type              Set the library_type of your fastq reads (default: auto). In auto mode salmon will guess the library type for each sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
     --bam_library_type          Set the library_type of your BAM reads (default: null). When using BAM you must set a library type: [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
@@ -112,6 +115,9 @@ Alignment Parameters
  aline_profiles                : ${params.aline_profiles}
     aligner                    : ${params.aligner}
     reads_library_type         : ${params.library_type}
+
+Edited Site Detection Parameters
+    edit_site_tool             : ${params.edit_site_tool}
     edit_threshold             : ${params.edit_threshold}
 
 Report Parameters
@@ -161,6 +167,11 @@ if( !params.aligner ){
         }
     }
 }
+
+// Check edit site tool params. Does not accept list yet, but validates input.
+if ( ! (params.edit_site_tool in edit_site_tools) ){
+                exit 1, "Error: <${it}> edit site tool not accepted, please provide a tool in this list ${edit_site_tools}.\n"
+            }
 
 // check RAIN profile - /!\ profile must be sync with AliNe profile as much as possible
 if (
@@ -440,14 +451,25 @@ workflow rain {
         samtools_index(bamutil_clipoverlap.out.tuple_sample_clipoverbam)
         // report with multiqc
         // multiqc(logs.collect(),params.multiqc_config)
-        // Detect RNA editing with reditools2
-        reditools2(samtools_index.out.tuple_sample_bam_bamindex, genome, params.region)
         // Create a fasta index file of the reference genome
         samtools_fasta_index(genome)
-        jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex)
-        sapin(bamutil_clipoverlap.out.tuple_sample_clipoverbam, genome)
-        normalize_gxf(annnotation)
-        pluviometer(reditools2.out.tuple_sample_serial_table, normalize_gxf.out.gff, "reditools")
+
+        // Select site detection tool
+        switch (params.edit_site_tool) {
+            case "jacusa2":
+                jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex)
+                break
+            case "sapin":
+                sapin(bamutil_clipoverlap.out.tuple_sample_clipoverbam, genome)
+                break
+            case "reditools2":
+                reditools2(samtools_index.out.tuple_sample_bam_bamindex, genome, params.region)
+                normalize_gxf(annnotation)
+                pluviometer(reditools2.out.tuple_sample_serial_table, normalize_gxf.out.gff, "reditools")
+                break
+            default:
+                exit(1, "Wrong edit site tool was passed")
+        }
 }
 
 
