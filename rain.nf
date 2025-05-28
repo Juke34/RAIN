@@ -441,7 +441,7 @@ workflow rain {
         jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex)
         sapin(bamutil_clipoverlap.out.tuple_sample_clipoverbam, genome)
         normalize_gxf(annnotation)
-        pluviometer(reditools2.out.tuple_sample_serial_table, normalize_gxf.out.gff)
+        pluviometer(reditools2.out.tuple_sample_serial_table, normalize_gxf.out.gff, "reditools")
 }
 
 
