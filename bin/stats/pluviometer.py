@@ -78,6 +78,12 @@ def parse_cli_input() -> argparse.Namespace:
         choices=["all", "cds_longest"],
         help="Mode for aggregating counts: \"all\" aggregates features of every transcript; \"cds_longest\" aggregates features of the longest CDS or non-coding transcript",
     )
+    parser.add_argument(
+        "--progress",
+        action="store_true",
+        default="false",
+        help="Display progress bar"
+    )
 
     return parser.parse_args()
 
@@ -321,7 +327,7 @@ class QueueUpdates(NamedTuple):
 
 
 class RecordManager:
-    def __init__(self, record: SeqRecord, global_filter: SiteFilter, output_handle: TextIO, aggregation_mode: str):
+    def __init__(self, record: SeqRecord, global_filter: SiteFilter, output_handle: TextIO, aggregation_mode: str, progress_bar: bool = False):
         self.record: SeqRecord = record
         self.pos: int = 0
         self.final_pos: int = len(record.seq)
@@ -353,24 +359,26 @@ class RecordManager:
 
         nb_targets_d_format = math.floor(math.log(self.nb_targets, 10))
 
-        self.progress_bar = progressbar.ProgressBar(
-            max_value=self.nb_targets,
-            widgets=[
-                "Processed target feature ",
-                progressbar.Counter(
-                    format=f"%(value)0{nb_targets_d_format}d out of %(max_value)d"
-                ),
-                " (",
-                progressbar.Percentage(),
-                ") ",
-                progressbar.Bar("█", "|", "|"),
-                " ",
-                progressbar.Timer(),
-                " - ",
-                progressbar.SmoothingETA(),
-            ],
-            poll_interval=0.001,
-        )
+        self.use_progress_bar = progress_bar
+        if self.use_progress_bar:
+            self.progress_bar: progressbar.ProgressBar = progressbar.ProgressBar(
+                max_value=self.nb_targets,
+                widgets=[
+                    f"Record {self.record.id}: Processed target feature ",
+                    progressbar.Counter(
+                        format=f"%(value)0{nb_targets_d_format}d out of %(max_value)d"
+                    ),
+                    " (",
+                    progressbar.Percentage(),
+                    ") ",
+                    progressbar.Bar("█", "|", "|"),
+                    " ",
+                    progressbar.Timer(),
+                    " - ",
+                    progressbar.SmoothingETA(),
+                ],
+                poll_interval=1,    # Updates every 1 second
+            )
 
         self.downstream_queue.extend(self.sorted_target_features)
 
@@ -405,7 +413,9 @@ class RecordManager:
             item: ManagedFeature = self.active_queue.popleft()
             deactivated += 1
             item.manager.update_progress(self.output_handle)
-            self.progress_bar.next()
+
+            if self.use_progress_bar:
+                self.progress_bar.next()
 
         while (
             len(self.downstream_queue) > 0
@@ -414,7 +424,9 @@ class RecordManager:
             item = self.downstream_queue.popleft()
             skipped += 1
             item.manager.update_progress(self.output_handle)
-            self.progress_bar.next()
+
+            if self.use_progress_bar:
+                self.progress_bar.next()
 
         while (
             len(self.downstream_queue) > 0
@@ -447,13 +459,17 @@ class RecordManager:
             item = self.active_queue.popleft()
             deactivated += 1
             item.manager.update_progress(self.output_handle)
-            self.progress_bar.next()
+
+            if self.use_progress_bar:
+                self.progress_bar.next()
 
         while len(self.downstream_queue) > 0:
             item = self.downstream_queue.popleft()
             skipped += 1
             item.manager.update_progress(self.output_handle)
-            self.progress_bar.next()
+
+            if self.use_progress_bar:
+                self.progress_bar.next()
 
         return QueueUpdates(0, deactivated, skipped)
 
