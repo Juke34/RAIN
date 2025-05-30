@@ -1,6 +1,6 @@
 process reditools2 {
     label "reditools2"
-    publishDir("${params.outdir}/reditools", mode: "copy")
+    publishDir("${params.outdir}/reditools2", mode: "copy")
     tag "${meta.id}"
 
     input:
@@ -9,7 +9,7 @@ process reditools2 {
         val region
 
     output:
-        tuple(val(meta), path("edit_table.txt"), emit: tuple_sample_serial_table)
+        tuple(val(meta), path("*site_edits_reditools2.txt"), emit: tuple_sample_serial_table)
 
     script:
 
@@ -29,8 +29,9 @@ process reditools2 {
         // the reditools error message
         strand_orientation = meta.libtype
     }
+    base_name = bam.BaseName
     
     """
-    reditools.py -f ${bam} -r ${genome} -s ${strand_orientation} -o edit_table.txt
+    reditools.py -f ${bam} -r ${genome} -s ${strand_orientation} -o ${base_name}.site_edits_reditools2.txt
     """
 }
