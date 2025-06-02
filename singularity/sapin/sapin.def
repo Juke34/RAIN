@@ -2,7 +2,7 @@ Bootstrap: docker
 From: python:slim-bullseye
 
 %files
-    constraints.txt /SAPiN/constraints.txt
+    singularity/sapin/constraints.txt /constraints.txt
 
 %post
     apt-get update && apt-get install -y \
@@ -14,7 +14,10 @@ From: python:slim-bullseye
     git clone --depth=1 https://github.com/Juke34/SAPiN.git /SAPiN
 
     # Installer le paquet avec contraintes
-    pip install --constraint /SAPiN/constraints.txt /SAPiN
+    pip install --constraint /constraints.txt /SAPiN
+
+    # Remove the constraints file
+    rm /constraints.txt
 
 %environment
     export PATH=/usr/local/bin:$PATH

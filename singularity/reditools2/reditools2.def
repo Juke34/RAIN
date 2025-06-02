@@ -2,8 +2,8 @@ Bootstrap: docker
 From: condaforge/miniforge3:24.7.1-2
 
 %files
-    env_reditools2.yml
-    entrypoint.sh /usr/local/bin/entrypoint.sh
+    singularity/reditools2/env_reditools2.yml ./env_reditools2.yml
+    singularity/reditools2/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 %post
     # Activer conda dans l'environnement shell
