@@ -1,0 +1,49 @@
+Bootstrap: docker
+From: condaforge/miniforge3:24.7.1-2
+
+%files
+    singularity/reditools2/env_reditools2.yml ./env_reditools2.yml
+    singularity/reditools2/entrypoint.sh /usr/local/bin/entrypoint.sh
+
+%post
+    # Activer conda dans l'environnement shell
+    conda config --add channels bioconda
+    conda config --add channels conda-forge
+
+    # Créer l'environnement Conda
+    conda create -n myenv python=2.7 -y
+    echo "conda activate myenv" >> /environment
+
+    # Mettre à jour avec le fichier YAML
+    conda env update -n myenv --file env_reditools2.yml
+    conda clean --all -f -y
+
+    # Cloner REDItools2
+    git clone --depth=1 https://github.com/BioinfoUNIBA/REDItools2.git /opt/reditools2
+    chmod +x /opt/reditools2/src/cineca/reditools.py
+
+    # Liens symboliques pour les exécutables
+    ln -s /opt/reditools2/src/cineca/reditools.py /usr/local/bin/reditools.py
+    ln -s /opt/reditools2/src/cineca/parallel_reditools.py /usr/local/bin/parallel_reditools.py
+
+    # Entrypoint
+    chmod +x /usr/local/bin/entrypoint.sh
+
+%environment
+    export PATH=/usr/local/bin:$PATH
+    export CONDA_DEFAULT_ENV=myenv
+    export PATH=/opt/conda/envs/myenv/bin:$PATH
+    source /opt/conda/etc/profile.d/conda.sh
+    conda activate myenv
+
+%runscript
+    exec /usr/local/bin/entrypoint.sh "$@"
+
+%labels
+    Author jacques.dainat@ird.fr
+    Version v1.0
+    Tool REDItools2
+
+%help
+    REDItools2 installed with Python 2.7 environment via Conda.
+    Run the container with 'reditools.py' or 'parallel_reditools.py'.
