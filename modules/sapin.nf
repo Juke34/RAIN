@@ -8,10 +8,11 @@ process sapin {
         path(reference)
 
     output:
-        path("restable.tsv")
+        path("*.site_edits_sapin.tsv")
 
     script:
+        base_name = bam.BaseName
         """
-        sapin -a ${bam} -f ${reference} > restable.tsv
+        sapin -a ${bam} -f ${reference} > ${base_name}.site_edits_sapin.tsv
         """
 }
