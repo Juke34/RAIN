@@ -13,7 +13,7 @@ from Bio.SeqFeature import SeqFeature
 import numpy as np
 from numpy.typing import NDArray
 from typing import TextIO, NamedTuple, Optional, Generator
-from site_variant_readers import RNAVariantReader, ReditoolsReader
+from site_variant_readers import RNAVariantReader, Reditools2Reader, Reditools3Reader
 import argparse
 from contextlib import nullcontext
 import sys
@@ -52,8 +52,8 @@ def parse_cli_input() -> argparse.Namespace:
         "--format",
         "-f",
         type=str,
-        choices=["reditools", "jacusa2", "sapin"],
-        default="reditools",
+        choices=["reditools2", "reditools3", "jacusa2", "sapin"],
+        default="reditools3",
         help="Sites file format",
     )
     parser.add_argument(
@@ -437,7 +437,8 @@ class RecordManager:
             if item.feature.location.end < pos:
                 skipped += 1
                 item.manager.update_progress(self.output_handle)
-                self.progress_bar.next()
+                if self.use_progress_bar:
+                    self.progress_bar.next()
             else:
                 self.load_active_queue(item)
                 activated += 1
@@ -562,9 +563,12 @@ if __name__ == "__main__":
         else nullcontext(sys.stdout) as output_handle,
     ):
         match args.format:
-            case "reditools":
-                print("Reditools format\n")
-                sv_reader: RNAVariantReader = ReditoolsReader(sv_handle)
+            case "reditools2":
+                print("Reditools2 format\n")
+                sv_reader: RNAVariantReader = Reditools2Reader(sv_handle)
+            case "reditools3":
+                print("Reditools3 format\n")
+                sv_reader: RNAVariantReader = Reditools3Reader(sv_handle)
             case _:
                 raise Exception(f'Unimplemented format "{args.format}"')
 
