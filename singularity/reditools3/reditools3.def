@@ -1,0 +1,19 @@
+Bootstrap: docker
+From: python:slim-bullseye
+
+%post
+    apt-get update && apt-get install -y procps
+    pip install REDItools3
+
+%environment
+    export PATH=/usr/local/bin/:$PATH
+
+%runscript
+    exec bash "$@"
+
+%labels
+    Author eascarrunz.dev@mailfence.com
+    Tool REDItools3
+
+%help
+    Container for REDItools3.
