@@ -1,0 +1,15 @@
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - _openmp_mutex=4.5=2_gnu
+  - pip=20.1.1=pyh9f0ad1d_0
+  - psutil=5.7.0=py27hdf8410d_1
+  - pysam=0.20.0=py27h7835474_0
+  - python=2.7.15=h5a48372_1011_cpython
+  - python_abi=2.7=1_cp27mu
+  - samtools=1.18=hd87286a_0
+  - tabix=1.11=hdfd78af_0
+  - sortedcontainers
+  - netifaces
+

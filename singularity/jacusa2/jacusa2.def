@@ -1,0 +1,26 @@
+Bootstrap: docker
+From: openjdk:8u102
+
+%post
+    # Mise à jour des outils nécessaires
+    # apt-get update && apt-get install -y wget
+
+    # Téléchargement de JACUSA2
+    wget https://github.com/dieterich-lab/JACUSA2/releases/download/v2.0.4/JACUSA_v2.0.4.jar -O /usr/local/bin/JACUSA_v2.0.4.jar
+
+    # Création du script wrapper
+    echo '#!/usr/bin/env bash' > /usr/local/bin/jacusa2
+    echo 'java -jar /usr/local/bin/JACUSA_v2.0.4.jar "$@"' >> /usr/local/bin/jacusa2
+    chmod +x /usr/local/bin/jacusa2
+
+%environment
+    export PATH=/usr/local/bin:$PATH
+
+%labels
+    Author jacques.dainat@ird.fr
+    Version v2.0.4
+    Tool JACUSA2
+
+%help
+    JACUSA2 v2.0.4 installed.
+    Use the 'jacusa2' command to run the tool.
