@@ -10,4 +10,5 @@ dependencies:
   - python_abi=2.7=1_cp27mu
   - samtools=1.18=hd87286a_0
   - tabix=1.11=hdfd78af_0
+  - sortedcontainers
 
