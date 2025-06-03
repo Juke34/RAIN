@@ -31,6 +31,6 @@ process reditools3 {
         base_name = bam.BaseName
 
         """
-        python -m reditools analyze ${bam} --reference ${genome} --strand ${strand_orientation} --output-file ${base_name}.site_edits_reditools3.txt --threads ${task.cpus} --verbose > ${base_name}.reditools3.log
+        python -m reditools analyze ${bam} --reference ${genome} --strand ${strand_orientation} --output-file ${base_name}.site_edits_reditools3.txt --threads ${task.cpus} --verbose &> ${base_name}.reditools3.log
         """
 }
