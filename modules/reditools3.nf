@@ -8,7 +8,8 @@ process reditools3 {
         path genome
 
     output:
-        tuple(val(meta), path("edit_table.txt"), emit: tuple_sample_serial_table)
+        tuple(val(meta), path("${base_name}.site_edits_reditools3.txt"), emit: tuple_sample_serial_table)
+        path("${base_name}.reditools3.log", emit: log)
 
     script:
         // Set the strand orientation parameter from the library type parameter
@@ -27,8 +28,9 @@ process reditools3 {
             // the reditools error message
             strand_orientation = meta.libtype
         }
+        base_name = bam.BaseName
 
         """
-        python -m reditools analyze ${bam} --reference ${genome} --strand ${strand_orientation} --output-file edit_table.txt
+        python -m reditools analyze ${bam} --reference ${genome} --strand ${strand_orientation} --output-file ${base_name}.site_edits_reditools3.txt --threads ${task.cpus} --verbose > ${base_name}.reditools3.log
         """
 }
