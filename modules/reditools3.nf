@@ -27,8 +27,9 @@ process reditools3 {
             // the reditools error message
             strand_orientation = meta.libtype
         }
+        base_name = bam.BaseName
 
         """
-        python -m reditools analyze ${bam} --reference ${genome} --strand ${strand_orientation} --output-file edit_table.txt
+        python -m reditools analyze ${bam} --reference ${genome} --strand ${strand_orientation} --output-file ${base_name}.site_edits_reditools3.txt
         """
 }
