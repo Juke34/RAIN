@@ -176,10 +176,10 @@ if ( ! (params.edit_site_tool in edit_site_tools) ){
 
 // check RAIN profile - /!\ profile must be sync with AliNe profile as much as possible
 if (
-    workflow.profile.contains('singularity') ||
-    workflow.profile.contains('docker')
+      workflow.containerEngine == "singularity" ||
+      workflow.containerEngine == "docker"
   ) { "executer selected" }
-else { exit 1, "No executer selected: -profile docker/singularity"}
+else { exit 1, "No executer selected: please use a profile activating docker or singularity (e.g. -profile docker/singularity/itrop)"}
 
 // check AliNE profile
 def aline_profile_list=[]
