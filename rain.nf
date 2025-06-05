@@ -10,12 +10,13 @@ import java.nio.file.*
 //*************************************************
 
 // Input/output params
-params.reads      = null // "/path/to/reads_{1,2}.fastq.gz/or/folder"
-params.bam        = null // "/path/to/reads.bam/or/folder"
-params.csv        = null // "/path/to/reads.bam/or/folder"
-params.genome     = null // "/path/to/genome.fa"
-params.annotation = null // "/path/to/annotations.gff3"
-params.outdir     = "result"
+params.reads        = null // "/path/to/reads_{1,2}.fastq.gz/or/folder"
+params.bam          = null // "/path/to/reads.bam/or/folder"
+params.csv          = null // "/path/to/reads.bam/or/folder"
+params.genome       = null // "/path/to/genome.fa"
+params.annotation   = null // "/path/to/annotations.gff3"
+params.outdir       = "result"
+params.clipoverlap = false
 
 /* Specific AliNe params (some are shared with RAIN)*/
 
@@ -90,6 +91,7 @@ def helpMSG() {
     --bam_library_type          Set the library_type of your BAM reads (default: null). When using BAM you must set a library type: [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
     --edit_threshold            Minimal number of edited reads to count a site as edited (default: 1)
     --aggregation_mode          Mode for aggregating edition counts mapped on genomic features. See documentation for details. Options are: "all" (default) or "cds_longest"
+    --clipoverlap               Clip overlapping sequences in read pairs to avoid double counting. (default: false)
 
         Nextflow options:
     -profile                    Change the profile of nextflow both the engine and executor more details on github README [debug, test, itrop, singularity, local, docker]
@@ -443,12 +445,17 @@ workflow rain {
         fastqc_dup(gatk_markduplicates.out.tuple_sample_dedupbam, "dup")
         logs.concat(fastqc_dup.out).set{logs} // save log
         // Clip overlap
-        bamutil_clipoverlap(gatk_markduplicates.out.tuple_sample_dedupbam)
+        if (params.clipoverlap) {
+            bamutil_clipoverlap(gatk_markduplicates.out.tuple_sample_dedupbam)
+            tuple_sample_bam_processed = bamutil_clipoverlap.out.tuple_sample_clipoverbam
+        } else {
+            tuple_sample_bam_processed = gatk_markduplicates.out.tuple_sample_dedupbam
+        }
         // stat on bam with overlap clipped
-        fastqc_clip(bamutil_clipoverlap.out.tuple_sample_clipoverbam, "clip")
+        fastqc_clip(tuple_sample_bam_processed, "clip")
         logs.concat(fastqc_clip.out).set{logs} // save log
         // index bam
-        samtools_index(bamutil_clipoverlap.out.tuple_sample_clipoverbam)
+        samtools_index(tuple_sample_bam_processed)
         // report with multiqc
         // multiqc(logs.collect(),params.multiqc_config)
         // Create a fasta index file of the reference genome
@@ -460,7 +467,7 @@ workflow rain {
                 jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex)
                 break
             case "sapin":
-                sapin(bamutil_clipoverlap.out.tuple_sample_clipoverbam, genome)
+                sapin(tuple_sample_bam_processed, genome)
                 break
             case "reditools2":
                 reditools2(samtools_index.out.tuple_sample_bam_bamindex, genome, params.region)
