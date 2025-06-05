@@ -58,7 +58,7 @@ class TestReader(RNAVariantReader):
         pass
 
 
-class ReditoolsReader(RNAVariantReader):
+class ReditoolsXReader(RNAVariantReader):
     header_strings = (
         "Region",
         "Position",
@@ -112,18 +112,12 @@ class ReditoolsReader(RNAVariantReader):
                 )
 
         return None
+    
+    def parse_strand(self):
+        pass
 
     def _parse_parts(self) -> SiteVariantData:
-        strand = int(self.parts[REDITOOLS_FIELD_INDEX["Strand"]])
-        match strand:
-            case 0:
-                strand = -1
-            case 1:
-                strand = 1
-            case 2:
-                strand = 0
-            case _:
-                raise Exception(f"Invalid strand value: {strand}")
+        strand = self.parse_strand()
             
         reference_nuc_str: str = self.parts[REDITOOLS_FIELD_INDEX["Reference"]]
         
@@ -153,3 +147,30 @@ class ReditoolsReader(RNAVariantReader):
         """Close the file"""
         self.file_handle.close()
     
+
+class Reditools2Reader(ReditoolsXReader):
+    def parse_strand(self) -> int:
+        strand = int(self.parts[REDITOOLS_FIELD_INDEX["Strand"]])
+        match strand:
+            case 0:
+                return -1
+            case 1:
+                return 1
+            case 2:
+                return 0
+            case _:
+                raise Exception(f"Invalid strand value: {strand}")
+
+class Reditools3Reader(ReditoolsXReader):
+    def parse_strand(self) -> int:
+        strand_str = self.parts[REDITOOLS_FIELD_INDEX["Strand"]]
+        match strand_str:
+            case "-":
+                return -1
+            case "+":
+                return 1
+            case "*":
+                return 0
+            case _:
+                raise Exception(f"Invalid strand value: {strand_str}")
+

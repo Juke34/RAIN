@@ -27,8 +27,8 @@ params.library_type = "auto" // can be 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF
 params.bam_library_type = null // can be 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' - see https://github.com/Juke34/AliNe for more information
 
 // Edit counting params
-edit_site_tools = ["reditools2", "jacusa2", "sapin"]
-params.edit_site_tool = "reditools2"
+edit_site_tools = ["reditools2", "reditools3", "jacusa2", "sapin"]
+params.edit_site_tool = "reditools3"
 params.edit_threshold = 1
 params.aggregation_mode = "all"
 
@@ -142,6 +142,7 @@ include {multiqc} from './modules/multiqc.nf'
 include {fasta_uncompress} from "$baseDir/modules/pigz.nf"
 include {samtools_index; samtools_fasta_index; samtools_sort_bam} from './modules/samtools.nf'
 include {reditools2} from "./modules/reditools2.nf"
+include {reditools3} from "./modules/reditools3.nf"
 include {jacusa2} from "./modules/jacusa2.nf"
 include {sapin} from "./modules/sapin.nf"
 include {normalize_gxf} from "./modules/agat.nf"
@@ -177,10 +178,10 @@ if ( ! (params.edit_site_tool in edit_site_tools) ){
 
 // check RAIN profile - /!\ profile must be sync with AliNe profile as much as possible
 if (
-    workflow.profile.contains('singularity') ||
-    workflow.profile.contains('docker')
+      workflow.containerEngine == "singularity" ||
+      workflow.containerEngine == "docker"
   ) { "executer selected" }
-else { exit 1, "No executer selected: -profile docker/singularity"}
+else { exit 1, "No executer selected: please use a profile activating docker or singularity (e.g. -profile docker/singularity/itrop)"}
 
 // check AliNE profile
 def aline_profile_list=[]
@@ -472,7 +473,12 @@ workflow rain {
             case "reditools2":
                 reditools2(samtools_index.out.tuple_sample_bam_bamindex, genome, params.region)
                 normalize_gxf(annnotation)
-                pluviometer(reditools2.out.tuple_sample_serial_table, normalize_gxf.out.gff, "reditools")
+                pluviometer(reditools2.out.tuple_sample_serial_table, normalize_gxf.out.gff, "reditools2")
+                break
+            case "reditools3":
+                reditools3(samtools_index.out.tuple_sample_bam_bamindex, genome)
+                normalize_gxf(annnotation)
+                pluviometer(reditools3.out.tuple_sample_serial_table, normalize_gxf.out.gff, "reditools3")
                 break
             default:
                 exit(1, "Wrong edit site tool was passed")
