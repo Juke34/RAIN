@@ -87,6 +87,27 @@ def parse_cli_input() -> argparse.Namespace:
 
     return parser.parse_args()
 
+def write_output_file_header(handle: TextIO) -> int:
+    return handle.write(
+        "SeqID\tGrandParentID\tParentID\tFeatureID\tType\tStart\tEnd\tStrand\tCoveredSites"
+        + "\tRefBaseFreqs["
+        + ",".join(BASE_TYPES)
+        + "]"
+        + "\tEditSites["
+        + ",".join(EDIT_TYPES)
+        + "]"
+        + "\tRefCov["
+        + ",".join(BASE_TYPES)
+        + "]"
+        + "\tEditReads["
+        + ",".join(EDIT_TYPES)
+        + "]"
+        # + "\tPropEditReads["
+        # + ",".join(EDIT_TYPES)
+        # + "]"
+        + "\n"
+    )
+
 
 class SiteFilter:
     def __init__(self, cov_threshold: int, edit_threshold: int) -> None:
@@ -486,7 +507,7 @@ class RecordManager:
 
         return b
 
-    def scan_and_count(self, reader: RNAVariantReader, header=True) -> None:
+    def scan_and_count(self, reader: RNAVariantReader) -> None:
         """Count and write to output
         all the site variation data of interest of the features in this record, based
         on the variation data stream of a reader.
@@ -494,27 +515,6 @@ class RecordManager:
         activated: int = 0
         deactivated: int = 0
         skipped: int = 0
-
-        if header:
-            self.output_handle.write(
-                "SeqID\tGrandParentID\tParentID\tFeatureID\tType\tStart\tEnd\tStrand\tCoveredSites"
-                + "\tRefBaseFreqs["
-                + ",".join(BASE_TYPES)
-                + "]"
-                + "\tEditSites["
-                + ",".join(EDIT_TYPES)
-                + "]"
-                + "\tRefCov["
-                + ",".join(BASE_TYPES)
-                + "]"
-                + "\tEditReads["
-                + ",".join(EDIT_TYPES)
-                + "]"
-                # + "\tPropEditReads["
-                # + ",".join(EDIT_TYPES)
-                # + "]"
-                + "\n"
-            )
 
         variant_data: Optional[SiteVariantData] = reader.read()
 
@@ -580,6 +580,8 @@ if __name__ == "__main__":
             cov_threshold=args.cov, edit_threshold=args.edit_threshold
         )
 
+        write_output_file_header(output_handle)
+
         for record in records:
             manager: RecordManager = RecordManager(
                 record=record,
@@ -587,4 +589,4 @@ if __name__ == "__main__":
                 output_handle=output_handle,
                 aggregation_mode=args.aggregation_mode
                 )
-            manager.scan_and_count(sv_reader, header=True)
+            manager.scan_and_count(sv_reader)
