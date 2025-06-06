@@ -17,7 +17,7 @@ from site_variant_readers import RNAVariantReader, Reditools2Reader, Reditools3R
 import argparse
 from contextlib import nullcontext
 import sys
-from utils import SiteVariantData, BASE_TYPES, EDIT_TYPES
+from utils import SiteVariantData, BASE_TYPES, EDIT_TYPES, MATCH_MISMATCH_TYPES
 from collections import deque
 import progressbar
 import math
@@ -76,35 +76,24 @@ def parse_cli_input() -> argparse.Namespace:
         type=str,
         default="all",
         choices=["all", "cds_longest"],
-        help="Mode for aggregating counts: \"all\" aggregates features of every transcript; \"cds_longest\" aggregates features of the longest CDS or non-coding transcript",
+        help='Mode for aggregating counts: "all" aggregates features of every transcript; "cds_longest" aggregates features of the longest CDS or non-coding transcript',
     )
     parser.add_argument(
-        "--progress",
-        action="store_true",
-        default="false",
-        help="Display progress bar"
+        "--progress", action="store_true", default="false", help="Display progress bar"
     )
 
     return parser.parse_args()
 
+
 def write_output_file_header(handle: TextIO) -> int:
     return handle.write(
         "SeqID\tGrandParentID\tParentID\tFeatureID\tType\tStart\tEnd\tStrand\tCoveredSites"
-        + "\tRefBaseFreqs["
-        + ",".join(BASE_TYPES)
+        + "\tSiteFreqs["
+        + ",".join(MATCH_MISMATCH_TYPES)
         + "]"
-        + "\tEditSites["
-        + ",".join(EDIT_TYPES)
+        + "\tReadFreqs["
+        + ",".join(MATCH_MISMATCH_TYPES)
         + "]"
-        + "\tRefCov["
-        + ",".join(BASE_TYPES)
-        + "]"
-        + "\tEditReads["
-        + ",".join(EDIT_TYPES)
-        + "]"
-        # + "\tPropEditReads["
-        # + ",".join(EDIT_TYPES)
-        # + "]"
         + "\n"
     )
 
@@ -117,7 +106,11 @@ class SiteFilter:
 
     def apply(self, variant_data: SiteVariantData) -> None:
         if variant_data.coverage >= self.cov_threshold:
-            np.copyto(self.frequencies, variant_data.frequencies * variant_data.frequencies >= self.edit_threshold)
+            np.copyto(
+                self.frequencies,
+                variant_data.frequencies * variant_data.frequencies
+                >= self.edit_threshold,
+            )
         else:
             self.frequencies.fill(0)
 
@@ -128,17 +121,6 @@ class MultiCounter:
     """Holds the counter data and logic for a feature, feature aggregate, or record"""
 
     def __init__(self, site_filter: SiteFilter) -> None:
-        """
-        Tallies of the number of times that a read has been mapped a site in the genome with base X.
-        It is *not* the number of times a base appears in a read
-        """
-        self.ref_coverage_by_base_type: NDArray[np.int32] = np.zeros(4, dtype=np.int32)
-
-        """
-        Number of times that each base type occurs in the reference genome
-        """
-        self.ref_base_freqs: NDArray[np.int32] = np.zeros(4, dtype=np.int32)
-
         """
         Tallies of the numbers of reads per edit type
         This is a numpy matrix where the rows represent the reference base and the columns the edited base
@@ -157,10 +139,6 @@ class MultiCounter:
         """Increment the counters from the data in a SiteVariantData object."""
         i: int = variant_data.reference
 
-        # TODO: Decide whether to count the coverage of bases when it is below the coverage threshold used for counting edits
-        self.ref_coverage_by_base_type[i] += variant_data.coverage
-        self.ref_base_freqs[i] += variant_data.coverage > 0
-
         self.edit_read_freqs[i, :] += variant_data.frequencies
 
         self.filter.apply(variant_data)
@@ -172,79 +150,29 @@ class MultiCounter:
         b = 0
 
         # Write the number of covered sites
-        b += output_handle.write(str(self.ref_base_freqs.sum()))
-        output_handle.write("\t")
-
-        # Write reference base frequencies
-        b += write_base_array(output_handle, self.ref_base_freqs)
-        output_handle.write("\t")
+        b += output_handle.write(str(self.edit_site_freqs.sum()))
+        b += output_handle.write("\t")
 
         # Write edited sites
         b += write_edit_array(output_handle, self.edit_site_freqs)
-        output_handle.write("\t")
-
-        # Write sums of base coverages
-        b += write_base_array(output_handle, self.ref_coverage_by_base_type)
-        output_handle.write("\t")
+        b += output_handle.write("\t")
 
         # Write edit frequencies
         b += write_edit_array(output_handle, self.edit_read_freqs)
-        # output_handle.write("\t")
-
-        # # Write proportion of edited reads
-        # b += write_edit_array(output_handle, self.compute_proportions())
 
         return b
-
-    def write_ref_coverage_by_base(self, output_handle: TextIO) -> int:
-        """Writes out the reference base read frequencies in comma-separated format"""
-        return output_handle.write(
-            ",".join(str(value) for value in self.ref_coverage_by_base_type)
-        )
-
-    def write_edit_freqs(self, output_handle: TextIO) -> int:
-        """Writes the edit frequencies in a comma-separated format"""
-        # Yes, this looks like lisp
-        return output_handle.write(
-            ",".join(
-                ",".join(
-                    # Skip indices where i == j, because they don't represent editions
-                    str(self.edit_read_freqs[i, j])
-                    for j in filter(lambda j: j != i, range(4))
-                )
-                for i in range(4)
-            )
-        )
-
-    def write_edited_sites(self, output_handle: TextIO) -> int:
-        return output_handle.write(
-            ",".join(str(value) for value in self.edit_site_freqs)
-        )
-
-    def compute_proportions(self) -> NDArray[np.float64]:
-        return np.divide(
-            self.edit_read_freqs,
-            # Add ones to bases with zero reads to avoid division by 0
-            self.ref_coverage_by_base_type + (self.ref_coverage_by_base_type == 0),
-        )
 
 
 def write_base_array(output_handle: TextIO, x: NDArray) -> int:
     return output_handle.write(",".join(str(value) for value in x))
 
-
 def write_edit_array(output_handle: TextIO, x: NDArray) -> int:
+    """
+    Print a flattened version of an edit array in alphabetical order (AA, AC, AG, AT, CA, CC, etc...)
+    """
     return output_handle.write(
-        ",".join(
-            ",".join(
-                # Skip indices where i == j, because they don't represent editions
-                str(x[i, j])
-                for j in filter(lambda j: j != i, range(4))
-            )
-            for i in range(4)
-        )
+        ",".join(",".join(str(x[i, j]) for j in range(4)) for i in range(4))
     )
-
 
 class FeatureGroupManager:
     """
@@ -270,7 +198,7 @@ class FeatureGroupManager:
         if feature.location.strand:
             self.recman.sorted_target_features.append(ManagedFeature(feature, self))
             if feature.id in self.counters:
-                counter = self.counters[feature.id]   # Doesn't do anything!
+                counter = self.counters[feature.id]  # Doesn't do anything!
             else:
                 counter = MultiCounter(self.recman.filter)
                 self.counters[feature.id] = counter
@@ -293,15 +221,15 @@ class FeatureGroupManager:
 
         return None
 
-    def update_counters(
-        self, feature: SeqFeature, variant_data: SiteVariantData
-    ) -> None:
+    def update_counters(self, feature: SeqFeature, variant_data: SiteVariantData) -> None:
         if feature.location.strand == variant_data.strand:
             self.counters[feature.id].update(variant_data)
 
         return None
 
-    def write_feature_data(self, feature: SeqFeature, grandparent:str, parent: str, output_handle: TextIO) -> None:
+    def write_feature_data(
+        self, feature: SeqFeature, grandparent: str, parent: str, output_handle: TextIO
+    ) -> None:
         b: int = 0
         b += output_handle.write(
             f"{self.recman.record.id}\t{grandparent}\t{parent}\t{feature.id}\t{feature.type}\t"
@@ -315,7 +243,9 @@ class FeatureGroupManager:
 
         return b
 
-    def checkout(self, feature: SeqFeature, grandparent: str, parent: str, output_handle: TextIO) -> None:
+    def checkout(
+        self, feature: SeqFeature, grandparent: str, parent: str, output_handle: TextIO
+    ) -> None:
         if feature.id in self.counters:
             self.write_feature_data(feature, grandparent, parent, output_handle)
             self.counters.pop(feature.id, None)
@@ -348,7 +278,14 @@ class QueueUpdates(NamedTuple):
 
 
 class RecordManager:
-    def __init__(self, record: SeqRecord, global_filter: SiteFilter, output_handle: TextIO, aggregation_mode: str, progress_bar: bool = False):
+    def __init__(
+        self,
+        record: SeqRecord,
+        global_filter: SiteFilter,
+        output_handle: TextIO,
+        aggregation_mode: str,
+        progress_bar: bool = False,
+    ):
         self.record: SeqRecord = record
         self.pos: int = 0
         self.final_pos: int = len(record.seq)
@@ -398,7 +335,7 @@ class RecordManager:
                     " - ",
                     progressbar.SmoothingETA(),
                 ],
-                poll_interval=1,    # Updates every 1 second
+                poll_interval=1,  # Updates every 1 second
             )
 
         self.downstream_queue.extend(self.sorted_target_features)
@@ -428,8 +365,7 @@ class RecordManager:
         skipped: int = 0
 
         while (
-            len(self.active_queue) > 0
-            and self.active_queue[0].feature.location.end < pos
+            len(self.active_queue) > 0 and self.active_queue[0].feature.location.end < pos
         ):
             item: ManagedFeature = self.active_queue.popleft()
             deactivated += 1
@@ -587,6 +523,6 @@ if __name__ == "__main__":
                 record=record,
                 global_filter=global_filter,
                 output_handle=output_handle,
-                aggregation_mode=args.aggregation_mode
-                )
+                aggregation_mode=args.aggregation_mode,
+            )
             manager.scan_and_count(sv_reader)
