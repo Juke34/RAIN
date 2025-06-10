@@ -460,25 +460,25 @@ workflow rain {
         // report with multiqc
         // multiqc(logs.collect(),params.multiqc_config)
         // Create a fasta index file of the reference genome
-        samtools_fasta_index(genome)
+        samtools_fasta_index(genome.collect())
+
+        normalize_gxf(annnotation)
 
         // Select site detection tool
         switch (params.edit_site_tool) {
             case "jacusa2":
-                jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex)
+                jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex.collect())
                 break
             case "sapin":
-                sapin(tuple_sample_bam_processed, genome)
+                sapin(tuple_sample_bam_processed, genome.collect())
                 break
             case "reditools2":
-                reditools2(samtools_index.out.tuple_sample_bam_bamindex, genome, params.region)
-                normalize_gxf(annnotation)
-                pluviometer(reditools2.out.tuple_sample_serial_table, normalize_gxf.out.gff, "reditools2")
+                reditools2(samtools_index.out.tuple_sample_bam_bamindex, genome.collect(), params.region)
+                pluviometer(reditools2.out.tuple_sample_serial_table, normalize_gxf.out.gff.collect(), "reditools2")
                 break
             case "reditools3":
-                reditools3(samtools_index.out.tuple_sample_bam_bamindex, genome)
-                normalize_gxf(annnotation)
-                pluviometer(reditools3.out.tuple_sample_serial_table, normalize_gxf.out.gff, "reditools3")
+                reditools3(samtools_index.out.tuple_sample_bam_bamindex, genome.collect())
+                pluviometer(reditools3.out.tuple_sample_serial_table, normalize_gxf.out.gff.collect(), "reditools3")
                 break
             default:
                 exit(1, "Wrong edit site tool was passed")
