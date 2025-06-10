@@ -11,8 +11,11 @@ NUC_STR_TO_IND = dict(A=0, C=1, G=2, T=3)
 # Map bases to their complement
 NUC_COMPLEMENT = dict(A="T", C="G", G="C", T="A")
 
-# Generator of possible base edits types, sorted alphabetically
+# Possible base edits types, sorted alphabetically
 EDIT_TYPES = list("".join(pair) for pair in itertools.permutations(BASE_TYPES, 2))
+
+# Alphabetical list of all possible base matches and mismatches
+MATCH_MISMATCH_TYPES = ["".join([x, y]) for x in BASE_TYPES for y in BASE_TYPES]
 
 # Possible base non-edits, sorted alphabetically
 NONEDIT_TYPES = ["AA", "CC", "GG", "TT"]
