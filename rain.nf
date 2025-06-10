@@ -459,12 +459,12 @@ workflow rain {
         samtools_index(tuple_sample_bam_processed)
         // report with multiqc
         // multiqc(logs.collect(),params.multiqc_config)
-        // Create a fasta index file of the reference genome
-        samtools_fasta_index(genome)
 
         // Select site detection tool
         switch (params.edit_site_tool) {
             case "jacusa2":
+                // Create a fasta index file of the reference genome
+                samtools_fasta_index(genome)
                 jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex)
                 break
             case "sapin":
