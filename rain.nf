@@ -36,7 +36,7 @@ params.aggregation_mode = "all"
 aline_profile_allowed = [ 'docker', 'singularity', 'local', 'itrop' ]
 
 // Aline ressource config used
-params.aline_profiles = "$baseDir/config/ressources/custom_aline.config" // e.g. "docker, singularity,itrop,local"
+params.aline_profiles = "$baseDir/config/resources/custom_aline.config" // e.g. "docker, singularity,itrop,local"
 
 // Aligner params
 align_tools = ['hisat2', "STAR"]
