@@ -3,7 +3,7 @@ A parallel implementation of gzip for modern
 multi-processor, multi-core machines
 https://zlib.net/pigz/
 */
-process fasta_uncompress {
+process fasta_unzip {
     tag "$genome"
     label 'pigz'
  
@@ -20,7 +20,7 @@ process fasta_uncompress {
     """
         
 
-        # DEALING WITH GZIPPED FILES to uncompress if needed
+        # DEALING WITH GZIPPED FILES to unzip if needed
         extension=\$(echo ${genome} | awk -F . '{print \$NF}')
 
         if [[ \${extension} == "gz" ]];then

@@ -139,7 +139,7 @@ include {fastp} from './modules/fastp.nf'
 include {fastqc as fastqc_raw; fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from './modules/fastqc.nf'
 include {gatk_markduplicates } from './modules/gatk.nf'
 include {multiqc} from './modules/multiqc.nf'
-include {fasta_uncompress} from "$baseDir/modules/pigz.nf"
+include {fasta_unzip} from "$baseDir/modules/pigz.nf"
 include {samtools_index; samtools_fasta_index; samtools_sort_bam} from './modules/samtools.nf'
 include {reditools2} from "./modules/reditools2.nf"
 include {reditools3} from "./modules/reditools3.nf"
@@ -205,9 +205,9 @@ workflow {
         Channel.fromPath(params.genome, checkIfExists: true)
                .ifEmpty { exit 1, "Cannot find genome matching ${params.genome}!\n" }
                .set{genome_raw}
-        // uncompress it if needed
-        fasta_uncompress(genome_raw)
-        fasta_uncompress.out.genomeFa.set{genome_ch} // set genome to the output of fasta_uncompress
+        // unzip it if needed
+        fasta_unzip(genome_raw)
+        fasta_unzip.out.genomeFa.set{genome_ch} // set genome to the output of fasta_unzip
 // ----------------------------------------------------------------------------
         // --- DEAL WITH ANNOTATION ---
         Channel.empty().set{annotation_ch}
