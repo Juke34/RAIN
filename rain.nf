@@ -207,14 +207,14 @@ workflow {
                .set{genome_raw}
         // unzip it if needed
         fasta_unzip(genome_raw)
-        fasta_unzip.out.genomeFa.set{genome_ch} // set genome to the output of fasta_unzip
+        fasta_unzip.out.genomeFa.set{genome} // set genome to the output of fasta_unzip
 // ----------------------------------------------------------------------------
         // --- DEAL WITH ANNOTATION ---
-        Channel.empty().set{annotation_ch}
+        Channel.empty().set{annotation}
         if (params.annotation){
         Channel.fromPath(params.annotation, checkIfExists: true)
                .ifEmpty { exit 1, "Cannot find annotation matching ${params.annotation}!\n" }
-               .set{annotation_ch}
+               .set{annotation}
         }
 // ----------------------------------------------------------------------------
         def path_csv = params.csv
@@ -368,7 +368,7 @@ workflow {
                 "${workflow.resume?'-resume':''} -profile ${aline_profile}", // workflow opts supplied as params for flexibility
                 "-config ${params.aline_profiles}",
                 "--reads ${path_reads}",
-                genome_ch,
+                genome,
                 "--read_type ${params.read_type}",
                 "--aligner ${params.aligner}",
                 "--library_type ${params.library_type}",
@@ -390,7 +390,7 @@ workflow {
             if (params.library_type.contains("auto") ) {
                 log.info "Library type is set to auto, extracting it from salmon output"
                 // GET TUPLE [ID, OUTPUT_SALMON_LIBTYPE] FILES
-                ALIGNMENT.out.output
+                aline_alignments_all = ALIGNMENT.out.output
                     .map { dir ->
                         files("$dir/salmon_libtype/*/*.json", checkIfExists: true)  // Find BAM files inside the output directory
                     }
@@ -404,7 +404,7 @@ workflow {
                 aline_libtype = extract_libtype(aline_libtype)
                 aline_alignments.join(aline_libtype)
                     .map { key, val1, val2 -> tuple(key, val1, val2) }
-                    .set { aline_alignments_all }
+
             } else {
                 log.info "Library type is set to ${params.library_type}, no need to extract it from salmon output"
                 aline_alignments_all = aline_alignments.map { name, bam -> tuple(name, bam, params.library_type) }
@@ -418,20 +418,8 @@ workflow {
         }
 
         // call rain
-        all_bams = aline_alignments_all.mix(sorted_bam)
+        tuple_sample_sortedbam = aline_alignments_all.mix(sorted_bam)
         log.info "The following bam file(s) will be processed by RAIN:"
-        all_bams.view()
-        rain(all_bams, genome_ch, annotation_ch)
-}
-
-workflow rain {
-
-    take:
-        tuple_sample_sortedbam
-        genome
-        annnotation
-
-    main:
 
         // STEP 1 QC with fastp ?
         Channel.empty().set{logs}
@@ -472,12 +460,12 @@ workflow rain {
                 break
             case "reditools2":
                 reditools2(samtools_index.out.tuple_sample_bam_bamindex, genome, params.region)
-                normalize_gxf(annnotation)
+                normalize_gxf(annotation)
                 pluviometer(reditools2.out.tuple_sample_serial_table, normalize_gxf.out.gff, "reditools2")
                 break
             case "reditools3":
                 reditools3(samtools_index.out.tuple_sample_bam_bamindex, genome)
-                normalize_gxf(annnotation)
+                normalize_gxf(annotation)
                 pluviometer(reditools3.out.tuple_sample_serial_table, normalize_gxf.out.gff, "reditools3")
                 break
             default:
