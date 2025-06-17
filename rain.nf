@@ -452,7 +452,7 @@ workflow {
         switch (params.edit_site_tool) {
             case "jacusa2":
                 // Create a fasta index file of the reference genome
-                samtools_fasta_index(genome.collect()
+                samtools_fasta_index(genome.collect())
                 jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex.collect())
                 break
             case "sapin":
@@ -460,7 +460,7 @@ workflow {
                 break
             case "reditools2":
                 reditools2(samtools_index.out.tuple_sample_bam_bamindex, genome.collect(), params.region)
-                normalize_gxf(annotation.collec())
+                normalize_gxf(annotation.collect())
                 pluviometer(reditools2.out.tuple_sample_serial_table, normalize_gxf.out.gff.collect(), "reditools2")
                 break
             case "reditools3":
@@ -471,6 +471,7 @@ workflow {
             default:
                 exit(1, "Wrong edit site tool was passed")
         }
+        
 }
 
 

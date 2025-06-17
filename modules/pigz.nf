@@ -3,7 +3,7 @@ A parallel implementation of gzip for modern
 multi-processor, multi-core machines
 https://zlib.net/pigz/
 */
-process fasta_uncompress {
+process fasta_unzip {
     tag "$genome"
     label 'pigz'
  
