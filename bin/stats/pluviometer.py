@@ -490,6 +490,11 @@ class RecordManager:
 
         self.write_total_data()
 
+        # Free memory
+        self.feature_managers.clear()
+        self.sorted_target_features = []
+        self.record.features = []
+
         print(
             f"\nTargets in record {self.record.id}:\n"
             + f"\tActivated: {activated} · Deactivated: {deactivated} · Skipped: {skipped}\n"
