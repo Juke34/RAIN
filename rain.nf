@@ -574,12 +574,12 @@ workflow {
         if (params.clipoverlap) {
             bamutil_clipoverlap(gatk_markduplicates.out.tuple_sample_dedupbam)
             tuple_sample_bam_processed = bamutil_clipoverlap.out.tuple_sample_clipoverbam
+            // stat on bam with overlap clipped
+            fastqc_clip(tuple_sample_bam_processed, "clip")
+            logs.concat(fastqc_clip.out).set{logs} // save log
         } else {
             tuple_sample_bam_processed = gatk_markduplicates.out.tuple_sample_dedupbam
         }
-        // stat on bam with overlap clipped
-        fastqc_clip(tuple_sample_bam_processed, "clip")
-        logs.concat(fastqc_clip.out).set{logs} // save log
         // index bam
         samtools_index(tuple_sample_bam_processed)
         // report with multiqc

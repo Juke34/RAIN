@@ -35,7 +35,7 @@ class TestReader(RNAVariantReader):
         assert edit in EDIT_TYPES + NONEDIT_TYPES
         self.reference: int = NUC_STR_TO_IND[edit[0]]
         self.edited: str = edit[1]
-        self.frequencies: NDArray[np.int32] = np.zeros(4, dtype=np.int32)
+        self.frequencies: NDArray[np.int32] = np.zeros(5, dtype=np.int32)
         self.frequencies[NUC_STR_TO_IND[self.edited]] = 1
 
         return None
@@ -128,7 +128,7 @@ class ReditoolsXReader(RNAVariantReader):
             strand=strand,
             coverage=int(self.parts[REDITOOLS_FIELD_INDEX["Coverage"]]),
             mean_quality=float(self.parts[REDITOOLS_FIELD_INDEX["MeanQ"]]),
-            frequencies=np.int32(self.parts[REDITOOLS_FIELD_INDEX["Frequencies"]][1:-1].split(","))
+            frequencies=np.int32(self.parts[REDITOOLS_FIELD_INDEX["Frequencies"]][1:-1].split(",") + [0])
         )
 
     def read(self) -> Optional[SiteVariantData]:

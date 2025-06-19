@@ -6,3 +6,4 @@ result/*
 **/__pycache__/
 .DS_Store
 sif_images/*
+rain_result/*
