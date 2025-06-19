@@ -84,6 +84,7 @@ def helpMSG() {
                                         control1,path/to/data1.fastq.bam,,auto,short_single
                                         control2,path/to/data2_R1.fastq.gz,path/to/data2_R2.fastq.gz,auto,short_paired
     --genome                    Path to the reference genome in FASTA format.
+    --read_type                 Type of reads among this list ${read_type_allowed} (no default)
 
         Output:
     --output                    Path to the output directory (default: $params.outdir)
@@ -91,8 +92,7 @@ def helpMSG() {
        Optional input:
     --aligner                   Aligner to use [default: $params.aligner]
     --edit_site_tool            Tool used for detecting edited sites. Default: $params.edit_site_tool
-    --read_type                 Type of reads among this list ${read_type_allowed} (default: short_paired)
-    --strandedness              Set the strandedness for all your input reads (default: null). In auto mode salmon will guess the library type for each sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
+    --strandedness              Set the strandedness for all your input reads (default: null). In auto mode salmon will guess the library type for each fastq sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
     --edit_threshold            Minimal number of edited reads to count a site as edited (default: 1)
     --aggregation_mode          Mode for aggregating edition counts mapped on genomic features. See documentation for details. Options are: "all" (default) or "cds_longest"
     --clipoverlap               Clip overlapping sequences in read pairs to avoid double counting. (default: false)
