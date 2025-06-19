@@ -102,7 +102,7 @@ class SiteFilter:
     def __init__(self, cov_threshold: int, edit_threshold: int) -> None:
         self.cov_threshold: int = cov_threshold
         self.edit_threshold: int = edit_threshold
-        self.frequencies: NDArray[np.int32] = np.zeros(4, np.int32)
+        self.frequencies: NDArray[np.int32] = np.zeros(5, np.int32)
 
     def apply(self, variant_data: SiteVariantData) -> None:
         if variant_data.coverage >= self.cov_threshold:
@@ -127,9 +127,9 @@ class MultiCounter:
         Rows and column indices correspond to bases in alphabetic order (ACGT)
         Row-columns corresponding to the same base (e.g. (0,0) -> (A,A)) do not represent edits, and should remain 0
         """
-        self.edit_read_freqs: NDArray[np.int32] = np.zeros((4, 4), dtype=np.int32)
+        self.edit_read_freqs: NDArray[np.int32] = np.zeros((5, 5), dtype=np.int32)
 
-        self.edit_site_freqs: NDArray[np.int32] = np.zeros((4, 4), dtype=np.int32)
+        self.edit_site_freqs: NDArray[np.int32] = np.zeros((5, 5), dtype=np.int32)
 
         self.filter = site_filter
 

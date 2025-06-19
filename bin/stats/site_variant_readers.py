@@ -33,10 +33,10 @@ class TestReader(RNAVariantReader):
         self.position: int = 0
         self.strand:int = strand
         assert edit in EDIT_TYPES + NONEDIT_TYPES
-        self.reference: int = NUC_STR_TO_IND[edit[0]]
+        self.reference: int = NUC_STR_TO_IND.get(edit[0], 4)
         self.edited: str = edit[1]
-        self.frequencies: NDArray[np.int32] = np.zeros(4, dtype=np.int32)
-        self.frequencies[NUC_STR_TO_IND[self.edited]] = 1
+        self.frequencies: NDArray[np.int32] = np.zeros(5, dtype=np.int32)
+        self.frequencies[NUC_STR_TO_IND.get(self.edited, 4)] = 1
 
         return None
 
@@ -124,11 +124,11 @@ class ReditoolsXReader(RNAVariantReader):
         return SiteVariantData(
             seqid=self.parts[REDITOOLS_FIELD_INDEX["Seqid"]],
             position=int(self.parts[REDITOOLS_FIELD_INDEX["Position"]]) - 1,    # Convert Reditools 1-based index to Python's 0-based index
-            reference=NUC_STR_TO_IND[reference_nuc_str],
+            reference=NUC_STR_TO_IND.get(reference_nuc_str, 4),
             strand=strand,
             coverage=int(self.parts[REDITOOLS_FIELD_INDEX["Coverage"]]),
             mean_quality=float(self.parts[REDITOOLS_FIELD_INDEX["MeanQ"]]),
-            frequencies=np.int32(self.parts[REDITOOLS_FIELD_INDEX["Frequencies"]][1:-1].split(","))
+            frequencies=np.int32(self.parts[REDITOOLS_FIELD_INDEX["Frequencies"]][1:-1].split(",") + [0])
         )
 
     def read(self) -> Optional[SiteVariantData]:

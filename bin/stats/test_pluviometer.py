@@ -5,6 +5,8 @@ from BCBio import GFF
 from Bio.SeqRecord import SeqRecord
 from site_variant_readers import TestReader
 from pluviometer import RecordManager
+from pluviometer import SiteFilter
+from pluviometer import write_output_file_header
 from contextlib import nullcontext
 from typing import Generator
 from utils import SiteVariantData
@@ -32,6 +34,14 @@ def parse_cli_input() -> argparse.Namespace:
         type=str,
         help="Name of the output file (leave empty to write to stdout)",
     )
+    parser.add_argument(
+        "--aggregation_mode",
+        "-a",
+        type=str,
+        default="all",
+        choices=["all", "cds_longest"],
+        help='Mode for aggregating counts: "all" aggregates features of every transcript; "cds_longest" aggregates features of the longest CDS or non-coding transcript',
+    )
 
     return parser.parse_args()
 
@@ -41,6 +51,10 @@ if __name__ == "__main__":
     with (open(args.gff) as gff_handle,
         open(args.output, "w") if len(args.output) > 0 else nullcontext(sys.stdout) as output_handle):
         records: Generator[SeqRecord, None, None] = GFF.parse(gff_handle)
+
+        global_filter: SiteFilter = SiteFilter(cov_threshold=1, edit_threshold=1)
+
+        write_output_file_header(output_handle)
         
         for record in records:
             sv_reader = TestReader(
@@ -49,5 +63,10 @@ if __name__ == "__main__":
             )
             sv_data: SiteVariantData = sv_reader.read()
 
-            manager: RecordManager = RecordManager(record, output_handle)
+            manager: RecordManager = RecordManager(
+                record,
+                global_filter,
+                output_handle,
+                args.aggregation_mode
+                )
             manager.scan_and_count(sv_reader)
