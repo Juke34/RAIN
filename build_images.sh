@@ -28,11 +28,9 @@ do
     echo ██████████████████▓▒░   Building ${imgname}   ░▒▓██████████████████
     
     # Reditools2 does not compile on arm64, force using amd64 compilation
-    if [[ $dir =~ "reditools2" ]];then
-        if [[ "$arch" == arm* || "$arch" == "aarch64" ]]; then
-            echo "Reditools2 does not compile on arm64, force using amd64 compilation"
-            docker_arch_option=" --platform linux/amd64"
-        fi
+    if [[ "$arch" == arm* || "$arch" == "aarch64" ]]; then
+        echo "Reditools2 does not compile on arm64, force using amd64 compilation"
+        docker_arch_option=" --platform linux/amd64"
     fi
 
     docker build ${docker_arch_option} -t ${imgname} .
