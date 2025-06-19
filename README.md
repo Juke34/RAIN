@@ -192,6 +192,8 @@ Here the description of typical ouput you will get from RAIN:
     └── Reditools2/Reditools3/Jacusa/sapin/              # Editing output from corresponding tool
     │
     └── feature_edits                                    # Editing computed at different level (genomic features, chromosome, global)
+```
+
 
 ## Author and contributors
 
