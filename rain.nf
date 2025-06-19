@@ -13,7 +13,7 @@ import java.nio.file.*
 params.reads        = null // "/path/to/reads_{1,2}.fastq.gz/or/folder"
 params.genome       = null // "/path/to/genome.fa"
 params.annotation   = null // "/path/to/annotations.gff3"
-params.outdir       = "result"
+params.outdir       = "rain_result"
 params.clipoverlap  = false
 
 /* Specific AliNe params (some are shared with RAIN)*/
@@ -373,14 +373,14 @@ workflow {
                                 .groupTuple()
                                 .ifEmpty { exit 1, "Cannot find reads matching ${bam_path_reads}!\n" }
             } else {
-                if (bam_path_reads) {
+                if (bam_path_reads.endsWith('.bam')) {
                     bams = Channel.fromFilePairs(bam_path_reads, size: 1, checkIfExists: false)
                 }
             }
 
             // Set structure with dictionary as first value
             bams = bams.map {  id, bam_file -> 
-                        def strand = params.strandednes
+                        def strand = params.strandedness
                         strand = (strand && strand.toUpperCase() != "AUTO") ? strand : null // if strandedness is set to auto, set it to null
 
                         def meta = [ id: id, strandedness: strand ]
