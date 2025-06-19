@@ -197,7 +197,7 @@ Here the description of typical ouput you will get from RAIN:
 
 ## Author and contributors
 
-Eduardo Ascarrunz (@eascarrunz)
+Eduardo Ascarrunz (@eascarrunz)  
 Jacques Dainat  (@Juke34)
 
 ## Contributing
