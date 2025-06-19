@@ -7,8 +7,6 @@ Its primary goal is to distinguish true RNA editing events from genomic variants
 
 <img src="doc/img/IRD.png" width="300" height="100" /> <img src="doc/img/MIVEGEC.png" width="150" height="100" />
 
-<img src="doc/img/baargin_flowchart.jpg" width="900" height="500" />
-
 ## Table of Contents
 
    * [Foreword](#foreword)
