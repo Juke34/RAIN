@@ -51,7 +51,7 @@ process samtools_sort_bam {
         """
             if [[ \$(samtools view -H ${bam}| awk '/^@HD/ { for(i=1;i<=NF;i++) if(\$i ~ /^SO:/) print \$i }') == *"coordinate"* ]]; then
                 echo "Already sorted by coordinate"
-                ln -s ${bam} ${bam.baseName}_sorted.bam
+                ln -s \$(realpath ${bam}) ${bam.baseName}_sorted.bam
             else
                 echo "Not sorted by coordinate"
                 samtools sort -@ ${task.cpus} ${bam} -o ${bam.baseName}_sorted.bam  

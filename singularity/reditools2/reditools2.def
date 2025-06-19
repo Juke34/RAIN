@@ -3,7 +3,6 @@ From: condaforge/miniforge3:24.7.1-2
 
 %files
     singularity/reditools2/env_reditools2.yml ./env_reditools2.yml
-    singularity/reditools2/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 %post
     # Activer conda dans l'environnement shell
@@ -12,7 +11,8 @@ From: condaforge/miniforge3:24.7.1-2
 
     # Créer l'environnement Conda
     conda create -n myenv python=2.7 -y
-    echo "conda activate myenv" >> /environment
+    echo "conda init" >> /root/.bashrc
+    echo "conda activate myenv" >> /root/.bashrc
 
     # Mettre à jour avec le fichier YAML
     conda env update -n myenv --file env_reditools2.yml
@@ -26,18 +26,13 @@ From: condaforge/miniforge3:24.7.1-2
     ln -s /opt/reditools2/src/cineca/reditools.py /usr/local/bin/reditools.py
     ln -s /opt/reditools2/src/cineca/parallel_reditools.py /usr/local/bin/parallel_reditools.py
 
-    # Entrypoint
-    chmod +x /usr/local/bin/entrypoint.sh
-
 %environment
     export PATH=/usr/local/bin:$PATH
     export CONDA_DEFAULT_ENV=myenv
     export PATH=/opt/conda/envs/myenv/bin:$PATH
-    source /opt/conda/etc/profile.d/conda.sh
-    conda activate myenv
 
 %runscript
-    exec /usr/local/bin/entrypoint.sh "$@"
+    exec /bin/bash
 
 %labels
     Author jacques.dainat@ird.fr

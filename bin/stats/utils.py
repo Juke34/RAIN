@@ -2,6 +2,7 @@ import numpy as np
 from numpy.typing import NDArray
 from dataclasses import dataclass
 import itertools
+from itertools import permutations
 
 BASE_TYPES = ["A", "C", "G", "T"]
 
@@ -37,6 +38,17 @@ def argmax(collection) -> int:
     """
     return max(range(len(collection)), key=lambda i: collection[i])
 
+nucs = ('A', 'C', 'G', 'T')
+
+def make_variant_header_dict():
+    nuc_pairs = permutations(nucs, 2)
+    keys = ((x, NUC_STR_TO_IND[y]) for x, y in nuc_pairs)
+    return {k:v for v, k in enumerate(keys)}
+
+header_dict = make_variant_header_dict()
+
+for item in header_dict.items():
+    print(item)
 
 @dataclass(frozen=True, slots=True)
 class SiteVariantData:

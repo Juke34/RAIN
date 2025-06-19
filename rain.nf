@@ -10,20 +10,20 @@ import java.nio.file.*
 //*************************************************
 
 // Input/output params
-params.reads      = null // "/path/to/reads_{1,2}.fastq.gz/or/folder"
-params.bam        = null // "/path/to/reads.bam/or/folder"
-params.csv        = null // "/path/to/reads.bam/or/folder"
-params.genome     = null // "/path/to/genome.fa"
-params.annotation = null // "/path/to/annotations.gff3"
-params.outdir     = "result"
+params.reads        = null // "/path/to/reads_{1,2}.fastq.gz/or/folder"
+params.genome       = null // "/path/to/genome.fa"
+params.annotation   = null // "/path/to/annotations.gff3"
+params.outdir       = "rain_result"
+params.clipoverlap  = false
 
 /* Specific AliNe params (some are shared with RAIN)*/
 
 // Read feature params
-read_type_allowed = [ 'short_paired', 'short_single', 'pacbio', 'ont' ]
-params.read_type = "short_paired" // short_paired, short_single, pacbio, ont
-params.library_type = "auto" // can be 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' - see https://github.com/Juke34/AliNe for more information
-params.bam_library_type = null // can be 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' - see https://github.com/Juke34/AliNe for more information
+read_type_allowed        = [ 'short_paired', 'short_single', 'pacbio', 'ont' ]
+params.read_type         = null // short_paired, short_single, pacbio, ont
+strandedness_allowed     = [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ] // see https://github.com/Juke34/AliNe for more information
+params.strandedness      = null
+params.read_length       = null // Use by star to set the sjdbOverhang parameter
 
 // Edit counting params
 edit_site_tools = ["reditools2", "reditools3", "jacusa2", "sapin"]
@@ -35,7 +35,7 @@ params.aggregation_mode = "all"
 aline_profile_allowed = [ 'docker', 'singularity', 'local', 'itrop' ]
 
 // Aline ressource config used
-params.aline_profiles = "$baseDir/config/ressources/custom_aline.config" // e.g. "docker, singularity,itrop,local"
+params.aline_profiles = "$baseDir/config/resources/custom_aline.config" // e.g. "docker, singularity,itrop,local"
 
 // Aligner params
 align_tools = ['hisat2', "STAR"]
@@ -74,10 +74,17 @@ def helpMSG() {
 
         Input sequences:
     --annotation                Path to the annotation file (GFF or GTF)
-    --bam                       Path to the bam file or folder.
-    --csv                       Path to the csv file containing fastq/bam files and their metadata. The csv file must contain a 'sample' column with the sample name, a 'input_1' column with the path to the bam file/or fastq1 file, a 'input_2' column with the path to R2 fastq file in case of paired data (either empty), and a 'strandedness' column with the library type (e.g. U, IU, MU, OU, ISF, ISR, MSF, MSR, OSF, OSR). 
-    --reads                     Path to the reads file or folder. If a folder is provided, all the files with proper extension (.fq, .fastq, .fq.gz, .fastq.gz) in the folder will be used. You can provide remote files (commma separated list).
+    --reads                     path to the reads file, folder or csv. If a folder is provided, all the files with proper extension in the folder will be used. You can provide remote files (commma separated list).
+                                    file extension expected : <.fastq.gz>, <.fq.gz>, <.fastq>, <.fq> or <.bam>. 
+                                                              for paired reads extra <_R1_001> or <_R2_001> is expected where <R> and <_001> are optional. e.g. <sample_id_1.fastq.gz>, <sample_id_R1.fastq.gz>, <sample_id_R1_001.fastq.gz>)
+                                    csv input expects 6 columns: sample, fastq_1, fastq_2, strandedness and read_type. 
+                                    fastq_2 is optional and can be empty. Strandedness, read_type expects same values as corresponding AliNe parameter; If a value is provided via AliNe paramter, it will override the value in the csv file.
+                                    Example of csv file:
+                                        sample,fastq_1,fastq_2,strandedness,read_type
+                                        control1,path/to/data1.fastq.bam,,auto,short_single
+                                        control2,path/to/data2_R1.fastq.gz,path/to/data2_R2.fastq.gz,auto,short_paired
     --genome                    Path to the reference genome in FASTA format.
+    --read_type                 Type of reads among this list ${read_type_allowed} (no default)
 
         Output:
     --output                    Path to the output directory (default: $params.outdir)
@@ -85,11 +92,10 @@ def helpMSG() {
        Optional input:
     --aligner                   Aligner to use [default: $params.aligner]
     --edit_site_tool            Tool used for detecting edited sites. Default: $params.edit_site_tool
-    --read_type                 Type of reads among this list ${read_type_allowed} (default: short_paired)
-    --library_type              Set the library_type of your fastq reads (default: auto). In auto mode salmon will guess the library type for each sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
-    --bam_library_type          Set the library_type of your BAM reads (default: null). When using BAM you must set a library type: [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
+    --strandedness              Set the strandedness for all your input reads (default: null). In auto mode salmon will guess the library type for each fastq sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
     --edit_threshold            Minimal number of edited reads to count a site as edited (default: 1)
     --aggregation_mode          Mode for aggregating edition counts mapped on genomic features. See documentation for details. Options are: "all" (default) or "cds_longest"
+    --clipoverlap               Clip overlapping sequences in read pairs to avoid double counting. (default: false)
 
         Nextflow options:
     -profile                    Change the profile of nextflow both the engine and executor more details on github README [debug, test, itrop, singularity, local, docker]
@@ -102,19 +108,15 @@ log.info """
 
 General Parameters
     annotation                 : ${params.annotation}
-    bam                        : ${params.bam}
-    csv                        : ${params.csv}
     reads                      : ${params.reads}
     genome                     : ${params.genome}
-     
-    reads_library_type         : ${params.library_type}
-    bam_library_type           : ${params.bam_library_type}
+    strandedness               : ${params.strandedness}
     outdir                     : ${params.outdir}
 
 Alignment Parameters
  aline_profiles                : ${params.aline_profiles}
     aligner                    : ${params.aligner}
-    reads_library_type         : ${params.library_type}
+    
 
 Edited Site Detection Parameters
     edit_site_tool             : ${params.edit_site_tool}
@@ -137,7 +139,7 @@ include {fastp} from './modules/fastp.nf'
 include {fastqc as fastqc_raw; fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from './modules/fastqc.nf'
 include {gatk_markduplicates } from './modules/gatk.nf'
 include {multiqc} from './modules/multiqc.nf'
-include {fasta_uncompress} from "$baseDir/modules/pigz.nf"
+include {fasta_unzip} from "$baseDir/modules/pigz.nf"
 include {samtools_index; samtools_fasta_index; samtools_sort_bam} from './modules/samtools.nf'
 include {reditools2} from "./modules/reditools2.nf"
 include {reditools3} from "./modules/reditools3.nf"
@@ -200,176 +202,269 @@ workflow {
 // ----------------------------------------------------------------------------
         // --- DEAL WITH REFERENCE ---
         // check if reference exists
+        if (!params.reads) {
+            exit 1, "No input reads provided with --reads (fastq or bam files as file, file list, folder or csv)."
+        }
+        if (!params.genome) {
+            exit 1, "You must provide a path to the genome with --genome"
+        }
         Channel.fromPath(params.genome, checkIfExists: true)
                .ifEmpty { exit 1, "Cannot find genome matching ${params.genome}!\n" }
                .set{genome_raw}
-        // uncompress it if needed
-        fasta_uncompress(genome_raw)
-        fasta_uncompress.out.genomeFa.set{genome_ch} // set genome to the output of fasta_uncompress
+        // unzip it if needed
+        fasta_unzip(genome_raw)
+        fasta_unzip.out.genomeFa.set{genome} // set genome to the output of fasta_unzip
 // ----------------------------------------------------------------------------
         // --- DEAL WITH ANNOTATION ---
-        Channel.empty().set{annotation_ch}
+        Channel.empty().set{annotation}
         if (params.annotation){
         Channel.fromPath(params.annotation, checkIfExists: true)
                .ifEmpty { exit 1, "Cannot find annotation matching ${params.annotation}!\n" }
-               .set{annotation_ch}
+               .set{annotation}
         }
+
 // ----------------------------------------------------------------------------
-        def path_csv = params.csv
-        def path_bam = params.bam
-        def path_reads = params.reads
-        def has_fastq = false
-        // ---------------------- DEAL WITH BAM FILES ----------------------
-        Channel.empty().set{sorted_bam}     
-        if ( path_bam || path_csv ) {
+//                               DEAL WITH CSV FILE FIRST
+// ----------------------------------------------------------------------------
+        def path_reads     = params.reads
+        def via_url = false
+        def via_csv = false
+        Channel.empty().set{csv_ch}
 
-            def bam_list=[]          
-            def via_url = false
-            def via_csv = false
-
-            if ( path_csv && path_csv.endsWith('.csv') ){
-                log.info "Using CSV input file: ${path_csv}"
-                //   --------- BAM CSV  CASE ---------
-                via_csv = true
-                File input_csv = new File(path_csv)
-                if(!input_csv.exists()){ 
-                    error "The input ${params.csv} file does not exist!\n" 
-                }
-
-                bams = Channel.fromPath(params.csv)
-                                    .splitCsv(header: true, sep: ',')
-                                    .map { row ->
-                                        if(row.sample == null || row.sample.trim() == ''){ 
-                                            error "The input ${params.csv} file does not contain a 'sample' column!\n" 
-                                        } 
-                                        def sample_id = row.sample
-                                        if(row.input_1 == null || row.input_1.trim() == ''){ 
-                                            error "The input ${params.csv} file does not contain a 'input_1' column!\n" 
-                                        }
-                                        if( row.input_1.toString().endsWith('.bam') ){ 
-                                            def input_1 = file(row.input_1.trim())
-                                        
-                                            if (! Rain_utilities.is_url(input_1) ) {
-                                                if (! input_1.exists() ) {
-                                                    error "The input ${input_1} file does not does not exits!\n"
-                                                }
-                                            } else {
-                                                log.info "This bam input is an URL: ${input_1}"
-                                            }
-
-                                            if(row.strandedness == null || row.strandedness.trim() == ''){ 
-                                                error "The input ${params.csv} file does not contain a 'strandedness' column!\n" 
-                                            }
-                                            def libtype      = row.strandedness ?: 'U'
-                                            def meta = [ id: sample_id, libtype: libtype ]
-                                            return tuple(meta, input_1)
-                                        }
-                                        else if ( Rain_utilities.is_fastq(row.input_1.trim()) ) {
-                                            has_fastq = true
-                                        /*    def input_1 = file(row.input_1.trim())
-                                            if (! Rain_utilities.is_url(input_1) ) {
-                                                if (! input_1.exists() ) {
-                                                    error "The input ${input_1} file does not does not exits!\n"
-                                                }
-                                            } else {
-                                                log.info "This fastq input is an URL: ${input_1}"
-                                            }
-                                        */
-                                        }
-                                        else {
-                                            error "The input ${row.input_1} file is not a BAM or FASTQ file!\n"
-                                        }
+        if ( path_reads.endsWith('.csv') ){
+            log.info "Using CSV input file: ${path_reads}"
+            //   --------- BAM CSV  CASE ---------
+            via_csv = true
+            File input_csv = new File(path_reads)
+            if(!input_csv.exists()){ 
+                error "The input ${path_reads} file does not exist!\n" 
+            }
+            
+            csv_ch = Channel.fromPath(params.reads)
+                                .splitCsv(header: true, sep: ',')
+                                .map { row ->
+                                    if(row.sample == null || row.sample.trim() == ''){ 
+                                        error "The input ${params.reads} file does not contain a 'sample' column!\n" 
+                                    } 
+                                    def sample_id = row.sample
+                                    if(row.input_1 == null || row.input_1.trim() == ''){ 
+                                        error "The input ${params.reads} file does not contain a 'input_1' column!\n" 
                                     }
+                                    def input_1 = file(row.input_1.trim())
+                                    if( input_1.toString().endsWith('.bam') || Rain_utilities.is_fastq(input_1) ) { 
+                                        
+                                        def input_type = input_1.toString().endsWith('bam') ? 'bam' : 'fastq'
+                                        def input_url = null 
+                                        if (! Rain_utilities.is_url(input_1) ) {
+                                            if (! input_1.exists() ) {
+                                                error "The input ${input_1} file does not does not exits!\n"
+                                            }
+                                        } else {
+                                            log.info "This bam input is an URL: ${input_1}"
+                                            input_url = true
+                                        }
+
+                                        // check if strandedness is provided. Priority to params.strandedness. If not provided neither in csv then send an error
+                                        def libtype
+                                        if ( params.strandedness ) {
+                                            libtype = params.strandedness
+                                        } else {
+                                            if(row.strandedness == null || row.strandedness.trim() == ''){ 
+                                                error "The input ${params.reads} file does not contain a 'strandedness' column!\n" 
+                                            }
+                                        }
+                                        libtype = row.strandedness.trim()
+                                        def meta = [ id: sample_id, strandedness: libtype, input_type: input_type, is_url: input_url ]
+                                        return tuple(meta, input_1)
+                                    }
+                                    else {
+                                        error "The input ${row.input_1} file is not a BAM or FASTQ file!\n"
+                                    }
+                                }
+        // If we are here it is because the csv is correct.
+        // lets create another channel with meta information
+        Channel.fromPath(params.reads)
+            .splitCsv(header: true)
+            .map { row ->
+                    def File file = new File(row.input_1)
+                    fileClean = file.baseName.replaceAll(/\.(gz)$/, '') // remove .gz
+                    fileClean = fileClean.replaceAll(/\.(fastq|fq)$/, '') // remove .fastq or .fq
+
+                return tuple (fileClean, row.sample, row.strandedness)
+                }
+            .set { csv_meta_ch }
+        }
+
+        // Separate FASTQ samples to BAM samples
+        csv_in_bam   = csv_ch.filter { meta, reads -> meta.input_type == 'bam' }
+        csv_in_fastq = csv_ch.filter { meta, reads -> meta.input_type != 'fastq' }
+
+// ----------------------------------------------------------------------------
+//                               DEAL WITH BAM FILES
+// ----------------------------------------------------------------------------
+
+        def bam_path_reads = params.reads
+        def bam_list=[]
+        Channel.empty().set{bams}
+        
+        if (via_csv) {
+            bams = csv_in_bam
+        }
+        else {
+
+            //   --------- BAM LIST CASE ---------
+            if( bam_path_reads.indexOf(',') >= 0) {
+                // Cut into list with coma separator
+                str_list = bam_path_reads.tokenize(',')
+                // loop over elements
+                str_list.each {
+                    str_list2 = it.tokenize(' ')
+                    str_list2.each {
+                        if ( it.endsWith('.bam') ){
+                            if (  Rain_utilities.is_url(it) ) {
+                                log.info "This bam input is an URL: ${it}"
+                                via_url = true
+                            }
+                            bam_list.add(file(it)) // use file insted of File for URL
+                        }
+                    }
+                }
             }
             else {
-
-                //   --------- BAM LIST CASE ---------
-                if( path_bam.indexOf(',') >= 0) {
-                    // Cut into list with coma separator
-                    str_list = path_bam.tokenize(',')
-                    // loop over elements
-                    str_list.each {
-                        str_list2 = it.tokenize(' ')
-                        str_list2.each {
-                            if ( it.endsWith('.bam') ){
-                                if (  Rain_utilities.is_url(it) ) {
-                                    log.info "This bam input is an URL: ${it}"
-                                    via_url = true
-                                }
-                                bam_list.add(file(it)) // use file insted of File for URL
-                            }
+                //   --------- BAM FOLDER CASE ---------
+                def File input_reads = new File(bam_path_reads)
+                if(input_reads.exists()){
+                    if ( input_reads.isDirectory()) {
+                        log.info "The input ${bam_path_reads} is a folder! Check for bam presence..."
+                        // in case of folder provided, add a trailing slash if missing
+                        def matchingFiles = input_reads.listFiles().findAll { 
+                            it.name ==~ /.*\.bam$/
+                        }
+                        if (matchingFiles) {
+                            bam_path_reads = "${input_reads}" + "/*.bam"
+                            log.info "Bam file found"
+                        } else {
+                            bam_path_reads = null
+                            log.info "No bam file found"
                         }
                     }
-                }
-                else {
-                    //   --------- BAM FOLDER CASE ---------
-                    File input_reads = new File(path_bam)
-                    if(input_reads.exists()){
-                        if ( input_reads.isDirectory()) {
-                            log.info "The input ${path_bam} is a folder!"
-                            // in case of folder provided, add a trailing slash if missing
-                            path_bam = "${input_reads}" + "/*.bam"
-                        }
-                        //   --------- BAM FILE  CASE ---------
-                        else {
-                            if ( path_bam.endsWith('.bam') ){
-                                log.info "The input ${path_bam} is a bam file!"
-                                if (  Rain_utilities.is_url(path_bam) ) {
-                                    log.info "This bam input is an URL: ${path_bam}"
-                                    via_url = true
-                                }
+                    //   --------- BAM FILE  CASE ---------
+                    else {
+                        if ( bam_path_reads.endsWith('.bam') ){
+                            log.info "The input ${bam_path_reads} is a bam file!"
+                            if (  Rain_utilities.is_url(bam_path_reads) ) {
+                                log.info "This bam input is an URL: ${bam_path_reads}"
+                                via_url = true
                             }
                         }
                     }
                 }
             }
-
-            // Add lib
-            if (! via_csv) {
-                if (via_url ){
-                    my_samples = Channel.of(bam_list)
-                    bams = my_samples.flatten().map { it -> [it.name.split('_')[0], it] }
-                                    .groupTuple()
-                                    .ifEmpty { exit 1, "Cannot find reads matching ${path_reads}!\n" }
-                } else {
-                    bams = Channel.fromFilePairs(path_bam, size: 1, checkIfExists: true)
-                        .ifEmpty { exit 1, "Cannot find reads matching ${path_bam}!\n" }
-                }
-
-                // check if bam library type is provided when bam files are used
-                bams.collect().map { list -> 
-                                        if (!list.isEmpty() && !params.bam_library_type ) {
-                                            exit 1, "⚠️  When using BAM files, the library type must be provided. Please use the parameter --bam_library_type <libtype>.\n"
-                                        }
-                                    }
-                // Set structure with dictionary as first value
-                bams = bams.map {  id, bam_file -> 
-                            def meta = [ id: id, libtype: params.bam_library_type ]
-                            tuple(meta, bam_file)
-                        } 
-            }
-            // sort the bam files
-            sorted_bam = samtools_sort_bam( bams )
         }
+
+        // Load Bam
+        if (! via_csv) {
+            if ( params.strandedness && params.strandedness.toUpperCase() == "AUTO" ) {
+                log.info "⚠️ The <auto> Strandedness mode cannot be invoked for BAM files, it will be set to null, otherwise you need to use the --strandedness parameter. See help for more information."
+            }
+            if (via_url ){
+                my_samples = Channel.of(bam_list)
+                bams = my_samples.flatten().map { it -> [it.name.split('_')[0], it] }
+                                .groupTuple()
+                                .ifEmpty { exit 1, "Cannot find reads matching ${bam_path_reads}!\n" }
+            } else {
+                if (bam_path_reads.endsWith('.bam')) {
+                    bams = Channel.fromFilePairs(bam_path_reads, size: 1, checkIfExists: false)
+                }
+            }
+
+            // Set structure with dictionary as first value
+            bams = bams.map {  id, bam_file -> 
+                        def strand = params.strandedness
+                        strand = (strand && strand.toUpperCase() != "AUTO") ? strand : null // if strandedness is set to auto, set it to null
+
+                        def meta = [ id: id, strandedness: strand ]
+                        tuple(meta, bam_file)
+                    } 
+        }
+
+        // sort the bam files
+        Channel.empty().set{sorted_bam}
+        sorted_bam = samtools_sort_bam( bams )
+
 // ----------------------------------------------------------------------------
-        // DEAL WITH FASTQ FILES
+//                               DEAL WITH FASTQ FILES
+// ----------------------------------------------------------------------------
         // Perform AliNe alignment
         Channel.empty().set{aline_alignments_all}
-        if (path_reads || ( path_csv && has_fastq) ) {
-            
-            if ( path_csv && path_csv.endsWith('.csv') ){  
-                path_reads = path_csv
-            }
+        def fastq_list=[]
+        def aline_data_in = null
 
+        if ( via_csv ){
+            aline_data_in = path_reads
+        } 
+        else {
+            //   --------- FASTQ LIST CASE ---------
+            if( path_reads.indexOf(',') >= 0) {
+                // Cut into list with coma separator
+                str_list = path_reads.tokenize(',')
+                // loop over elements
+                str_list.each {
+                    str_list2 = it.tokenize(' ')
+                    str_list2.each {
+                        if (  Rain_utilities.is_fastq( it ) ){
+                            if (  Rain_utilities.is_url(it) ) {
+                                log.info "This fastq input is an URL: ${it}"
+                                via_url = true
+                            }
+                            fastq_list.add(file(it)) // use file insted of File for URL
+                        }
+                    }
+                }
+                aline_data_in = fastq_list.join(',') // Join the list into a string for AliNe input (filtered to contain only fastq files)
+            }
+            else {
+                //   --------- FASTQ FOLDER CASE ---------
+                File input_reads = new File(path_reads)
+                if(input_reads.exists()){
+                    if ( input_reads.isDirectory()) {
+                        log.info "The input ${path_reads} is a folder! Check for fastq presence..."
+                        // in case of folder provided, add a trailing slash if missing
+                        def matchingFiles = input_reads.listFiles().findAll { 
+                            it.name ==~ /.*_(R?1|R?2)(_.*)?\.(fastq|fq)(\.gz)?$/
+                        }
+                        if (matchingFiles) {
+                            aline_data_in =   "${input_reads}" + "/" // Aline will handle the folder
+                            log.info "Fastq file found"
+                        } else {
+                            log.info "No fastq file found"
+                        }
+                    }
+                    //   --------- FASTQ FILE  CASE ---------
+                    else {
+                        if ( Rain_utilities.is_fastq( path_reads ) ){
+                            log.info "The input ${path_reads} is a fastq file!"
+                            if (  Rain_utilities.is_url(path_reads) ) {
+                                log.info "This fastq input is an URL: ${path_reads}"
+                                via_url = true
+                            }
+                            aline_data_in = path_reads // Use the file as is
+                        }
+                    }
+                }
+            }
+        }
+        Channel.empty().set{aline_alignments_all}
+        if (aline_data_in){
             ALIGNMENT (
-                'Juke34/AliNe -r v1.4.0', // Select pipeline
+                'Juke34/AliNe -r v1.5.1', // Select pipeline
                 "${workflow.resume?'-resume':''} -profile ${aline_profile}", // workflow opts supplied as params for flexibility
                 "-config ${params.aline_profiles}",
-                "--reads ${path_reads}",
-                genome_ch,
+                "--reads ${aline_data_in}",
+                genome,
                 "--read_type ${params.read_type}",
                 "--aligner ${params.aligner}",
-                "--library_type ${params.library_type}",
+                "--strandedness ${params.strandedness}",
                 workflow.workDir.resolve('Juke34/AliNe').toUriString()
             )
 
@@ -385,97 +480,135 @@ workflow {
                     }  // Convert each BAM file into a tuple, with the base name as the first element
                 .set { aline_alignments }  // Store the channel
             
-            if (params.library_type.contains("auto") ) {
-                log.info "Library type is set to auto, extracting it from salmon output"
-                // GET TUPLE [ID, OUTPUT_SALMON_LIBTYPE] FILES
-                ALIGNMENT.out.output
+            // SET CORRECT ID NAME WHEN CSV catched from CSV sample row
+            if (via_csv){
+                csv_meta_ch
+                    .join(aline_alignments)
+                    .map{ name_AliNe, sample, strandedness, bam ->
+                            return tuple (sample, bam)
+                        }
+                    .set { aline_alignments }
+            }
+
+            // GET TUPLE [ID, OUTPUT_SALMON_LIBTYPE] FILES
+            if ( params.strandedness && params.strandedness.toUpperCase() != "AUTO" ) {
+                log.info "Strandedness type is set to ${params.strandedness}, no need to extract it from salmon output"
+                aline_alignments_all = aline_alignments.map { id, bam -> 
+                                                                def meta = [ id: id, strandedness: params.strandedness ]
+                                                                            tuple(meta, bam)}
+            } else {
+                log.info "Try to get strandedness from AliNe salmon output"
+                aline_libtype = ALIGNMENT.out.output
                     .map { dir ->
-                        files("$dir/salmon_libtype/*/*.json", checkIfExists: true)  // Find BAM files inside the output directory
+                        files("$dir/salmon_strandedness/*/*.json", checkIfExists: true)  // Find BAM files inside the output directory
                     }
                     .flatten()  // Ensure we emit each file separately
                     .map { json -> 
                                 def name = json.getParent().getName().split('_seqkit')[0]  // Extract the base name of the BAM file. _seqkit is the separator. The name is in the fodler containing the json file. Why take this one? Because it is the same as teh bam name set by Aline. It will be used to sync both values
                                 tuple(name, json)
                         }  // Convert each BAM file into a tuple, with the base name as the first element
-                    .set { aline_libtype }  // Store the channel
+
                 // Extract the library type from the JSON file
                 aline_libtype = extract_libtype(aline_libtype)
-                aline_alignments.join(aline_libtype)
-                    .map { key, val1, val2 -> tuple(key, val1, val2) }
-                    .set { aline_alignments_all }
-            } else {
-                log.info "Library type is set to ${params.library_type}, no need to extract it from salmon output"
-                aline_alignments_all = aline_alignments.map { name, bam -> tuple(name, bam, params.library_type) }
-            }
+                
+                // because id and name can be different in csv case, we add the aline name to the tuple
+                aline_alignments_tmp = aline_alignments.map { id, file -> 
+                            def aline_name = file.getName().split('_seqkit')[0]  // Extract the base name of the BAM file. _seqkit is the separator.
+                            tuple(aline_name, id, file)
+                        }
 
-            // transform [ID, BAM, LIBTYPE] into [[id: 'ID', libtype: 'LIBTYPE'], file('BAM')]
-            aline_alignments_all = aline_alignments_all.map { id, file, lib ->
-                def meta = [ id: id, libtype: lib ]
-                tuple(meta, file)
+                aline_alignments_tmp.join(aline_libtype, remainder: true)
+                    .map { aline_name, id, file, lib -> 
+                            def meta = [ id: id, strandedness: lib ]
+                            tuple(meta, file)
+                        }  // Join the two channels on the key (the name of the BAM file)
+                    .set { aline_alignments_all }  // Store the channel
+                
+                // Here strandedness is null if it was not guessed by AliNe. Try to catch it in CSV if csv case
+                if (via_csv) {
+                    sample_with_strand = aline_alignments_all.filter { meta, reads -> meta.strandedness && meta.strandedness != 'auto' }
+                    sample_no_strand   = aline_alignments_all.filter { meta, reads -> !meta.strandedness || meta.strandedness == 'auto' }
+
+                    log.info "Try to get strandedness from CSV file"
+                    // Get the strandedness from the csv file
+                    csv_meta_ch.map { read_id, sample_id, strandedness -> 
+                        [sample_id, strandedness] 
+                    }
+                    .set { csv_meta_ch_short }  // Set the channel with the new strandedness
+
+                    channel_data_tojoin = sample_no_strand.map { meta, bam_path -> 
+                                            [meta.id, [meta, bam_path]] 
+                                        }
+
+                    channel_data_tojoin
+                    .join(csv_meta_ch_short)
+                    .map { id, data_pair, strandedness ->
+                            def (meta, bam_path) = data_pair
+                            meta.strandedness = strandedness
+                            [meta, bam_path]
+                        }
+                    .set{sample_no_strand}
+
+                    aline_alignments_all = sample_with_strand.concat(sample_no_strand)
+                }
             }
         }
 
-        // call rain
-        all_bams = aline_alignments_all.mix(sorted_bam)
+        // MERGE ALINE BAM AND INPUT BAM TOGETHER
+        tuple_sample_sortedbam = aline_alignments_all.mix(sorted_bam)
         log.info "The following bam file(s) will be processed by RAIN:"
-        all_bams.view()
-        rain(all_bams, genome_ch, annotation_ch)
-}
-
-workflow rain {
-
-    take:
-        tuple_sample_sortedbam
-        genome
-        annnotation
-
-    main:
+        tuple_sample_sortedbam.view()
 
         // STEP 1 QC with fastp ?
-        Channel.empty().set{logs}
-
+        Channel.empty().set{logs} 
         // stat on aligned reads
         fastqc_ali(tuple_sample_sortedbam, "ali")
         logs.concat(fastqc_ali.out).set{logs} // save log
         // remove duplicates
         gatk_markduplicates(tuple_sample_sortedbam)
         logs.concat(gatk_markduplicates.out.log).set{logs} // save log
-        // stat on bam without duplicates
+        // stat on bam without duplicates∂
         fastqc_dup(gatk_markduplicates.out.tuple_sample_dedupbam, "dup")
         logs.concat(fastqc_dup.out).set{logs} // save log
         // Clip overlap
-        bamutil_clipoverlap(gatk_markduplicates.out.tuple_sample_dedupbam)
-        // stat on bam with overlap clipped
-        fastqc_clip(bamutil_clipoverlap.out.tuple_sample_clipoverbam, "clip")
-        logs.concat(fastqc_clip.out).set{logs} // save log
+        if (params.clipoverlap) {
+            bamutil_clipoverlap(gatk_markduplicates.out.tuple_sample_dedupbam)
+            tuple_sample_bam_processed = bamutil_clipoverlap.out.tuple_sample_clipoverbam
+            // stat on bam with overlap clipped
+            fastqc_clip(tuple_sample_bam_processed, "clip")
+            logs.concat(fastqc_clip.out).set{logs} // save log
+        } else {
+            tuple_sample_bam_processed = gatk_markduplicates.out.tuple_sample_dedupbam
+        }
         // index bam
-        samtools_index(bamutil_clipoverlap.out.tuple_sample_clipoverbam)
+        samtools_index(tuple_sample_bam_processed)
         // report with multiqc
         // multiqc(logs.collect(),params.multiqc_config)
-        // Create a fasta index file of the reference genome
-        samtools_fasta_index(genome)
 
         // Select site detection tool
         switch (params.edit_site_tool) {
             case "jacusa2":
-                jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex)
+                // Create a fasta index file of the reference genome
+                samtools_fasta_index(genome.collect())
+                jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex.collect())
                 break
             case "sapin":
-                sapin(bamutil_clipoverlap.out.tuple_sample_clipoverbam, genome)
+                sapin(tuple_sample_bam_processed, genome.collect())
                 break
             case "reditools2":
-                reditools2(samtools_index.out.tuple_sample_bam_bamindex, genome, params.region)
-                normalize_gxf(annnotation)
-                pluviometer(reditools2.out.tuple_sample_serial_table, normalize_gxf.out.gff, "reditools2")
+                reditools2(samtools_index.out.tuple_sample_bam_bamindex, genome.collect(), params.region)
+                normalize_gxf(annotation.collect())
+                pluviometer(reditools2.out.tuple_sample_serial_table, normalize_gxf.out.gff.collect(), "reditools2")
                 break
             case "reditools3":
-                reditools3(samtools_index.out.tuple_sample_bam_bamindex, genome)
-                normalize_gxf(annnotation)
-                pluviometer(reditools3.out.tuple_sample_serial_table, normalize_gxf.out.gff, "reditools3")
+                reditools3(samtools_index.out.tuple_sample_bam_bamindex, genome.collect())
+                normalize_gxf(annotation.collect())
+                pluviometer(reditools3.out.tuple_sample_serial_table, normalize_gxf.out.gff.collect(), "reditools3")
                 break
             default:
                 exit(1, "Wrong edit site tool was passed")
         }
+
 }
 
 
