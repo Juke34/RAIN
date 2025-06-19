@@ -34,6 +34,7 @@ process AliNe {
                 read_type,
                 aligner,
                 library_type,
+                "--data_type rna",
                 "--outdir $task.workDir/AliNe",
         ].join(" ")
         // Copy command to shell script in work dir for reference/debugging.
