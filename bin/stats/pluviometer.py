@@ -88,10 +88,13 @@ def parse_cli_input() -> argparse.Namespace:
 def write_output_file_header(handle: TextIO) -> int:
     return handle.write(
         "SeqID\tGrandParentID\tParentID\tFeatureID\tType\tStart\tEnd\tStrand\tCoveredSites"
-        + "\tSiteFreqs["
+        + "\tGenomeBases["
+        + ",".join(BASE_TYPES)
+        + "]"
+        + "\tSiteBasePairs["
         + ",".join(MATCH_MISMATCH_TYPES)
         + "]"
-        + "\tReadFreqs["
+        + "\tReadBasePairs["
         + ",".join(MATCH_MISMATCH_TYPES)
         + "]"
         + "\n"
@@ -102,7 +105,7 @@ class SiteFilter:
     def __init__(self, cov_threshold: int, edit_threshold: int) -> None:
         self.cov_threshold: int = cov_threshold
         self.edit_threshold: int = edit_threshold
-        self.frequencies: NDArray[np.int32] = np.zeros(4, np.int32)
+        self.frequencies: NDArray[np.int32] = np.zeros(5, np.int32)
 
     def apply(self, variant_data: SiteVariantData) -> None:
         if variant_data.coverage >= self.cov_threshold:
@@ -127,9 +130,11 @@ class MultiCounter:
         Rows and column indices correspond to bases in alphabetic order (ACGT)
         Row-columns corresponding to the same base (e.g. (0,0) -> (A,A)) do not represent edits, and should remain 0
         """
-        self.edit_read_freqs: NDArray[np.int32] = np.zeros((4, 4), dtype=np.int32)
+        self.edit_read_freqs: NDArray[np.int32] = np.zeros((5, 5), dtype=np.int32)
 
-        self.edit_site_freqs: NDArray[np.int32] = np.zeros((4, 4), dtype=np.int32)
+        self.edit_site_freqs: NDArray[np.int32] = np.zeros((5, 5), dtype=np.int32)
+
+        self.genome_base_freqs: NDArray[np.int32] = np.zeros(5, dtype=np.int32)
 
         self.filter = site_filter
 
@@ -144,13 +149,19 @@ class MultiCounter:
         self.filter.apply(variant_data)
         self.edit_site_freqs[i, :] += self.filter.frequencies
 
+        self.genome_base_freqs[i] += 1
+
         return None
 
     def report(self, output_handle: TextIO) -> int:
         b = 0
 
         # Write the number of covered sites
-        b += output_handle.write(str(self.edit_site_freqs.sum()))
+        b += output_handle.write(str(self.genome_base_freqs.sum()))
+        b += output_handle.write("\t")
+
+        # Write the base frequencies in the genome
+        b += write_base_array(output_handle, self.genome_base_freqs)
         b += output_handle.write("\t")
 
         # Write edited sites
