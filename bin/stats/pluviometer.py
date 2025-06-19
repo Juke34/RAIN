@@ -131,7 +131,6 @@ class MultiCounter:
         Row-columns corresponding to the same base (e.g. (0,0) -> (A,A)) do not represent edits, and should remain 0
         """
         self.edit_read_freqs: NDArray[np.int32] = np.zeros((5, 5), dtype=np.int32)
-
         self.edit_site_freqs: NDArray[np.int32] = np.zeros((5, 5), dtype=np.int32)
 
         self.genome_base_freqs: NDArray[np.int32] = np.zeros(5, dtype=np.int32)
