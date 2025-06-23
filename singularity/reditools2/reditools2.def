@@ -33,7 +33,7 @@ From: condaforge/miniforge3:24.7.1-2
         ip_address = addresses[netifaces.AF_INET][0]["addr"]\
         hostname = socket.gethostbyaddr(ip_address)[0]\
     else:\
-        hostname = socket.gethostname()' /reditools2/src/cineca/reditools.py
+        hostname = socket.gethostname()' /opt/reditools2/src/cineca/reditools.py
 
 %environment
     export PATH=/usr/local/bin:$PATH
