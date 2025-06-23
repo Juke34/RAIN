@@ -26,6 +26,15 @@ From: condaforge/miniforge3:24.7.1-2
     ln -s /opt/reditools2/src/cineca/reditools.py /usr/local/bin/reditools.py
     ln -s /opt/reditools2/src/cineca/parallel_reditools.py /usr/local/bin/parallel_reditools.py
 
+    # Patch hostname retrieval in Reditools2
+    sed -i.bak '849c\
+    addresses = netifaces.ifaddresses(interface)
+    if netifaces.AF_INET in addresses:\
+        ip_address = addresses[netifaces.AF_INET][0]["addr"]\
+        hostname = socket.gethostbyaddr(ip_address)[0]\
+    else:\
+        hostname = socket.gethostname()' /reditools2/src/cineca/reditools.py
+
 %environment
     export PATH=/usr/local/bin:$PATH
     export CONDA_DEFAULT_ENV=myenv
