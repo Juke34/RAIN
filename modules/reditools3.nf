@@ -27,7 +27,7 @@ process reditools3 {
             // Unsupported: Pass the library type string so that it's reported in
             // the reditools error message
             print("invalid strand ${meta.strandedness}")
-            strand_orientation = meta.strandedness
+            strand_orientation =0
         }
         base_name = bam.BaseName
 
