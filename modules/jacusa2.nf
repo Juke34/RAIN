@@ -28,10 +28,16 @@ process jacusa2 {
             jacusa_strand_param = "UNSTRANDED"
         }
         """
+        # -A    Show all sites, inc. sites without variants
+        # -f    Use BED-6 extended output format
+        # -p    Number of threads
+        # -r    Path of output file
+        # -c    Minimum coverage: 1 read
+        # -s    Store feature-filtered results in another file
         java -Xmx${task.memory.toMega()}M -jar /usr/local/bin/JACUSA_v2.0.4.jar \
             call-1 \
             -A \
-            -f V \
+            -f B \
             -p ${task.cpus} \
             -r ${base_name}.site_edits_jacusa2.txt \
             -c 1 \
