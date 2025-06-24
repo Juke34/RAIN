@@ -15,25 +15,29 @@ process jacusa2 {
         base_name = bam.BaseName
         // Set the strand orientation parameter from the library type parameter
         // Terms explained in https://salmon.readthedocs.io/en/latest/library_type.html
-        if (meta.libtype in ["ISR", "SR"]) {
+        if (meta.strandedness in ["ISR", "SR"]) {
             // First-strand oriented
             jacusa_strand_param = "FR_SECONDSTRAND"
-        } else if (meta.libtype in ["ISF", "SF"]) {
+        } else if (meta.strandedness in ["ISF", "SF"]) {
             // Second-strand oriented
             jacusa_strand_param = "RF_FIRSTSTRAND"
-        } else if (meta.libtype in ["IU", "U"]) {
+        } else if (meta.strandedness in ["IU", "U"]) {
             // Unstranded
             jacusa_strand_param = "UNSTRANDED"
         } else {
-            // Unsupported: Pass the library type string so that it's reported in
-            // the Jacusa2 error message
-            jacusa_strand_param = meta.libtype
+            jacusa_strand_param = "UNSTRANDED"
         }
         """
+        # -A    Show all sites, inc. sites without variants
+        # -f    Use BED-6 extended output format
+        # -p    Number of threads
+        # -r    Path of output file
+        # -c    Minimum coverage: 1 read
+        # -s    Store feature-filtered results in another file
         java -Xmx${task.memory.toMega()}M -jar /usr/local/bin/JACUSA_v2.0.4.jar \
             call-1 \
             -A \
-            -f V \
+            -f B \
             -p ${task.cpus} \
             -r ${base_name}.site_edits_jacusa2.txt \
             -c 1 \

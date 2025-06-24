@@ -49,3 +49,4 @@ class SiteVariantData:
     coverage: int
     mean_quality: float
     frequencies: NDArray[np.int32]
+    score: float
