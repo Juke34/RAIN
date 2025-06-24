@@ -7,6 +7,22 @@ from abc import ABC, abstractmethod
 REDITOOLS_FIELDS = ["Seqid", "Position", "Reference", "Strand", "Coverage", "MeanQ", "Frequencies"]
 REDITOOLS_FIELD_INDEX = {field: i for i, field in  enumerate(REDITOOLS_FIELDS)}
 
+# Jacusa output file fields in the extended BED6 format
+JACUSA_FIELDS = ["contig", "start", "end", "name", "score", "strand", "bases11", "info", "filter", "ref"]
+JACUSA_FIELDS_INDEX = {field: i for i, field in enumerate(JACUSA_FIELDS)}
+
+def skip_comments(handle: TextIO, s: str) -> Optional[str]:
+    """
+    Read and return the next line in a text file handle that does not start with the comment prefix `s`.
+    """
+    line: str = handle.readline()
+    
+    while line.startswith(s):
+        line = handle.readline()
+
+    return line
+
+
 class RNAVariantReader(ABC):
     """Abstract class defining the API for readers"""
 
@@ -48,7 +64,8 @@ class TestReader(RNAVariantReader):
             strand=self.strand,
             coverage=1,
             mean_quality=30.0,
-            frequencies=self.frequencies
+            frequencies=self.frequencies,
+            score=0.0
         )
         self.position += 1
 
@@ -128,7 +145,8 @@ class ReditoolsXReader(RNAVariantReader):
             strand=strand,
             coverage=int(self.parts[REDITOOLS_FIELD_INDEX["Coverage"]]),
             mean_quality=float(self.parts[REDITOOLS_FIELD_INDEX["MeanQ"]]),
-            frequencies=np.int32(self.parts[REDITOOLS_FIELD_INDEX["Frequencies"]][1:-1].split(",") + [0])
+            frequencies=np.int32(self.parts[REDITOOLS_FIELD_INDEX["Frequencies"]][1:-1].split(",") + [0]),
+            score=0.0
         )
 
     def read(self) -> Optional[SiteVariantData]:
@@ -147,7 +165,6 @@ class ReditoolsXReader(RNAVariantReader):
         """Close the file"""
         self.file_handle.close()
     
-
 class Reditools2Reader(ReditoolsXReader):
     def parse_strand(self) -> int:
         strand = int(self.parts[REDITOOLS_FIELD_INDEX["Strand"]])
@@ -174,3 +191,42 @@ class Reditools3Reader(ReditoolsXReader):
             case _:
                 raise Exception(f"Invalid strand value: {strand_str}")
 
+class Jacusa2Reader():
+    def __init__(self, file_handle: TextIO) -> None:
+        self.file_handle: TextIO = file_handle
+
+        line = skip_comments(self.file_handle, "##")
+
+        # Check the Jacusa header
+        assert line.lstrip('#').split('\t') == JACUSA_FIELDS
+        
+        return None
+    
+    def read(self):
+        line: str = self.file_handle.readline()
+        parts: list[str] = line.split('\t')
+
+        reference_nuc_str: str = parts[JACUSA_FIELDS_INDEX["ref"]]
+
+        strand_str: str = parts[JACUSA_FIELDS_INDEX["strand"]]
+
+        match strand_str:
+            case '.':
+                strand = 0
+            case '+':
+                strand = 1
+            case '-':
+                strand -1
+
+        frequencies=np.int32(parts[JACUSA_FIELDS_INDEX["bases11"]].split(',') + [0])
+        
+        return SiteVariantData(
+            seqid=parts[JACUSA_FIELDS_INDEX["contig"]],
+            position=int(parts[JACUSA_FIELDS_INDEX["start"]]),
+            reference=NUC_STR_TO_IND[reference_nuc_str],
+            strand=strand,
+            coverage=sum(frequencies),
+            mean_quality=float("nan"),
+            frequencies=frequencies,
+            score=float(parts[JACUSA_FIELDS_INDEX["score"]])
+        )
