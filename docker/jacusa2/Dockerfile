@@ -7,3 +7,6 @@ RUN wget https://github.com/dieterich-lab/JACUSA2/releases/download/v2.0.4/JACUS
 RUN echo "#!/usr/bin/env bash" > /usr/local/bin/jacusa2
 RUN echo "java -jar /usr/local/bin/JACUSA_v2.0.4.jar $@" >> /usr/local/bin/jacusa2
 RUN chmod +x /usr/local/bin/jacusa2
+
+# ⚠️ IMPORTANT
+# Run the Docker image with the option `--ulimit nofile=1024:1024`
