@@ -25,9 +25,7 @@ process jacusa2 {
             // Unstranded
             jacusa_strand_param = "UNSTRANDED"
         } else {
-            // Unsupported: Pass the library type string so that it's reported in
-            // the Jacusa2 error message
-            jacusa_strand_param = meta.libtype
+            jacusa_strand_param = "UNSTRANDED"
         }
         """
         java -Xmx${task.memory.toMega()}M -jar /usr/local/bin/JACUSA_v2.0.4.jar \
