@@ -198,12 +198,16 @@ class Jacusa2Reader():
         line = skip_comments(self.file_handle, "##")
 
         # Check the Jacusa header
-        assert line.lstrip('#').split('\t') == JACUSA_FIELDS
+        assert line.strip().lstrip('#').split('\t') == JACUSA_FIELDS
         
         return None
     
-    def read(self):
-        line: str = self.file_handle.readline()
+    def read(self) -> Optional[SiteVariantData]:
+        line: str = self.file_handle.readline().strip()
+
+        if line == "":
+            return None
+
         parts: list[str] = line.split('\t')
 
         reference_nuc_str: str = parts[JACUSA_FIELDS_INDEX["ref"]]
@@ -222,7 +226,7 @@ class Jacusa2Reader():
         
         return SiteVariantData(
             seqid=parts[JACUSA_FIELDS_INDEX["contig"]],
-            position=int(parts[JACUSA_FIELDS_INDEX["start"]]),
+            position=int(parts[JACUSA_FIELDS_INDEX["start"]]),  # Jacusa2 position is 0-based
             reference=NUC_STR_TO_IND[reference_nuc_str],
             strand=strand,
             coverage=sum(frequencies),

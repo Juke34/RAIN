@@ -591,6 +591,8 @@ workflow {
                 // Create a fasta index file of the reference genome
                 samtools_fasta_index(genome.collect())
                 jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex.collect())
+                normalize_gxf(annotation.collect())
+                pluviometer(jacusa2.out.tuple_sample_jacusa2_table, normalize_gxf.out.gff.collect(), "jacusa2")
                 break
             case "sapin":
                 sapin(tuple_sample_bam_processed, genome.collect())

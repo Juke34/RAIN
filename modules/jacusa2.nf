@@ -15,13 +15,13 @@ process jacusa2 {
         base_name = bam.BaseName
         // Set the strand orientation parameter from the library type parameter
         // Terms explained in https://salmon.readthedocs.io/en/latest/library_type.html
-        if (meta.libtype in ["ISR", "SR"]) {
+        if (meta.strandedness in ["ISR", "SR"]) {
             // First-strand oriented
             jacusa_strand_param = "FR_SECONDSTRAND"
-        } else if (meta.libtype in ["ISF", "SF"]) {
+        } else if (meta.strandedness in ["ISF", "SF"]) {
             // Second-strand oriented
             jacusa_strand_param = "RF_FIRSTSTRAND"
-        } else if (meta.libtype in ["IU", "U"]) {
+        } else if (meta.strandedness in ["IU", "U"]) {
             // Unstranded
             jacusa_strand_param = "UNSTRANDED"
         } else {

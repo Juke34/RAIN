@@ -13,7 +13,7 @@ from Bio.SeqFeature import SeqFeature
 import numpy as np
 from numpy.typing import NDArray
 from typing import TextIO, NamedTuple, Optional, Generator
-from site_variant_readers import RNAVariantReader, Reditools2Reader, Reditools3Reader
+from site_variant_readers import RNAVariantReader, Reditools2Reader, Reditools3Reader, Jacusa2Reader
 import argparse
 from contextlib import nullcontext
 import sys
@@ -520,6 +520,9 @@ if __name__ == "__main__":
             case "reditools3":
                 print("Reditools3 format\n")
                 sv_reader: RNAVariantReader = Reditools3Reader(sv_handle)
+            case "jacusa2":
+                print("Jacusa2 BED6 extended format")
+                sv_reader: RNAVariantReader = Jacusa2Reader(sv_handle)
             case _:
                 raise Exception(f'Unimplemented format "{args.format}"')
 
