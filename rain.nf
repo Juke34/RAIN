@@ -9,6 +9,8 @@ import java.nio.file.*
 // STEP 0 - parameters
 //*************************************************
 
+/* ---- Params specific to RAIN ---- */
+
 // Input/output params
 params.reads        = null // "/path/to/reads_{1,2}.fastq.gz/or/folder"
 params.genome       = null // "/path/to/genome.fa"
@@ -16,20 +18,24 @@ params.annotation   = null // "/path/to/annotations.gff3"
 params.outdir       = "rain_result"
 params.clipoverlap  = false
 
-/* Specific AliNe params (some are shared with RAIN)*/
+// Edit counting params
+edit_site_tools = ["reditools2", "reditools3", "jacusa2", "sapin"]
+params.edit_site_tool = "reditools3"
+params.edit_threshold = 1
+params.aggregation_mode = "all"
+params.multiqc_config = "$baseDir/config/multiqc_config.yaml" // MultiQC config file
+
+
+/* ---- Params shared between RAIN and  AliNe ---- */
 
 // Read feature params
 read_type_allowed        = [ 'short_paired', 'short_single', 'pacbio', 'ont' ]
 params.read_type         = null // short_paired, short_single, pacbio, ont
 strandedness_allowed     = [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ] // see https://github.com/Juke34/AliNe for more information
 params.strandedness      = null
-params.read_length       = null // Use by star to set the sjdbOverhang parameter
+params.fastqc            = false
 
-// Edit counting params
-edit_site_tools = ["reditools2", "reditools3", "jacusa2", "sapin"]
-params.edit_site_tool = "reditools3"
-params.edit_threshold = 1
-params.aggregation_mode = "all"
+/* ---- Params Specific to AliNe ---- */
 
 // Aline profiles
 aline_profile_allowed = [ 'docker', 'singularity', 'local', 'itrop' ]
@@ -84,18 +90,19 @@ def helpMSG() {
                                         control1,path/to/data1.fastq.bam,,auto,short_single
                                         control2,path/to/data2_R1.fastq.gz,path/to/data2_R2.fastq.gz,auto,short_paired
     --genome                    Path to the reference genome in FASTA format.
-    --read_type                 Type of reads among this list ${read_type_allowed} (no default)
+    --read_type                 Type of reads among this list ${read_type_allowed} [no default]
 
         Output:
-    --output                    Path to the output directory (default: $params.outdir)
+    --output                    Path to the output directory [default: $params.outdir]
 
        Optional input:
     --aligner                   Aligner to use [default: $params.aligner]
-    --edit_site_tool            Tool used for detecting edited sites. Default: $params.edit_site_tool
-    --strandedness              Set the strandedness for all your input reads (default: null). In auto mode salmon will guess the library type for each fastq sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
-    --edit_threshold            Minimal number of edited reads to count a site as edited (default: 1)
+    --edit_site_tool            Tool used for detecting edited sites. [default: $params.edit_site_tool]
+    --strandedness              Set the strandedness for all your input reads [default: $params.strandedness]. In auto mode salmon will guess the library type for each fastq sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
+    --edit_threshold            Minimal number of edited reads to count a site as edited [default: $params.edit_threshold]
     --aggregation_mode          Mode for aggregating edition counts mapped on genomic features. See documentation for details. Options are: "all" (default) or "cds_longest"
-    --clipoverlap               Clip overlapping sequences in read pairs to avoid double counting. (default: false)
+    --clipoverlap               Clip overlapping sequences in read pairs to avoid double counting. [default: $params.clipoverlap]
+    --fastqc                    run fastqc on main steps [default: $params.fastqc]
 
         Nextflow options:
     -profile                    Change the profile of nextflow both the engine and executor more details on github README [debug, test, itrop, singularity, local, docker]
@@ -136,7 +143,7 @@ include { AliNe as ALIGNMENT } from "./modules/aline.nf"
 include { extract_libtype } from "./modules/bash.nf"
 include {bamutil_clipoverlap} from './modules/bamutil.nf'
 include {fastp} from './modules/fastp.nf'
-include {fastqc as fastqc_raw; fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from './modules/fastqc.nf'
+include {fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from './modules/fastqc.nf'
 include {gatk_markduplicates } from './modules/gatk.nf'
 include {multiqc} from './modules/multiqc.nf'
 include {fasta_unzip} from "$baseDir/modules/pigz.nf"
@@ -199,6 +206,8 @@ def aline_profile = aline_profile_list.join(',')
 
 workflow {
         main:
+        
+        Channel.empty().set{logs} // logs channel
 // ----------------------------------------------------------------------------
         // --- DEAL WITH REFERENCE ---
         // check if reference exists
@@ -391,6 +400,11 @@ workflow {
         // sort the bam files
         Channel.empty().set{sorted_bam}
         sorted_bam = samtools_sort_bam( bams )
+        // stat on aligned reads
+        if(params.fastqc){
+            fastqc_ali(sorted_bam, "ali")
+            logs.concat(fastqc_ali.out).set{logs} // save log
+        }
 
 // ----------------------------------------------------------------------------
 //                               DEAL WITH FASTQ FILES
@@ -559,31 +573,28 @@ workflow {
         log.info "The following bam file(s) will be processed by RAIN:"
         tuple_sample_sortedbam.view()
 
-        // STEP 1 QC with fastp ?
-        Channel.empty().set{logs} 
-        // stat on aligned reads
-        fastqc_ali(tuple_sample_sortedbam, "ali")
-        logs.concat(fastqc_ali.out).set{logs} // save log
         // remove duplicates
         gatk_markduplicates(tuple_sample_sortedbam)
         logs.concat(gatk_markduplicates.out.log).set{logs} // save log
-        // stat on bam without duplicates∂
-        fastqc_dup(gatk_markduplicates.out.tuple_sample_dedupbam, "dup")
-        logs.concat(fastqc_dup.out).set{logs} // save log
+        // stat on bam without duplicates
+        if(params.fastqc){
+            fastqc_dup(gatk_markduplicates.out.tuple_sample_dedupbam, "dup")
+            logs.concat(fastqc_dup.out).set{logs} // save log
+        }
         // Clip overlap
         if (params.clipoverlap) {
             bamutil_clipoverlap(gatk_markduplicates.out.tuple_sample_dedupbam)
             tuple_sample_bam_processed = bamutil_clipoverlap.out.tuple_sample_clipoverbam
             // stat on bam with overlap clipped
-            fastqc_clip(tuple_sample_bam_processed, "clip")
-            logs.concat(fastqc_clip.out).set{logs} // save log
+            if(params.fastqc){
+                fastqc_clip(tuple_sample_bam_processed, "clip")
+                logs.concat(fastqc_clip.out).set{logs} // save log
+            }
         } else {
             tuple_sample_bam_processed = gatk_markduplicates.out.tuple_sample_dedupbam
         }
         // index bam
         samtools_index(tuple_sample_bam_processed)
-        // report with multiqc
-        // multiqc(logs.collect(),params.multiqc_config)
 
         // Select site detection tool
         switch (params.edit_site_tool) {
@@ -610,6 +621,9 @@ workflow {
             default:
                 exit(1, "Wrong edit site tool was passed")
         }
+
+        // ------------------- MULTIQC -----------------
+        multiqc(logs.collect(),params.multiqc_config)
 
 }
 
