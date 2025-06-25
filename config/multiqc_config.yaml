@@ -1,0 +1,22 @@
+title: "RAIN report"
+
+run_modules:
+    - fastqc
+    - picard
+      
+module_order:
+    - fastqc:
+        name: FastQC (ali)
+        path_filters: 
+            - "*logs_ali*"
+    - picard:
+        path_filters: 
+            - "*marked_dup_metrics.txt"
+    - fastqc:
+        name: FastQC (markDuplicates)
+        path_filters: 
+            - "*logs_dup*"
+    - fastqc:
+        name: FastQC (ClipOverlap)
+        path_filters: 
+            - "*logs_clip*"
