@@ -234,3 +234,6 @@ class Jacusa2Reader(RNAVariantReader):
             frequencies=frequencies,
             score=float(parts[JACUSA_FIELDS_INDEX["score"]])
         )
+    
+    def close(self):
+        self.file_handle.close()
