@@ -191,7 +191,7 @@ class Reditools3Reader(ReditoolsXReader):
             case _:
                 raise Exception(f"Invalid strand value: {strand_str}")
 
-class Jacusa2Reader():
+class Jacusa2Reader(RNAVariantReader):
     def __init__(self, file_handle: TextIO) -> None:
         self.file_handle: TextIO = file_handle
 
@@ -220,7 +220,7 @@ class Jacusa2Reader():
             case '+':
                 strand = 1
             case '-':
-                strand -1
+                strand = -1
 
         frequencies=np.int32(parts[JACUSA_FIELDS_INDEX["bases11"]].split(',') + [0])
         
