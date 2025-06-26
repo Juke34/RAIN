@@ -8,9 +8,9 @@ import java.nio.file.*
 //*************************************************
 // STEP 0 - parameters
 //*************************************************
-
+// ------------------------------------
 /* ---- Params specific to RAIN ---- */
-
+// ------------------------------------
 // Input/output params
 params.reads        = null // "/path/to/reads_{1,2}.fastq.gz/or/folder"
 params.genome       = null // "/path/to/genome.fa"
@@ -23,10 +23,19 @@ edit_site_tools = ["reditools2", "reditools3", "jacusa2", "sapin"]
 params.edit_site_tool = "reditools3"
 params.edit_threshold = 1
 params.aggregation_mode = "all"
+// Report params
 params.multiqc_config = "$baseDir/config/multiqc_config.yaml" // MultiQC config file
 
+/* Specific tool params */
+params.region = "" // e.g. chr21 - Used to limit the analysis to a specific region by REDITOOLS2
 
-/* ---- Params shared between RAIN and  AliNe ---- */
+// others
+params.help = null
+params.monochrome_logs = false // if true, no color in logs
+
+// --------------------------------------------------
+/* ---- Params shared between RAIN and AliNe ---- */
+// --------------------------------------------------
 
 // Read feature params
 read_type_allowed        = [ 'short_paired', 'short_single', 'pacbio', 'ont' ]
@@ -35,30 +44,19 @@ strandedness_allowed     = [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 
 params.strandedness      = null
 params.fastqc            = false
 
+// -------------------------------------
 /* ---- Params Specific to AliNe ---- */
-
+// -------------------------------------
+// The rest of params are in custom_aline.config.nf file
 // Aline profiles
 aline_profile_allowed = [ 'docker', 'singularity', 'local', 'itrop' ]
-
 // Aline ressource config used
-params.aline_profiles = "$baseDir/config/resources/custom_aline.config" // e.g. "docker, singularity,itrop,local"
-
+params.aline_profiles = "$baseDir/nextflow_aline.config" // e.g. "docker, singularity,itrop,local"
+// made in aline but params here because it is main step
+params.trimming_fastp = false
 // Aligner params
-align_tools = ['hisat2', "STAR"]
+align_tools = [ 'bbmap', 'bowtie', 'bowtie2', 'bwaaln', 'bwamem', 'bwamem2', 'bwasw', 'graphmap2', 'hisat2', 'kallisto', 'last', 'minimap2', 'novoalign', 'nucmer', 'ngmlr', 'salmon', 'star', 'subread', 'sublong' ]
 params.aligner = 'hisat2'
-params.bowtie2_options = ''
-params.hisat2_options = ''
-params.star_options = ''
-
-/* Specific tool params */
-params.region = "" // e.g. chr21 - Used to limit the analysis to a specific region by REDITOOLS2
-
-// Report params
-params.multiqc_config = "$baseDir/config/multiqc_conf.yml"
-
-// other
-params.help = null
-params.monochrome_logs = false // if true, no color in logs
 
 //*************************************************
 // STEP 1 - HELP
@@ -159,25 +157,6 @@ include {pluviometer} from "./modules/pluviometer.nf"
 // STEP 3 - Deal with parameters
 //*************************************************
 
-// Check aligner params. Can be a list (comma or space separated)
-def aligner_list=[]
-if( !params.aligner ){
-    exit 1, "Error: <aligner> parameter is empty, please provide a aligner(s) among this list ${align_tools}.\n"
-} else {
-    str_list = params.aligner.tokenize(',')
-    str_list.each {
-        str_list2 = it.tokenize(' ')
-        str_list2.each {
-            if ( ! (it in align_tools) ){
-                exit 1, "Error: <${it}> aligner not accepted, please provide aligner(s) among this list ${align_tools}.\n"
-            }
-            else{
-                aligner_list.add(it)
-            }
-        }
-    }
-}
-
 // Check edit site tool params. Does not accept list yet, but validates input.
 if ( ! (params.edit_site_tool in edit_site_tools) ){
                 exit 1, "Error: <${it}> edit site tool not accepted, please provide a tool in this list ${edit_site_tools}.\n"
@@ -231,7 +210,9 @@ workflow {
                .ifEmpty { exit 1, "Cannot find annotation matching ${params.annotation}!\n" }
                .set{annotation}
         }
-
+        // normalize the annotation
+        normalize_gxf(annotation)
+        normalize_gxf.out.gff.set{clean_annotation}
 // ----------------------------------------------------------------------------
 //                               DEAL WITH CSV FILE FIRST
 // ----------------------------------------------------------------------------
@@ -470,8 +451,9 @@ workflow {
         }
         Channel.empty().set{aline_alignments_all}
         if (aline_data_in){
+
             ALIGNMENT (
-                'Juke34/AliNe -r v1.5.1', // Select pipeline
+                'Juke34/AliNe -r v1.5.2', // Select pipeline
                 "${workflow.resume?'-resume':''} -profile ${aline_profile}", // workflow opts supplied as params for flexibility
                 "-config ${params.aline_profiles}",
                 "--reads ${aline_data_in}",
@@ -479,6 +461,7 @@ workflow {
                 "--read_type ${params.read_type}",
                 "--aligner ${params.aligner}",
                 "--strandedness ${params.strandedness}",
+                clean_annotation,
                 workflow.workDir.resolve('Juke34/AliNe').toUriString()
             )
 
@@ -602,21 +585,18 @@ workflow {
                 // Create a fasta index file of the reference genome
                 samtools_fasta_index(genome.collect())
                 jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex.collect())
-                normalize_gxf(annotation.collect())
-                pluviometer(jacusa2.out.tuple_sample_jacusa2_table, normalize_gxf.out.gff.collect(), "jacusa2")
+                pluviometer(jacusa2.out.tuple_sample_jacusa2_table, clean_annotation, "jacusa2")
                 break
             case "sapin":
                 sapin(tuple_sample_bam_processed, genome.collect())
                 break
             case "reditools2":
                 reditools2(samtools_index.out.tuple_sample_bam_bamindex, genome.collect(), params.region)
-                normalize_gxf(annotation.collect())
-                pluviometer(reditools2.out.tuple_sample_serial_table, normalize_gxf.out.gff.collect(), "reditools2")
+                pluviometer(reditools2.out.tuple_sample_serial_table, clean_annotation, "reditools2")
                 break
             case "reditools3":
                 reditools3(samtools_index.out.tuple_sample_bam_bamindex, genome.collect())
-                normalize_gxf(annotation.collect())
-                pluviometer(reditools3.out.tuple_sample_serial_table, normalize_gxf.out.gff.collect(), "reditools3")
+                pluviometer(reditools3.out.tuple_sample_serial_table, clean_annotation, "reditools3")
                 break
             default:
                 exit(1, "Wrong edit site tool was passed")
