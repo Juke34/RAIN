@@ -15,8 +15,7 @@ process pluviometer {
     script:
         base_name = site_edits.BaseName
         """
-        # cp ${workflow.projectDir}/bin/stats/*.py ./
-        python ${workflow.projectDir}/bin/stats/pluviometer.py \
+        pluviometer.py \
             --sites ${site_edits} \
             --gff ${gff} \
             --format ${tool_format} \
