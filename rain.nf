@@ -65,6 +65,28 @@ params.aligner = 'hisat2'
 log.info header()
 if (params.help) { exit 0, helpMSG() }
 
+
+// Params check
+// Check aligner params. Can be a list (comma or space separated)
+def edit_site_tool_list=[]
+if( !params.edit_site_tool ){
+    exit 1, "Error: <edit_site_tool> parameter is empty, please provide a aligner(s) among this list ${align_tools}.\n"
+} else {
+    str_list = params.edit_site_tool.tokenize(',')
+    str_list.each {
+        str_list2 = it.tokenize(' ')
+        str_list2.each {
+            if ( ! (it.toLowerCase() in edit_site_tools) ){
+                exit 1, "Error: <${it}> tool not acepted, please provide editing site tool among this list ${align_tools}.\n"
+            }
+            else{
+                edit_site_tool_list.add(it.toLowerCase())
+            }
+        }
+    }
+}
+
+
 // Help Message
 def helpMSG() {
     log.info """
@@ -116,6 +138,7 @@ General Parameters
     reads                      : ${params.reads}
     genome                     : ${params.genome}
     strandedness               : ${params.strandedness}
+    read_type                  : ${params.read_type}
     outdir                     : ${params.outdir}
 
 Alignment Parameters
@@ -126,6 +149,7 @@ Alignment Parameters
 Edited Site Detection Parameters
     edit_site_tool             : ${params.edit_site_tool}
     edit_threshold             : ${params.edit_threshold}
+    region                     : ${params.region} 
 
 Report Parameters
  MultiQC parameters
@@ -151,16 +175,11 @@ include {reditools3} from "./modules/reditools3.nf"
 include {jacusa2} from "./modules/jacusa2.nf"
 include {sapin} from "./modules/sapin.nf"
 include {normalize_gxf} from "./modules/agat.nf"
-include {pluviometer} from "./modules/pluviometer.nf"
+include {pluviometer as pluviometer_jacusa2; pluviometer as pluviometer_reditools2; pluviometer as pluviometer_reditools3; pluviometer as pluviometer_sapin} from "./modules/pluviometer.nf"
 
 //*************************************************
 // STEP 3 - Deal with parameters
 //*************************************************
-
-// Check edit site tool params. Does not accept list yet, but validates input.
-if ( ! (params.edit_site_tool in edit_site_tools) ){
-                exit 1, "Error: <${it}> edit site tool not accepted, please provide a tool in this list ${edit_site_tools}.\n"
-            }
 
 // check RAIN profile - /!\ profile must be sync with AliNe profile as much as possible
 if (
@@ -580,26 +599,22 @@ workflow {
         samtools_index(tuple_sample_bam_processed)
 
         // Select site detection tool
-        switch (params.edit_site_tool) {
-            case "jacusa2":
+        if ( "jacusa2" in edit_site_tool_list ){ 
                 // Create a fasta index file of the reference genome
                 samtools_fasta_index(genome.collect())
                 jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex.collect())
-                pluviometer(jacusa2.out.tuple_sample_jacusa2_table, clean_annotation, "jacusa2")
-                break
-            case "sapin":
+                pluviometer_jacusa2(jacusa2.out.tuple_sample_jacusa2_table, clean_annotation.collect(), "jacusa2")
+        }
+        if ( "sapin" in edit_site_tool_list ){ 
                 sapin(tuple_sample_bam_processed, genome.collect())
-                break
-            case "reditools2":
+        }
+        if ( "reditools2" in edit_site_tool_list ){ 
                 reditools2(samtools_index.out.tuple_sample_bam_bamindex, genome.collect(), params.region)
-                pluviometer(reditools2.out.tuple_sample_serial_table, clean_annotation, "reditools2")
-                break
-            case "reditools3":
+                pluviometer_reditools2(reditools2.out.tuple_sample_serial_table, clean_annotation.collect(), "reditools2")
+        }
+        if ( "reditools3" in edit_site_tool_list ){ 
                 reditools3(samtools_index.out.tuple_sample_bam_bamindex, genome.collect())
-                pluviometer(reditools3.out.tuple_sample_serial_table, clean_annotation, "reditools3")
-                break
-            default:
-                exit(1, "Wrong edit site tool was passed")
+                pluviometer_reditools3(reditools3.out.tuple_sample_serial_table, clean_annotation.collect(), "reditools3")
         }
 
         // ------------------- MULTIQC -----------------
