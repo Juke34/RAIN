@@ -15,6 +15,7 @@ process AliNe {
         val read_type
         val aligner
         val library_type
+        val annotation
         val cache_dir          // String
 
     when:
@@ -34,11 +35,12 @@ process AliNe {
                 read_type,
                 aligner,
                 library_type,
+                "--annotation ${annotation}",
                 "--data_type rna",
                 "--outdir $task.workDir/AliNe",
         ].join(" ")
         // Copy command to shell script in work dir for reference/debugging.
-        file("$task.workDir/nf-cmd.sh").text = nxf_cmd.join(" ")
+        file("$task.workDir/nf-cmd.sh").text = nxf_cmd
         // Run nextflow command locally
         def process = nxf_cmd.execute(null, cache_path.toFile())
         process.waitFor()
