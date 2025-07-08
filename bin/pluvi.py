@@ -1,12 +1,12 @@
 from FeatureOutputWriter import FeatureFileWriter
+from collections import deque, defaultdict
+from dataclasses import dataclass, field
 from typing import Optional, Generator
 from Bio.SeqFeature import SeqFeature
 from MultiCounter import MultiCounter
 from Bio.SeqRecord import SeqRecord
 from SiteFilter import SiteFilter
-from dataclasses import dataclass, field
 from utils import SiteVariantData
-from collections import deque, defaultdict
 from BCBio import GFF
 from site_variant_readers import (
     RNAVariantReader,
@@ -16,7 +16,6 @@ from site_variant_readers import (
 )
 import progressbar
 import argparse
-import sys
 import math
 
 @dataclass(slots=True,frozen=True)
@@ -41,18 +40,9 @@ class CountingContext():
         self.action_queue: deque[tuple[int,QueueActionList]] = deque()
         self.filter = filter
 
-        # # Map positions to activation feature and deactivation actions
-        # position_actions: defaultdict[int,QueueActionList] = defaultdict(QueueActionList)
-        # for feature in record.features:
-        #     self.load_action_queue(position_actions, feature, 1)
-
-        # # Create a queue of actions sorted by positions 
-        # self.action_queue: deque[tuple[int,QueueActionList]] = deque(sorted(position_actions.items()))
-
-        # Optionally create a progress bar object, and choose the method to use for the progress bar increment calls in other parts of the code
         self.progbar: Optional[progressbar.ProgressBar] = None
         
-        if use_progress_bar:
+        if self.use_progress_bar:
             self.progbar_increment = self._active_progbar_increment
         else:
             self.progbar_increment = self._inactive_progbar_increment
@@ -203,7 +193,7 @@ class CountingContext():
             last_position: int = self.action_queue[-1][0]
             self.update_queues(last_position)
 
-        if self.progbar:
+        if self.use_progress_bar:
             self.progbar.finish()
 
         return None
@@ -265,7 +255,7 @@ def parse_cli_input() -> argparse.Namespace:
         help='Mode for aggregating counts: "all" aggregates features of every transcript; "cds_longest" aggregates features of the longest CDS or non-coding transcript',
     )
     parser.add_argument(
-        "--progress", action="store_true", default="false", help="Display progress bar"
+        "--progress", action="store_true", default=False, help="Display progress bar"
     )
 
     return parser.parse_args()
