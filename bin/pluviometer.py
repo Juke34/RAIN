@@ -22,6 +22,7 @@ from collections import deque
 import progressbar
 import math
 from feature_aggregator import FeatureAggregator
+from SiteFilter import SiteFilter
 
 
 def parse_cli_input() -> argparse.Namespace:
@@ -99,25 +100,6 @@ def write_output_file_header(handle: TextIO) -> int:
         + "]"
         + "\n"
     )
-
-
-class SiteFilter:
-    def __init__(self, cov_threshold: int, edit_threshold: int) -> None:
-        self.cov_threshold: int = cov_threshold
-        self.edit_threshold: int = edit_threshold
-        self.frequencies: NDArray[np.int32] = np.zeros(5, np.int32)
-
-    def apply(self, variant_data: SiteVariantData) -> None:
-        if variant_data.coverage >= self.cov_threshold:
-            np.copyto(
-                self.frequencies,
-                variant_data.frequencies * variant_data.frequencies
-                >= self.edit_threshold,
-            )
-        else:
-            self.frequencies.fill(0)
-
-        return None
 
 
 class MultiCounter:

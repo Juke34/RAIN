@@ -16,7 +16,7 @@ from site_variant_readers import (
     Reditools3Reader,
     Jacusa2Reader,
 )
-from FeatureOutputWriter import RainFileWriter
+from FeatureOutputWriter import FeatureFileWriter
 from collections import deque, defaultdict
 import progressbar
 import math
@@ -83,11 +83,13 @@ def parse_cli_input() -> argparse.Namespace:
     return parser.parse_args()
 
 
+
+
 class RecordManager:
-    def __init__(self, record: SeqRecord, writer: RainFileWriter, filter: SiteFilter):
+    def __init__(self, record: SeqRecord, writer: FeatureFileWriter, filter: SiteFilter):
 
         self.record: SeqRecord = record
-        self.writer: RainFileWriter = writer
+        self.writer: FeatureFileWriter = writer
         """Dict of multicounters with feature ids as keys"""
         self.counters: defaultdict[str, MultiCounter] = defaultdict(self.counter_factory)
         """Set of features whose multicounters are currently being updated"""
@@ -240,7 +242,7 @@ class RecordManager:
         # print(self.counters.keys())
         if counter:
             # print(f"writing data for feature {feature.id}")
-            self.writer.write_feature_data(self.record, feature, counter)
+            self.writer.write_feature_with_data(self.record, feature, counter)
             del self.counters[feature.id]
 
         for child in feature.sub_features:
@@ -290,7 +292,7 @@ if __name__ == "__main__":
             case _:
                 raise Exception(f'Unimplemented format "{args.format}"')
 
-        writer: RainFileWriter = RainFileWriter(output_handle)
+        writer: FeatureFileWriter = FeatureFileWriter(output_handle)
         writer.write_comment(f"input format: {args.format}")
         writer.write_header()
 

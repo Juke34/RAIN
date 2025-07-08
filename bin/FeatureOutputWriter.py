@@ -18,7 +18,10 @@ FEATURE_OUTPUT_FIELDS = [
     f"ReadBasePairs[{','.join(MATCH_MISMATCH_TYPES)}]",
 ]
 
-class RainFileWriter():
+STR_ZERO_BASE_FREQS = ','.join('0' for _ in range(len(BASE_TYPES)))
+STR_ZERO_EDIT_FREQS = ','.join('0' for _ in range(len(MATCH_MISMATCH_TYPES)))
+
+class FeatureFileWriter():
     def __init__(self, handle: TextIO):
         self.handle: TextIO = handle
 
@@ -36,13 +39,8 @@ class RainFileWriter():
 
         return b
     
-    # def write_base_array(self, array: NDArray) -> int:
-    #     """
-    #     Print a flattened version of an array with comma-separated elements in row-major order
-    #     """
-    #     return self.handle.write(",".join(map(str, array.flat)))
-    
-    def write_feature_data(self, record: SeqRecord, feature: SeqFeature, counter: MultiCounter) -> int:
+   
+    def write_feature_with_data(self, record: SeqRecord, feature: SeqFeature, counter: MultiCounter) -> int:
         b: int = 0
         b += self.handle.write(record.id)
         b += self.handle.write('\t')
@@ -63,6 +61,31 @@ class RainFileWriter():
         b += self.handle.write(','.join(map(str, counter.edit_site_freqs.flat)))
         b += self.handle.write('\t')
         b += self.handle.write(','.join(map(str, counter.edit_read_freqs.flat)))
+        b += self.handle.write('\n')
+
+        return b
+
+    def write_feature_without_data(self, record: SeqRecord, feature: SeqFeature) -> int:
+        b: int = 0
+        b += self.handle.write(record.id)
+        b += self.handle.write('\t')
+        b += self.handle.write(feature.id)
+        b += self.handle.write('\t')
+        b += self.handle.write(feature.type)
+        b += self.handle.write('\t')
+        b += self.handle.write(str(feature.location.start + 1))
+        b += self.handle.write('\t')
+        b += self.handle.write(str(feature.location.end))
+        b += self.handle.write('\t')
+        b += self.handle.write(str(feature.location.strand))
+        b += self.handle.write('\t')
+        b += self.handle.write('0')
+        b += self.handle.write('\t')
+        b += self.handle.write(STR_ZERO_BASE_FREQS)
+        b += self.handle.write('\t')
+        b += self.handle.write(STR_ZERO_EDIT_FREQS)
+        b += self.handle.write('\t')
+        b += self.handle.write(STR_ZERO_EDIT_FREQS)
         b += self.handle.write('\n')
 
         return b
