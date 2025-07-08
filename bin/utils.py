@@ -1,7 +1,9 @@
 import numpy as np
 from numpy.typing import NDArray
 from dataclasses import dataclass
+from Bio.SeqFeature import SeqFeature
 import itertools
+from collections import deque
 
 BASE_TYPES = ["A", "C", "G", "T"]
 
@@ -50,3 +52,25 @@ class SiteVariantData:
     mean_quality: float
     frequencies: NDArray[np.int32]
     score: float
+
+
+def condense(x: list[SeqFeature], attrib) -> deque[tuple[int,list[SeqFeature]]]:
+    """
+    "Condense" a *sorted* flat list of features by their start or end locations (`attrib` parameter).
+    It returns a deque of tuples, where the first element is the location value and the second element is a list of features at location.
+    """
+    # current_feature = x[0]
+    # current_value: int = current_feature.location.__getattribute__(attrib)
+    # condensed: deque[tuple[int,list[SeqFeature]]] = deque([(current_value, [current_feature])])
+    condensed: deque[tuple[int, list[SeqFeature]]] = deque()
+    current_value:int = -1    # Initial state assumption: No feature has a location value -1 
+
+    for feature in x:
+        feature_value: int = feature.location.__getattribute__(attrib)
+        if current_value == feature_value:
+            condensed[-1][1].append(feature)
+        else:
+            current_value = feature_value
+            condensed.append((current_value, [feature]))
+
+    return condensed
