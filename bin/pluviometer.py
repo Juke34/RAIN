@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 from FeatureOutputWriter import FeatureFileWriter, AggregateFileWriter
 from collections import deque, defaultdict
 from dataclasses import dataclass, field
