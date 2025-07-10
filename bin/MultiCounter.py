@@ -35,6 +35,16 @@ class MultiCounter:
         self.genome_base_freqs[i] += 1
 
         return None
+    
+    def merge(self, other_counter: "MultiCounter") -> None:
+        """
+        Add to this counter the values of another.
+        """
+        self.edit_read_freqs[:] += other_counter.edit_read_freqs
+        self.edit_site_freqs[:] += other_counter.edit_site_freqs
+        self.genome_base_freqs[:] += other_counter.genome_base_freqs
+
+        return None
 
     def report(self, output_handle: TextIO) -> int:
         b = 0
