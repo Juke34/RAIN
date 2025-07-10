@@ -22,6 +22,7 @@ process pluviometer {
             --cov 1 \
             --edit_threshold ${params.edit_threshold} \
             --aggregation_mode ${params.aggregation_mode} \
-            --output ${base_name}.feature_edits.tsv
+            --output ${base_name}.feature_edits.tsv \
+            --progress
         """
 }
