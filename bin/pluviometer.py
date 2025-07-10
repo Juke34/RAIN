@@ -232,7 +232,7 @@ class CountingContext():
         for aggregation_type, aggregation_counter in aggregation_counters.items():
             self.aggregate_writer.write_row_with_data(
                 self.record.id,
-                feature.id,
+                feature,
                 aggregation_type,
                 "",
                 aggregation_counter

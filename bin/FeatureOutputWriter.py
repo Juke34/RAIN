@@ -37,7 +37,8 @@ FEATURE_DATA_OUTPUT_FIELDS = [
 AGGREGATE_METADATA_OUTPUT_FIELDS = [
     "SeqID",
     "FeatureID",
-    "Type",
+    "ParentType"
+    "AggregateType",
     "Mode",
 ]
 
@@ -140,13 +141,13 @@ class AggregateFileWriter(RainFileWriter):
 
         return None
 
-    def write_metadata(self, seq_id, feature_id, feature_type, mode) -> int:
-        return super().write_metadata(seq_id, feature_id, feature_type, mode)
+    def write_metadata(self, seq_id: str, feature: SeqFeature, aggregate_type: str, mode: str) -> int:
+        return super().write_metadata(seq_id, feature.id, feature.type, aggregate_type, mode)
     
     def write_row_with_data(
-        self, record_id: str, feature_id: str, feature_type: str, mode: str, counter: MultiCounter
+        self, record_id: str, feature: SeqFeature, aggregate_type: str, mode: str, counter: MultiCounter
     ) -> int:
-        b: int = self.write_metadata(record_id, feature_id, feature_type, mode)
+        b: int = self.write_metadata(record_id, feature, aggregate_type, mode)
         b += self.write_data(
             str(counter.genome_base_freqs.sum()),
             ",".join(map(str, counter.genome_base_freqs.flat)),
