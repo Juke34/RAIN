@@ -414,7 +414,7 @@ def parse_cli_input() -> argparse.Namespace:
 
 if __name__ == "__main__":
     args: argparse.Namespace = parse_cli_input()
-    LOGGING_FORMAT = '%(asctime)s %(clientip)-15s %(user)-8s %(message)s'
+    LOGGING_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
     # logging.basicConfig(format=LOGGING_FORMAT)
     logging.basicConfig(filename=f"{args.output}.log", level=logging.INFO, format=LOGGING_FORMAT)
     logging.info("Pluviometer started.")
