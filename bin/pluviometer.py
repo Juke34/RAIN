@@ -80,7 +80,8 @@ class CountingContext():
         self.aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(self.default_counter_factory)
         self.use_progress_bar: bool = use_progress_bar
         self.action_queue: deque[tuple[int,QueueActionList]] = deque()
-        self.filter = filter
+        self.filter: SiteFilter = filter
+        self.svdata: Optional[SiteVariantData] = None
 
         self.progbar: Optional[progressbar.ProgressBar] = None
         
