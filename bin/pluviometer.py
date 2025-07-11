@@ -455,7 +455,10 @@ if __name__ == "__main__":
         )
 
         ctx = CountingContext(feature_writer, aggregate_writer, global_filter, args.progress)
-        for record in records:
+        logging.info(f"Fetching records...")
+        for i, record in enumerate(records):
             # manager: CountingContext = CountingContext(record, feature_writer, global_filter, args.progress)
+            logging.info(f"Record {record.id} setup")
             ctx.set_record(record)
+            logging.info(f"Start counting on record {record.id}")
             ctx.launch_counting(sv_reader)
