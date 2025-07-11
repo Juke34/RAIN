@@ -9,7 +9,7 @@ process pluviometer {
         val(tool_format)
 
     output:
-        tuple(val(meta), path("features.tsv"), path("aggregates.tsv"), emit: tuple_sample_feature_edits)
+        tuple(val(meta), path("features.tsv"), path("aggregates.tsv"), path("pluviometer.log"), emit: tuple_sample_feature_edits)
 
 
     script:
