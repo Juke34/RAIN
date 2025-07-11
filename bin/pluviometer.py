@@ -329,7 +329,8 @@ class CountingContext():
             svdata: SiteVariantData = reader.read()
 
         if not self.is_finished():
-            last_position: int = max(max(map(lambda x: x.location.end, self.active_features.values())), max(map(lambda x: x[0], self.action_queue[0])))
+            last_position: int = len(self.record)
+            # last_position: int = max(max(map(lambda x: x.location.end, self.active_features.values())), max(map(lambda x: x[0], self.action_queue[0])))
             self.update_queues(last_position)
 
         if self.use_progress_bar:
