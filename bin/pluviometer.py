@@ -197,7 +197,7 @@ class CountingContext():
 
         return None
     
-    def checkout(self, feature: SeqFeature) -> None:
+    def checkout(self, feature: SeqFeature) -> defaultdict[str,MultiCounter]:
         self.active_features.pop(feature.id, None)
 
         # Counter for the feature itself
@@ -210,13 +210,16 @@ class CountingContext():
             self.feature_writer.write_row_without_data(self.record.id, feature)
 
         # Aggregation counters from the feature's sub-features
-        aggregation_counters: dict[str,MultiCounter] = self.aggregate_level1(feature)
-    
+        if feature.level == 1:
+            aggregation_counters: dict[str,MultiCounter] = self.aggregate_level1(feature)
+        else:
+            aggregation_counters: dict[str,MultiCounter] = self.aggregate_children(feature)
 
+        # Recursively check-out children
         for child in feature.sub_features:
             self.checkout(child)
 
-        return None
+        return aggregation_counters
     
     def aggregate_level1(self, feature: SeqFeature) -> dict[str,MultiCounter]:
         aggregation_counters: defaultdict[str,MultiCounter] = defaultdict(self.default_counter_factory)
@@ -261,14 +264,16 @@ class CountingContext():
                     aggregation_counter: MultiCounter = aggregation_counters[child_aggregation_type]
                     aggregation_counter.merge(child_aggregation_counter)
 
-        for aggregation_type, aggregation_counter in aggregation_counters.items():
-            self.aggregate_writer.write_row_with_data(
-                self.record.id,
-                feature,
-                aggregation_type,
-                "",
-                aggregation_counter
-            )
+        # for aggregation_type, aggregation_counter in aggregation_counters.items():
+        #     self.aggregate_writer.write_row_with_data(
+        #         self.record.id,
+        #         feature,
+        #         aggregation_type,
+        #         "",
+        #         aggregation_counter
+        #     )
+
+        self.aggregate_writer.write_row_with_data(self.record.id, feature, aggregation_counters)
 
         return aggregation_counters
 
@@ -291,14 +296,15 @@ class CountingContext():
             if feature_counter:
                 aggregation_counter.merge(feature_counter)
             
-        for aggregation_type, aggregation_counter in aggregation_counters.items():
-            self.aggregate_writer.write_row_with_data(
-                self.record.id,
-                feature,
-                aggregation_type,
-                "",
-                aggregation_counter
-            )
+        self.aggregate_writer.write_row_with_data(self.record.id, feature, aggregation_counters)
+        # for aggregation_type, aggregation_counter in aggregation_counters.items():
+        #     self.aggregate_writer.write_row_with_data(
+        #         self.record.id,
+        #         feature,
+        #         aggregation_type,
+        #         "",
+        #         aggregation_counter
+        #     )
 
         return aggregation_counters
 
