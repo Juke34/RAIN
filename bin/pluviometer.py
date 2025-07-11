@@ -79,6 +79,7 @@ class CountingContext():
         self.feature_writer: FeatureFileWriter = feature_writer
         self.aggregate_writer: AggregateFileWriter = aggregate_writer
         self.counters: defaultdict[str, MultiCounter] = defaultdict(self.default_counter_factory)
+        self.aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(self.default_counter_factory)
         self.use_progress_bar: bool = use_progress_bar
         self.action_queue: deque[tuple[int,QueueActionList]] = deque()
         self.filter = filter
@@ -200,8 +201,8 @@ class CountingContext():
     
     def checkout(self, feature: SeqFeature) -> None:
         self.active_features.pop(feature.id, None)
-        self.aggregate_level1(feature)
 
+        # Counter for the feature itself
         counter: Optional[MultiCounter] = self.counters.get(feature.id, None)
 
         if counter:
@@ -209,6 +210,10 @@ class CountingContext():
             del self.counters[feature.id]
         else:
             self.feature_writer.write_row_without_data(self.record.id, feature)
+
+        # Aggregation counters from the feature's sub-features
+        aggregation_counters: dict[str,MultiCounter] = self.aggregate_level1(feature)
+    
 
         for child in feature.sub_features:
             self.checkout(child)
@@ -243,8 +248,7 @@ class CountingContext():
             elif child_type == "exon":
                 if has_cds:
                     continue
-                else:
-                    if child_length > max_total_length:
+                elif child_length > max_total_length:
                         representative_feature_id = child_id
                         max_total_length = child_length
 
@@ -325,7 +329,7 @@ class CountingContext():
             svdata: SiteVariantData = reader.read()
 
         if not self.is_finished():
-            last_position: int = self.action_queue[-1][0]
+            last_position: int = max(max(map(lambda x: x.location.end, self.active_features.values())), max(map(lambda x: x[0], self.action_queue[0])))
             self.update_queues(last_position)
 
         if self.use_progress_bar:
