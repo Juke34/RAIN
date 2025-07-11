@@ -197,6 +197,24 @@ class CountingContext():
 
         return None
     
+    def flush_queues(self) -> None:
+        # last_position: int = len(self.record)
+        logging.info(f"Actions remaining in action queue: {len(self.action_queue)}. Flushing action queue")
+        while len(self.action_queue) > 0:
+            _, actions = self.action_queue.popleft()
+
+            for feature in actions.activate:
+                self.active_features[feature.id] = feature
+
+            for feature in actions.deactivate:
+                if feature.level == 1:
+                    self.checkout(feature)
+
+                self.active_features.pop(feature.id, None)
+        logging.info(f"Actions remaining in action queue: {len(self.action_queue)} after flushing action queue")
+
+        return None
+    
     def checkout(self, feature: SeqFeature) -> defaultdict[str,MultiCounter]:
         self.active_features.pop(feature.id, None)
 
@@ -333,30 +351,17 @@ class CountingContext():
             svdata: SiteVariantData = reader.read()
 
         if not self.is_finished():
-            last_position: int = len(self.record)
+            # last_position: int = len(self.record)
+            # logging.info(f"Updating queues up to position {last_position}")
             # last_position: int = max(max(map(lambda x: x.location.end, self.active_features.values())), max(map(lambda x: x[0], self.action_queue[0])))
-            self.update_queues(last_position)
+            # self.update_queues(last_position)
+            self.flush_queues()
 
         if self.use_progress_bar:
             self.progbar.finish()
 
         return None
     
-class AggregationContext():
-    def __init__(self, key: str, filer: SiteFilter):
-        self.key:str = key
-        self.counters: dict[str,MultiCounter]
-        self.filter: SiteFilter = filter
-
-    def merge_counter(self, feature_type: str, feature_counter: MultiCounter) -> None:
-        aggregate_counter: MultiCounter = self.counters.get(feature_type, MultiCounter(self.filter))
-
-        aggregate_counter.genome_base_freqs[:] += feature_counter.genome_base_freqs[:]
-        aggregate_counter.edit_site_freqs[:] += feature_counter.edit_site_freqs[:]
-        aggregate_counter.edit_read_freqs[:] += feature_counter.edit_read_freqs[:]
-
-
-
 def parse_cli_input() -> argparse.Namespace:
     """Parse command line input"""
 
