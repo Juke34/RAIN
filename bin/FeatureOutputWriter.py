@@ -2,6 +2,7 @@ from numpy.typing import NDArray
 from MultiCounter import MultiCounter
 from Bio.SeqFeature import SeqFeature
 from Bio.SeqRecord import SeqRecord
+from collections import defaultdict
 from typing import TextIO
 from utils import BASE_TYPES, MATCH_MISMATCH_TYPES
 
@@ -37,7 +38,7 @@ FEATURE_DATA_OUTPUT_FIELDS = [
 AGGREGATE_METADATA_OUTPUT_FIELDS = [
     "SeqID",
     "FeatureID",
-    "ParentType"
+    "ParentType",
     "AggregateType",
     "Mode",
 ]
@@ -144,18 +145,17 @@ class AggregateFileWriter(RainFileWriter):
     def write_metadata(self, seq_id: str, feature: SeqFeature, aggregate_type: str, mode: str) -> int:
         return super().write_metadata(seq_id, feature.id, feature.type, aggregate_type, mode)
     
-    def write_row_with_data(
-        self, record_id: str, feature: SeqFeature, aggregate_type: str, mode: str, counter: MultiCounter
-    ) -> int:
-        b: int = self.write_metadata(record_id, feature, aggregate_type, mode)
-        b += self.write_data(
-            str(counter.genome_base_freqs.sum()),
-            ",".join(map(str, counter.genome_base_freqs.flat)),
-            ",".join(map(str, counter.edit_site_freqs.flat)),
-            ",".join(map(str, counter.edit_read_freqs.flat)),
-        )
-        
-        return b
+    def write_row_with_data(self, record_id: str, feature: SeqFeature, counters: defaultdict[MultiCounter]) -> int:
+        b: int = 0
+
+        for aggregate_type, aggregate_counter in counters.items():
+            b += self.write_metadata(record_id, feature, aggregate_type, "")
+            b += self.write_data(
+                str(aggregate_counter.genome_base_freqs.sum()),
+                ",".join(map(str, aggregate_counter.genome_base_freqs.flat)),
+                ",".join(map(str, aggregate_counter.edit_site_freqs.flat)),
+                ",".join(map(str, aggregate_counter.edit_read_freqs.flat)),
+            )
         
 # class FeatureFileWriter:
 #     def __init__(self, handle: TextIO):
