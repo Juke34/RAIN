@@ -93,7 +93,7 @@ class CountingContext():
         return None
     
     def set_record(self, record: SeqRecord) -> None:
-        logging.info(f"Switching from {self.record.id} to record {record.id}")
+        logging.info(f"Switching to record {record.id}")
         if len(self.active_features) != 0:
             logging.info(f"Features in active queque not cleared prior to switching!\n{','.join(self.active_features.keys())}")
         if len(self.action_queue) != 0:
@@ -103,12 +103,14 @@ class CountingContext():
         self.record: SeqRecord = record
 
         # Map positions to activation feature and deactivation actions
+        logging.info(f"Pre-processing features")
         position_actions: defaultdict[int,QueueActionList] = defaultdict(QueueActionList)
         for feature in record.features:
             self.load_action_queue(position_actions, feature, 1)
 
         # Create a queue of actions sorted by positions 
         self.action_queue.extend(sorted(position_actions.items()))
+        logging.info(f"Pre-processing complete. Action positions detected: {len(self.action_queue)}")
 
         if self.use_progress_bar:
             max_value: int = len(self.action_queue)
@@ -214,8 +216,17 @@ class CountingContext():
         return None
     
     def aggregate_level1(self, feature: SeqFeature) -> dict[str,MultiCounter]:
-        counters: dict[str,MultiCounter] = dict()
-        transcript_like = feature.get_transcript_like()
+        aggregation_counters: dict[str,MultiCounter] = dict()
+
+        # List of tuples of transcript-like sub-features. In each tuple:
+        # - 0: ID of the sub-feature
+        # - 1: Type of the sub-feature
+        # - 2: Total length of the sub-feature
+        transcript_like:list[tuple[str,str,int]] = feature.get_transcript_like()
+
+        # Select the transcript-like feature that is representative of this gene.
+        # If there are CDS sub-features, select the onte with greatest total CDS length. Elsewise, select the sub-feature with the greatest total exon length.
+
 
     def aggregate_children(self, feature: SeqFeature) -> dict[str,MultiCounter]:
         aggregation_counters: defaultdict[str,MultiCounter] = defaultdict(self.default_counter_factory)
