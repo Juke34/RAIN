@@ -445,9 +445,8 @@ if __name__ == "__main__":
         aggregate_writer.write_comment(f"Input format: {args.format}")
         aggregate_writer.write_header()
 
-        logging.info("Parising GFF")
+        logging.info("Load GFF3 file")
         records: Generator[SeqRecord, None, None] = GFF.parse(gff_handle)
-        logging.info("GFF parsing completed")
 
         global_filter: SiteFilter = SiteFilter(
             cov_threshold=args.cov,
