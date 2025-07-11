@@ -58,10 +58,10 @@ def get_transcript_like(self: SeqFeature) -> list[tuple[str,str,int]]:
 
         if total_exon_length > 0:
             assert total_cds_length == 0
-            transcript_like_list.append(transcript_candidate.id, "exon", total_exon_length)
+            transcript_like_list.append((transcript_candidate.id, "exon", total_exon_length))
         elif total_cds_length > 0:
             assert total_exon_length == 0
-            transcript_like_list.append(transcript_candidate.id, "CDS", total_cds_length)
+            transcript_like_list.append((transcript_candidate.id, "CDS", total_cds_length))
 
     return transcript_like_list
         
@@ -200,7 +200,7 @@ class CountingContext():
     
     def checkout(self, feature: SeqFeature) -> None:
         self.active_features.pop(feature.id, None)
-        self.aggregate_children(feature)
+        self.aggregate_level1(feature)
 
         counter: Optional[MultiCounter] = self.counters.get(feature.id, None)
 
@@ -216,16 +216,59 @@ class CountingContext():
         return None
     
     def aggregate_level1(self, feature: SeqFeature) -> dict[str,MultiCounter]:
-        aggregation_counters: dict[str,MultiCounter] = dict()
+        aggregation_counters: defaultdict[str,MultiCounter] = defaultdict(self.default_counter_factory)
 
         # List of tuples of transcript-like sub-features. In each tuple:
         # - 0: ID of the sub-feature
         # - 1: Type of the sub-feature
         # - 2: Total length of the sub-feature
-        transcript_like:list[tuple[str,str,int]] = feature.get_transcript_like()
+        transcript_like_children:list[tuple[str,str,int]] = feature.get_transcript_like()   # Custom method added to the class
 
         # Select the transcript-like feature that is representative of this gene.
         # If there are CDS sub-features, select the onte with greatest total CDS length. Elsewise, select the sub-feature with the greatest total exon length.
+        representative_feature_id: str = ""
+        has_cds: bool = False
+        max_total_length: bool = 0
+
+        for child_id, child_type, child_length in transcript_like_children:
+            if child_type == "cds":
+                if has_cds:
+                    if child_length > max_total_length:
+                        representative_feature_id = child_id
+                        max_total_length = child_length
+                else:
+                    representative_feature_id = child_id
+                    max_total_length = child_length
+                    has_cds = True
+            elif child_type == "exon":
+                if has_cds:
+                    continue
+                else:
+                    if child_length > max_total_length:
+                        representative_feature_id = child_id
+                        max_total_length = child_length
+
+        # Perform aggregations, selecting only the "representative feature"
+        for child in feature.sub_features:
+            # Compute aggregates in the child. Recursively aggregates on all its children.
+            aggregation_counters_from_child = self.aggregate_children(child)
+
+            if child.id == representative_feature_id:
+                # Merge the aggregates from the child with all the other aggregates under this feature
+                for child_aggregation_type, child_aggregation_counter in aggregation_counters_from_child.items():
+                    aggregation_counter: MultiCounter = aggregation_counters[child_aggregation_type]
+                    aggregation_counter.merge(child_aggregation_counter)
+
+        for aggregation_type, aggregation_counter in aggregation_counters.items():
+            self.aggregate_writer.write_row_with_data(
+                self.record.id,
+                feature,
+                aggregation_type,
+                "",
+                aggregation_counter
+            )
+
+        return aggregation_counters
 
 
     def aggregate_children(self, feature: SeqFeature) -> dict[str,MultiCounter]:
@@ -235,7 +278,7 @@ class CountingContext():
             # Compute aggregates in the child
             aggregation_counters_from_child = self.aggregate_children(child)
 
-            # Merge the aggregates from the child with all the other aggregates under this features
+            # Merge the aggregates from the child with all the other aggregates under this feature
             for child_aggregation_type, child_aggregation_counter in aggregation_counters_from_child.items():
                 aggregation_counter: MultiCounter = aggregation_counters[child_aggregation_type]
                 aggregation_counter.merge(child_aggregation_counter)
