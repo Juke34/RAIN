@@ -95,8 +95,10 @@ class CountingContext():
         logging.info(f"Switching to record {record.id}")
         if len(self.active_features) != 0:
             logging.info(f"Features in active queque not cleared prior to switching!\n{','.join(self.active_features.keys())}")
+            self.active_features.clear()
         if len(self.action_queue) != 0:
             logging.info(f"Positions in action queque not cleared prior to switching!\n{','.join(str(x[0]) for x in self.action_queue)}")
+            self.action_queue.clear()
         self.counters.clear()
 
         self.record: SeqRecord = record
@@ -343,12 +345,12 @@ class CountingContext():
         return len(self.action_queue) > 0 or len(self.active_features) > 0
     
     def launch_counting(self, reader: RNAVariantReader) -> None:
-        svdata: Optional[SiteVariantData] = reader.read()
+        self.svdata: Optional[SiteVariantData] = self.svdata if self.svdata else reader.read() 
 
-        while svdata:
-            self.update_queues(svdata.position)
-            self.update_active_counters(svdata)
-            svdata: SiteVariantData = reader.read()
+        while self.svdata and self.svdata.seqid == self.record.id:
+            self.update_queues(self.svdata.position)
+            self.update_active_counters(self.svdata)
+            self.svdata: SiteVariantData = reader.read()
 
         if not self.is_finished():
             # last_position: int = len(self.record)
@@ -473,3 +475,4 @@ if __name__ == "__main__":
             ctx.set_record(record)
             logging.info(f"Start counting on record {record.id}")
             ctx.launch_counting(sv_reader)
+            logging.info(f"Ended counting on record {record.id}")
