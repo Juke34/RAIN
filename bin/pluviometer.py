@@ -56,12 +56,10 @@ def get_transcript_like(self: SeqFeature) -> list[tuple[str,str,int]]:
             elif child.type == "CDS":
                 total_cds_length += len(child)
 
-        if total_exon_length > 0:
-            assert total_cds_length == 0
-            transcript_like_list.append((transcript_candidate.id, "exon", total_exon_length))
-        elif total_cds_length > 0:
-            assert total_exon_length == 0
+        if total_cds_length > 0:
             transcript_like_list.append((transcript_candidate.id, "CDS", total_cds_length))
+        elif total_exon_length > 0:
+            transcript_like_list.append((transcript_candidate.id, "exon", total_exon_length))
 
     return transcript_like_list
         
