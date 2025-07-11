@@ -368,6 +368,8 @@ def parse_cli_input() -> argparse.Namespace:
 
 if __name__ == "__main__":
     args: argparse.Namespace = parse_cli_input()
+    LOGGING_FORMAT = '%(asctime)s %(clientip)-15s %(user)-8s %(message)s'
+    logging.basicConfig(format=LOGGING_FORMAT)
     logging.basicConfig(filename=f"{args.output}.log", level=logging.INFO)
     feature_output_filename: str = args.output + ".features.tsv" if args.output else "features.tsv"
     aggregate_output_filename: str = args.output + ".aggregates.tsv" if args.output else "aggregates.tsv"
@@ -396,7 +398,9 @@ if __name__ == "__main__":
         aggregate_writer.write_comment(f"Input format: {args.format}")
         aggregate_writer.write_header()
 
+        logging.info("Parising GFF")
         records: Generator[SeqRecord, None, None] = GFF.parse(gff_handle)
+        logging.info("GFF parsing completed")
 
         global_filter: SiteFilter = SiteFilter(
             cov_threshold=args.cov,
