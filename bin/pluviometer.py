@@ -417,7 +417,7 @@ if __name__ == "__main__":
     LOGGING_FORMAT = '%(asctime)s %(clientip)-15s %(user)-8s %(message)s'
     # logging.basicConfig(format=LOGGING_FORMAT)
     # logging.basicConfig(filename=f"{args.output}.log", level=logging.INFO)
-    logging.ino("Pluviometer started.")
+    logging.info("Pluviometer started.")
     feature_output_filename: str = args.output + ".features.tsv" if args.output else "features.tsv"
     aggregate_output_filename: str = args.output + ".aggregates.tsv" if args.output else "aggregates.tsv"
     
