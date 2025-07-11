@@ -17,7 +17,10 @@ from site_variant_readers import (
 from BCBio import GFF
 import progressbar
 import argparse
+import logging
 import math
+
+logger = logging.getLogger(__name__)
 
 @dataclass(slots=True,frozen=True)
 class QueueActionList:
@@ -43,7 +46,7 @@ def get_transcript_like(self: SeqFeature) -> list[tuple[str,str,int]]:
 
     List items are tuples that contain the ID of the transcript-like feature, the type of the transcript-like feature, and the total exon or CDS of the transcript-like feature.
     """
-    transcript_like_list: list[tuple[str,str,int]]
+    transcript_like_list: list[tuple[str,str,int]] = []
     for transcript_candidate in self.sub_features:
         total_exon_length: int = 0
         total_cds_length: int = 0
@@ -90,8 +93,11 @@ class CountingContext():
         return None
     
     def set_record(self, record: SeqRecord) -> None:
-        assert len(self.active_features) == 0
-        assert len(self.action_queue) == 0
+        logging.info(f"Switching from {self.record.id} to record {record.id}")
+        if len(self.active_features) != 0:
+            logging.info(f"Features in active queque not cleared prior to switching!\n{','.join(self.active_features.keys())}")
+        if len(self.action_queue) != 0:
+            logging.info(f"Positions in action queque not cleared prior to switching!\n{','.join(str(x[0]) for x in self.action_queue)}")
         self.counters.clear()
 
         self.record: SeqRecord = record
@@ -351,6 +357,7 @@ def parse_cli_input() -> argparse.Namespace:
 
 if __name__ == "__main__":
     args: argparse.Namespace = parse_cli_input()
+    logging.basicConfig(filename=f"{args.output}.log", level=logging.INFO)
     feature_output_filename: str = args.output + ".features.tsv" if args.output else "features.tsv"
     aggregate_output_filename: str = args.output + ".aggregates.tsv" if args.output else "aggregates.tsv"
     
