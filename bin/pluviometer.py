@@ -82,6 +82,7 @@ class CountingContext():
         self.action_queue: deque[tuple[int,QueueActionList]] = deque()
         self.filter: SiteFilter = filter
         self.svdata: Optional[SiteVariantData] = None
+        self.deactivation_list: list[SeqFeature] = []
 
         self.progbar: Optional[progressbar.ProgressBar] = None
         
@@ -105,7 +106,7 @@ class CountingContext():
         self.record: SeqRecord = record
 
         # Map positions to activation feature and deactivation actions
-        logging.info(f"Pre-processing features")
+        logging.info("Pre-processing features")
         position_actions: defaultdict[int,QueueActionList] = defaultdict(QueueActionList)
         for feature in record.features:
             self.load_action_queue(position_actions, feature, 1)
@@ -176,14 +177,15 @@ class CountingContext():
             self.load_action_queue(location_actions, child, level + 1)
 
         return None
-
-    def update_queues(self, new_position: int) -> None:
+    
+    def state_update_cycle(self, new_position: int) -> None:
         """
         Activate or deactivate features depending on the actions in the `actions_queue` up to the current position.
         """
 
         visited_positions: int = 0
-        while len(self.action_queue) > 0 and self.action_queue[0][0] <= new_position:
+
+        while len(self.action_queue) > 0 and self.action_queue[0][0] < new_position:    # Use < instead of <= because of Python's right-exclusive indexing
             _, actions = self.action_queue.popleft()
             visited_positions += 1
             
@@ -346,10 +348,11 @@ class CountingContext():
         return len(self.action_queue) > 0 or len(self.active_features) > 0
     
     def launch_counting(self, reader: RNAVariantReader) -> None:
-        self.svdata: Optional[SiteVariantData] = self.svdata if self.svdata else reader.read() 
+        # self.svdata: Optional[SiteVariantData] = self.svdata if self.svdata else reader.read() 
+        self.svdata: Optional[SiteVariantData] = reader.seek_record(self.record.id)
 
         while self.svdata and self.svdata.seqid == self.record.id:
-            self.update_queues(self.svdata.position)
+            self.state_update_cycle(self.svdata.position)
             self.update_active_counters(self.svdata)
             self.svdata: SiteVariantData = reader.read()
 
@@ -444,11 +447,13 @@ if __name__ == "__main__":
     ):
         match args.format:
             case "reditools2":
-                sv_reader: RNAVariantReader = Reditools2Reader(sv_handle)
+                reader_factory = Reditools2Reader
             case "reditools3":
-                sv_reader: RNAVariantReader = Reditools3Reader(sv_handle)
+                reader_factory = Reditools3Reader
+                # sv_reader: RNAVariantReader = Reditools3Reader(sv_handle)
             case "jacusa2":
-                sv_reader: RNAVariantReader = Jacusa2Reader(sv_handle)
+                reader_factory = Jacusa2Reader
+                # sv_reader: RNAVariantReader = Jacusa2Reader(sv_handle)
             case _:
                 raise Exception(f'Unimplemented format "{args.format}"')
             
@@ -469,8 +474,9 @@ if __name__ == "__main__":
         )
 
         ctx = CountingContext(feature_writer, aggregate_writer, global_filter, args.progress)
-        logging.info(f"Fetching records...")
+        logging.info("Fetching records...")
         for i, record in enumerate(records):
+            sv_reader = reader_factory(sv_handle)
             # manager: CountingContext = CountingContext(record, feature_writer, global_filter, args.progress)
             logging.info(f"Record {record.id} setup")
             ctx.set_record(record)
