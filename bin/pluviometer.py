@@ -441,7 +441,6 @@ if __name__ == "__main__":
     
     with (
         open(args.gff) as gff_handle,
-        open(args.sites) as sv_handle,
         open(feature_output_filename, "w") as feature_output_handle,
         open(aggregate_output_filename, "w") as aggregate_output_handle,
     ):
@@ -476,10 +475,11 @@ if __name__ == "__main__":
         ctx = CountingContext(feature_writer, aggregate_writer, global_filter, args.progress)
         logging.info("Fetching records...")
         for i, record in enumerate(records):
-            sv_reader = reader_factory(sv_handle)
-            # manager: CountingContext = CountingContext(record, feature_writer, global_filter, args.progress)
-            logging.info(f"Record {record.id} setup")
-            ctx.set_record(record)
-            logging.info(f"Start counting on record {record.id}")
-            ctx.launch_counting(sv_reader)
-            logging.info(f"Ended counting on record {record.id}")
+            with open(args.sites) as sv_handle:
+                sv_reader = reader_factory(sv_handle)
+                logging.info(f"Record {record.id} setup")
+                ctx.set_record(record)
+                logging.info(f"Start counting on record {record.id}")
+                ctx.launch_counting(sv_reader)
+                logging.info(f"Ended counting on record {record.id}")
+                
