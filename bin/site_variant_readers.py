@@ -3,6 +3,7 @@ from numpy.typing import NDArray
 from typing import TextIO, Optional
 from utils import SiteVariantData, NUC_STR_TO_IND, EDIT_TYPES, NONEDIT_TYPES
 from abc import ABC, abstractmethod
+import logging
 import sys
 
 REDITOOLS_FIELDS = ["Seqid", "Position", "Reference", "Strand", "Coverage", "MeanQ", "Frequencies"]
@@ -43,6 +44,9 @@ class RNAVariantReader(ABC):
         svdata: Optional[SiteVariantData] = self.read()
         while svdata and svdata.seqid != record_id:
             svdata = self.read()
+
+        if svdata is not None:
+            logging.info(f"Site variant data found matching the record {record_id}")
 
         return svdata
 
@@ -182,6 +186,8 @@ class ReditoolsXReader(RNAVariantReader):
 
             self._get_parts(line)
 
+        logging.info(f"Site variant data found matching the record {record_id}")
+
         return self._parse_parts()
 
 
@@ -289,6 +295,8 @@ class Jacusa2Reader(RNAVariantReader):
                 return None
             
             parts: list[str] = line.split('\t')
+
+        logging.info(f"Site variant data found matching the record {record_id}")
 
         return self._read(parts)
     
