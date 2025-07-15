@@ -349,12 +349,18 @@ class CountingContext():
     
     def launch_counting(self, reader: RNAVariantReader) -> None:
         # self.svdata: Optional[SiteVariantData] = self.svdata if self.svdata else reader.read() 
-        self.svdata: Optional[SiteVariantData] = reader.seek_record(self.record.id)
+        next_svdata: Optional[SiteVariantData] = reader.seek_record(self.record.id)
+        if next_svdata:
+            logging.info(f"Found a site variant data matching the record {self.record.id}")
 
-        while self.svdata and self.svdata.seqid == self.record.id:
+        while next_svdata and next_svdata.seqid == self.record.id:
+            self.svdata = next_svdata
             self.state_update_cycle(self.svdata.position)
             self.update_active_counters(self.svdata)
-            self.svdata: SiteVariantData = reader.read()
+            next_svdata: SiteVariantData = reader.read()
+
+        if self.svdata:
+            logging.info(f"Last position in record {self.record.id}: {self.svdata.position}")
 
         if not self.is_finished():
             # last_position: int = len(self.record)
