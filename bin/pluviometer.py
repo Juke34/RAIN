@@ -28,10 +28,10 @@ class QueueActionList:
     """
     Contains lists of features to "activate" (add the feature to an active_features dict) and features to "deactivate" (remove it from the active_features dict)
     """
-    activate: list[SeqFeature_extensions] = field(default_factory=list)
-    deactivate: list[SeqFeature_extensions] = field(default_factory=list)
+    activate: list[SeqFeature] = field(default_factory=list)
+    deactivate: list[SeqFeature] = field(default_factory=list)
 
-def has_children_of_type(self: SeqFeature_extensions, target_type: str) -> None:
+def has_children_of_type(self: SeqFeature, target_type: str) -> None:
     """
     Return `True` if the feature contains sub-features of a specific target type
     """
@@ -51,7 +51,7 @@ class CountingContext():
             filter: SiteFilter,
             use_progress_bar: bool
             ):
-        self.active_features: dict[str,SeqFeature_extensions] = dict()
+        self.active_features: dict[str,SeqFeature] = dict()
         self.feature_writer: FeatureFileWriter = feature_writer
         self.aggregate_writer: AggregateFileWriter = aggregate_writer
         self.counters: defaultdict[str, MultiCounter] = defaultdict(self.default_counter_factory)
@@ -60,7 +60,7 @@ class CountingContext():
         self.action_queue: deque[tuple[int,QueueActionList]] = deque()
         self.filter: SiteFilter = filter
         self.svdata: Optional[SiteVariantData] = None
-        self.deactivation_list: list[SeqFeature_extensions] = []
+        self.deactivation_list: list[SeqFeature] = []
 
         self.progbar: Optional[progressbar.ProgressBar] = None
         
@@ -130,7 +130,7 @@ class CountingContext():
         """Dummy method that does nothing when the progress bar is deactivated"""
         pass
     
-    def load_action_queue(self, location_actions: dict[int, QueueActionList], root_feature: SeqFeature_extensions, level: int) -> None:
+    def load_action_queue(self, location_actions: dict[int, QueueActionList], root_feature: SeqFeature, level: int) -> None:
         """
         Traverse a hierarchy stemming from a `root_feature`: Each visited feature is added to activation and deactivation actions in the `action_queue` according to the feature's `start` and `end` positions.
         """
@@ -204,7 +204,7 @@ class CountingContext():
 
         return None
     
-    def checkout(self, feature: SeqFeature_extensions) -> defaultdict[str,MultiCounter]:
+    def checkout(self, feature: SeqFeature) -> defaultdict[str,MultiCounter]:
         self.active_features.pop(feature.id, None)
 
         # Counter for the feature itself
@@ -228,7 +228,7 @@ class CountingContext():
 
         return aggregation_counters
     
-    def aggregate_level1(self, feature: SeqFeature_extensions) -> dict[str,MultiCounter]:
+    def aggregate_level1(self, feature: SeqFeature) -> dict[str,MultiCounter]:
         aggregation_counters: defaultdict[str,MultiCounter] = defaultdict(self.default_counter_factory)
 
         # List of tuples of transcript-like sub-features. In each tuple:
@@ -285,7 +285,7 @@ class CountingContext():
         return aggregation_counters
 
 
-    def aggregate_children(self, feature: SeqFeature_extensions) -> dict[str,MultiCounter]:
+    def aggregate_children(self, feature: SeqFeature) -> dict[str,MultiCounter]:
         aggregation_counters: defaultdict[str,MultiCounter] = defaultdict(self.default_counter_factory)
 
         for child in feature.sub_features:
