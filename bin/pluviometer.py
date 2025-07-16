@@ -7,7 +7,7 @@ from typing import Optional, Generator
 from MultiCounter import MultiCounter
 from Bio.SeqRecord import SeqRecord
 from SiteFilter import SiteFilter
-from utils import SiteVariantData
+from utils import SiteVariantData, location_union
 from site_variant_readers import (
     RNAVariantReader,
     Reditools2Reader,
@@ -15,6 +15,7 @@ from site_variant_readers import (
     Jacusa2Reader,
 )
 from BCBio import GFF
+import SeqFeature_extensions
 import progressbar
 import argparse
 import logging
@@ -27,10 +28,10 @@ class QueueActionList:
     """
     Contains lists of features to "activate" (add the feature to an active_features dict) and features to "deactivate" (remove it from the active_features dict)
     """
-    activate: list[SeqFeature] = field(default_factory=list)
-    deactivate: list[SeqFeature] = field(default_factory=list)
+    activate: list[SeqFeature_extensions] = field(default_factory=list)
+    deactivate: list[SeqFeature_extensions] = field(default_factory=list)
 
-def has_children_of_type(self: SeqFeature, target_type: str) -> None:
+def has_children_of_type(self: SeqFeature_extensions, target_type: str) -> None:
     """
     Return `True` if the feature contains sub-features of a specific target type
     """
@@ -40,30 +41,7 @@ def has_children_of_type(self: SeqFeature, target_type: str) -> None:
         
     return False
 
-def get_transcript_like(self: SeqFeature) -> list[tuple[str,str,int]]:
-    """
-    Return a list with information about sub-features that are transcript-like (i.e. their contain children of type "exon" or "CDS").
 
-    List items are tuples that contain the ID of the transcript-like feature, the type of the transcript-like feature, and the total exon or CDS of the transcript-like feature.
-    """
-    transcript_like_list: list[tuple[str,str,int]] = []
-    for transcript_candidate in self.sub_features:
-        total_exon_length: int = 0
-        total_cds_length: int = 0
-        for child in transcript_candidate.sub_features:
-            if child.type == "exon":
-                total_exon_length += len(child)
-            elif child.type == "CDS":
-                total_cds_length += len(child)
-
-        if total_cds_length > 0:
-            transcript_like_list.append((transcript_candidate.id, "CDS", total_cds_length))
-        elif total_exon_length > 0:
-            transcript_like_list.append((transcript_candidate.id, "exon", total_exon_length))
-
-    return transcript_like_list
-        
-setattr(SeqFeature, "get_transcript_like", get_transcript_like)
 
 class CountingContext():
     def __init__(
@@ -73,7 +51,7 @@ class CountingContext():
             filter: SiteFilter,
             use_progress_bar: bool
             ):
-        self.active_features: dict[str,SeqFeature] = dict()
+        self.active_features: dict[str,SeqFeature_extensions] = dict()
         self.feature_writer: FeatureFileWriter = feature_writer
         self.aggregate_writer: AggregateFileWriter = aggregate_writer
         self.counters: defaultdict[str, MultiCounter] = defaultdict(self.default_counter_factory)
@@ -82,7 +60,7 @@ class CountingContext():
         self.action_queue: deque[tuple[int,QueueActionList]] = deque()
         self.filter: SiteFilter = filter
         self.svdata: Optional[SiteVariantData] = None
-        self.deactivation_list: list[SeqFeature] = []
+        self.deactivation_list: list[SeqFeature_extensions] = []
 
         self.progbar: Optional[progressbar.ProgressBar] = None
         
@@ -152,7 +130,7 @@ class CountingContext():
         """Dummy method that does nothing when the progress bar is deactivated"""
         pass
     
-    def load_action_queue(self, location_actions: dict[int, QueueActionList], root_feature: SeqFeature, level: int) -> None:
+    def load_action_queue(self, location_actions: dict[int, QueueActionList], root_feature: SeqFeature_extensions, level: int) -> None:
         """
         Traverse a hierarchy stemming from a `root_feature`: Each visited feature is added to activation and deactivation actions in the `action_queue` according to the feature's `start` and `end` positions.
         """
@@ -161,6 +139,11 @@ class CountingContext():
         feature_strand: int = root_feature.location.parts[0].strand
 
         root_feature.level = level
+
+        # if "chimaera" not in root_feature.type:
+        if level == 1:
+            logging.info(f"Creating chimaera of feature {root_feature.id}")
+            root_feature.make_chimaera()
 
         for part in root_feature.location.parts:
             if feature_strand != part.strand:
@@ -173,8 +156,9 @@ class CountingContext():
             actions.deactivate.append(root_feature)
 
         # Visit children
-        for child in root_feature.sub_features:
-            self.load_action_queue(location_actions, child, level + 1)
+        if hasattr(root_feature, "sub_features"):
+            for child in root_feature.sub_features:
+                self.load_action_queue(location_actions, child, level + 1)
 
         return None
     
@@ -220,7 +204,7 @@ class CountingContext():
 
         return None
     
-    def checkout(self, feature: SeqFeature) -> defaultdict[str,MultiCounter]:
+    def checkout(self, feature: SeqFeature_extensions) -> defaultdict[str,MultiCounter]:
         self.active_features.pop(feature.id, None)
 
         # Counter for the feature itself
@@ -244,7 +228,7 @@ class CountingContext():
 
         return aggregation_counters
     
-    def aggregate_level1(self, feature: SeqFeature) -> dict[str,MultiCounter]:
+    def aggregate_level1(self, feature: SeqFeature_extensions) -> dict[str,MultiCounter]:
         aggregation_counters: defaultdict[str,MultiCounter] = defaultdict(self.default_counter_factory)
 
         # List of tuples of transcript-like sub-features. In each tuple:
@@ -301,7 +285,7 @@ class CountingContext():
         return aggregation_counters
 
 
-    def aggregate_children(self, feature: SeqFeature) -> dict[str,MultiCounter]:
+    def aggregate_children(self, feature: SeqFeature_extensions) -> dict[str,MultiCounter]:
         aggregation_counters: defaultdict[str,MultiCounter] = defaultdict(self.default_counter_factory)
 
         for child in feature.sub_features:
