@@ -131,7 +131,7 @@ class FeatureFileWriter(RainFileWriter):
 
     def write_row_without_data(self, record_id: str, feature: SeqFeature) -> int:
         return self.write_metadata(record_id, feature) + self.write_data(
-            STR_ZERO_BASE_FREQS, STR_ZERO_EDIT_FREQS, STR_ZERO_EDIT_FREQS
+            '0', STR_ZERO_BASE_FREQS, STR_ZERO_EDIT_FREQS, STR_ZERO_EDIT_FREQS
         )
 
 class AggregateFileWriter(RainFileWriter):
