@@ -447,11 +447,9 @@ if __name__ == "__main__":
                 raise Exception(f'Unimplemented format "{args.format}"')
             
         feature_writer: FeatureFileWriter = FeatureFileWriter(feature_output_handle)
-        feature_writer.write_comment(f"Input format: {args.format}")
         feature_writer.write_header()
 
         aggregate_writer = AggregateFileWriter(aggregate_output_handle)
-        aggregate_writer.write_comment(f"Input format: {args.format}")
         aggregate_writer.write_header()
 
         logging.info("Load GFF3 file")
