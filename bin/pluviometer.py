@@ -2,7 +2,7 @@
 from FeatureOutputWriter import FeatureFileWriter, AggregateFileWriter
 from collections import deque, defaultdict
 from dataclasses import dataclass, field
-from Bio.SeqFeature import SeqFeature
+# from Bio.SeqFeature import SeqFeature
 from typing import Optional, Generator
 from MultiCounter import MultiCounter
 from Bio.SeqRecord import SeqRecord
@@ -15,7 +15,7 @@ from site_variant_readers import (
     Jacusa2Reader,
 )
 from BCBio import GFF
-import SeqFeature_extensions
+from SeqFeature_extensions import SeqFeature
 import progressbar
 import argparse
 import logging
@@ -87,7 +87,7 @@ class CountingContext():
         logging.info("Pre-processing features")
         position_actions: defaultdict[int,QueueActionList] = defaultdict(QueueActionList)
         for feature in record.features:
-            self.load_action_queue(position_actions, feature, 1)
+            self.load_action_queue(position_actions, feature, 1, ['.'])
 
         # Create a queue of actions sorted by positions 
         self.action_queue.extend(sorted(position_actions.items()))
@@ -130,7 +130,7 @@ class CountingContext():
         """Dummy method that does nothing when the progress bar is deactivated"""
         pass
     
-    def load_action_queue(self, location_actions: dict[int, QueueActionList], root_feature: SeqFeature, level: int) -> None:
+    def load_action_queue(self, location_actions: dict[int, QueueActionList], root_feature: SeqFeature, level: int, parent_list: list[str]) -> None:
         """
         Traverse a hierarchy stemming from a `root_feature`: Each visited feature is added to activation and deactivation actions in the `action_queue` according to the feature's `start` and `end` positions.
         """
@@ -139,6 +139,7 @@ class CountingContext():
         feature_strand: int = root_feature.location.parts[0].strand
 
         root_feature.level = level
+        root_feature.parent_list = parent_list
 
         # if "chimaera" not in root_feature.type:
         if level == 1:
@@ -158,7 +159,7 @@ class CountingContext():
         # Visit children
         if hasattr(root_feature, "sub_features"):
             for child in root_feature.sub_features:
-                self.load_action_queue(location_actions, child, level + 1)
+                self.load_action_queue(location_actions, child, level + 1, parent_list + [root_feature.id])
 
         return None
     
@@ -271,7 +272,6 @@ class CountingContext():
                     aggregation_counter: MultiCounter = aggregation_counters[child_aggregation_type]
                     aggregation_counter.merge(child_aggregation_counter)
 
-        # for aggregation_type, aggregation_counter in aggregation_counters.items():
         #     self.aggregate_writer.write_row_with_data(
         #         self.record.id,
         #         feature,
@@ -341,7 +341,7 @@ class CountingContext():
             self.svdata = next_svdata
             self.state_update_cycle(self.svdata.position)
             self.update_active_counters(self.svdata)
-            next_svdata: SiteVariantData = reader.read()
+            next_svdata: Optional[SiteVariantData] = reader.read()
 
         if self.svdata:
             logging.info(f"Last position in record {self.record.id}: {self.svdata.position}")

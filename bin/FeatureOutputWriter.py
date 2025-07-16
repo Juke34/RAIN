@@ -1,6 +1,7 @@
 from numpy.typing import NDArray
 from MultiCounter import MultiCounter
 from Bio.SeqFeature import SeqFeature
+from Bio.SeqFeature import ExactPosition
 from Bio.SeqRecord import SeqRecord
 from collections import defaultdict
 from typing import TextIO
@@ -8,6 +9,7 @@ from utils import BASE_TYPES, MATCH_MISMATCH_TYPES
 
 FEATURE_OUTPUT_FIELDS = [
     "SeqID",
+    "Parents",
     "FeatureID",
     "Type",
     "Start",
@@ -21,6 +23,7 @@ FEATURE_OUTPUT_FIELDS = [
 
 FEATURE_METADATA_OUTPUT_FIELDS = [
     "SeqID",
+    "Parents",
     "FeatureID",
     "Type",
     "Start",
@@ -52,6 +55,16 @@ AGGREGATE_DATA_OUTPUT_FIELDS = [
 
 STR_ZERO_BASE_FREQS = ",".join('0' for _ in range(len(BASE_TYPES)))
 STR_ZERO_EDIT_FREQS = ",".join('0' for _ in range(len(MATCH_MISMATCH_TYPES)))
+
+
+def make_parent_path(parent_list: list[str]) -> str:
+    """
+    Create a path string from an ordered list of parent IDs.
+    The separator is a comma, chosen because it is one of the few invalid characters in tag=value entries of the attributes field in the GFF3 format.
+
+    Consult the GFF3 specification for details: https://github.com/The-Sequence-Ontology/Specifications/blob/master/gff3.md
+    """
+    return ','.join(parent_list)
 
 
 class RainFileWriter:
@@ -112,10 +125,11 @@ class FeatureFileWriter(RainFileWriter):
     def write_metadata(self, record_id: str, feature: SeqFeature) -> int:
         return super().write_metadata(
             record_id,
+            make_parent_path(feature.parent_list),
             feature.id,
             feature.type,
-            str(feature.location.start + 1),
-            str(feature.location.end),
+            str(feature.location.parts[0].start + ExactPosition(1)),
+            str(feature.location.parts[-1].end),
             str(feature.location.strand),
         )
 
@@ -143,9 +157,9 @@ class AggregateFileWriter(RainFileWriter):
         return None
 
     def write_metadata(self, seq_id: str, feature: SeqFeature, aggregate_type: str, mode: str) -> int:
-        return super().write_metadata(seq_id, feature.id, feature.type, aggregate_type, mode)
+        return super().write_metadata(seq_id, make_parent_path(feature.parent_list), feature.id, feature.type, aggregate_type, mode)
     
-    def write_row_with_data(self, record_id: str, feature: SeqFeature, counters: defaultdict[MultiCounter]) -> int:
+    def write_row_with_data(self, record_id: str, feature: SeqFeature, counters: defaultdict[str,MultiCounter]) -> int:
         b: int = 0
 
         for aggregate_type, aggregate_counter in counters.items():
@@ -156,6 +170,8 @@ class AggregateFileWriter(RainFileWriter):
                 ",".join(map(str, aggregate_counter.edit_site_freqs.flat)),
                 ",".join(map(str, aggregate_counter.edit_read_freqs.flat)),
             )
+
+        return b
         
 # class FeatureFileWriter:
 #     def __init__(self, handle: TextIO):

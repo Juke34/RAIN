@@ -6,6 +6,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+setattr(SeqFeature, "level", 0)
+
+
 def get_transcript_like(self: SeqFeature) -> list[tuple[str, str, int]]:
     """
     Return a list with information about sub-features that are transcript-like (i.e. their contain children of type "exon" or "CDS").
@@ -36,6 +39,7 @@ def get_transcript_like(self: SeqFeature) -> list[tuple[str, str, int]]:
 
 setattr(SeqFeature, "get_transcript_like", get_transcript_like)
 
+setattr(SeqFeature, "parent_list", [""])
 
 def make_chimaera(self: SeqFeature) -> None:
     """
