@@ -87,22 +87,9 @@ def make_chimaera(self: SeqFeature) -> None:
             ))
         )
 
-    logging.info(f"Creating chimaera of feature {self.id}: {len(target_locations)} transcript parts identified")
-    logging.info(f"Creating chimaera of feature {self.id}: Parts {target_locations}")
-    
-    # print(f"Chimaeric type: {chimaeric_type}")
-    # print(f"Feature ID: {self.id}\tFeature type: {self.type}\tFeature location: {self.location}")
-    # print(f"Number of transcript-like children: {len(transcript_like_list)}")
-    # for x in transcript_like_list:
-    #     print(f"{x.id} - \ttype: {x.type}\tlocation: {x.location}")
-    #     for child in x.sub_features:
-    #         print(f"\tChild {child.id} - type: {child.type}\tlocation: {child.location}")
-    # print(f"Number of target locations: {len(target_locations)}")
-
     chimaeric_location: SimpleLocation | CompoundLocation = location_union(
         target_locations
     )
-    logging.info(f"Created chimaera of feature {self.id}: chimaeric location is {chimaeric_location}")
     logging.info(f"Created chimaera of feature {self.id}: transcript of {len(chimaeric_location.parts)} components")
 
     # print(chimaeric_location)

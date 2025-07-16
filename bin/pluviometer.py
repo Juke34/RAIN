@@ -188,7 +188,6 @@ class CountingContext():
         return None
     
     def flush_queues(self) -> None:
-        # last_position: int = len(self.record)
         logging.info(f"Actions remaining in action queue: {len(self.action_queue)}. Flushing action queue")
         while len(self.action_queue) > 0:
             _, actions = self.action_queue.popleft()
@@ -272,14 +271,6 @@ class CountingContext():
                     aggregation_counter: MultiCounter = aggregation_counters[child_aggregation_type]
                     aggregation_counter.merge(child_aggregation_counter)
 
-        #     self.aggregate_writer.write_row_with_data(
-        #         self.record.id,
-        #         feature,
-        #         aggregation_type,
-        #         "",
-        #         aggregation_counter
-        #     )
-
         self.aggregate_writer.write_row_with_data(self.record.id, feature, aggregation_counters)
 
         return aggregation_counters
@@ -304,14 +295,6 @@ class CountingContext():
                 aggregation_counter.merge(feature_counter)
             
         self.aggregate_writer.write_row_with_data(self.record.id, feature, aggregation_counters)
-        # for aggregation_type, aggregation_counter in aggregation_counters.items():
-        #     self.aggregate_writer.write_row_with_data(
-        #         self.record.id,
-        #         feature,
-        #         aggregation_type,
-        #         "",
-        #         aggregation_counter
-        #     )
 
         return aggregation_counters
 
@@ -332,7 +315,6 @@ class CountingContext():
         return len(self.action_queue) > 0 or len(self.active_features) > 0
     
     def launch_counting(self, reader: RNAVariantReader) -> None:
-        # self.svdata: Optional[SiteVariantData] = self.svdata if self.svdata else reader.read() 
         next_svdata: Optional[SiteVariantData] = reader.seek_record(self.record.id)
         if next_svdata:
             logging.info(f"Found a site variant data matching the record {self.record.id}")
@@ -347,10 +329,6 @@ class CountingContext():
             logging.info(f"Last position in record {self.record.id}: {self.svdata.position}")
 
         if not self.is_finished():
-            # last_position: int = len(self.record)
-            # logging.info(f"Updating queues up to position {last_position}")
-            # last_position: int = max(max(map(lambda x: x.location.end, self.active_features.values())), max(map(lambda x: x[0], self.action_queue[0])))
-            # self.update_queues(last_position)
             self.flush_queues()
 
         if self.use_progress_bar:
@@ -422,7 +400,6 @@ def parse_cli_input() -> argparse.Namespace:
 if __name__ == "__main__":
     args: argparse.Namespace = parse_cli_input()
     LOGGING_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
-    # logging.basicConfig(format=LOGGING_FORMAT)
     log_filename: str = args.output + ".pluviometer.log" if args.output else "pluviometer.log"
     logging.basicConfig(filename=log_filename, level=logging.INFO, format=LOGGING_FORMAT)
     logging.info(f"Pluviometer started. Log file: {log_filename}")
@@ -439,10 +416,8 @@ if __name__ == "__main__":
                 reader_factory = Reditools2Reader
             case "reditools3":
                 reader_factory = Reditools3Reader
-                # sv_reader: RNAVariantReader = Reditools3Reader(sv_handle)
             case "jacusa2":
                 reader_factory = Jacusa2Reader
-                # sv_reader: RNAVariantReader = Jacusa2Reader(sv_handle)
             case _:
                 raise Exception(f'Unimplemented format "{args.format}"')
             
