@@ -75,11 +75,9 @@ def location_union(locations: list[SimpleLocation|CompoundLocation]) -> SimpleLo
 
     comp_locations: CompoundLocation = reduce(lambda x, y: x + y, locations)
     comp_locations.parts.sort(key=lambda part: (part.start, part.end), reverse=True)
-    # logging.info(f"Compound locations: {comp_locations}")
 
     original_range = (comp_locations.parts[-1].start, max(map(lambda part: part.end, comp_locations.parts)))
 
-    # current_part: SimpleLocation = comp_locations.parts[-1]
     current_part: SimpleLocation = comp_locations.parts.pop()
     result: Optional[SimpleLocation] = None
 
@@ -87,62 +85,23 @@ def location_union(locations: list[SimpleLocation|CompoundLocation]) -> SimpleLo
         new_part = comp_locations.parts.pop()
 
         if current_part.start <= new_part.start <= current_part.end:
-            # logging.info(f"Part comparison: {current_part} and {new_part}")
             current_part = SimpleLocation(current_part.start, max(current_part.end, new_part.end), current_part.strand)
 
         else:
             result = result + current_part if result else current_part
             current_part = new_part
 
-    # while len(comp_locations.parts) > 0:
-    #     next_part: SimpleLocation = comp_locations.parts.pop()
-
-    #     # If there is overlap between the current part and the next part, extend the end of the current part to cover the next part
-    #     if current_part.start <= next_part.start <= current_part.end:
-    #         current_part = SimpleLocation(current_part.start, max(current_part.end, next_part.end), current_part.strand)
-
-    #     # If there is no overlap, add the current part to the result and move on
-    #     else:
-    #         result = result + current_part if result else current_part
-    #         current_part = next_part
-
     result = result + current_part if result else current_part
-    # logging.info(f"Original range: {original_range[0]} to {original_range[1]}. New range: {result.parts[0].start} to {result.parts[-1].end}")
     assert original_range[0] == result.parts[0].start
     assert original_range[1] == result.parts[-1].end
 
-
     return result
-
-
-# def location_union(locations: list[SimpleLocation|CompoundLocation]) -> CompoundLocation:
-#     old_loc: Optional[SimpleLocation|CompoundLocation] = None
-
-#     for new_loc in locations:
-#         if old_loc:
-#             for new_part in new_loc.parts:
-#                 any_overlap: bool = False
-#                 for old_part in old_loc.parts:
-#                     if old_part.overlaps(new_part):
-#                         old_part.start = min(old_part.start, new_part.start)
-#                         old_part.end = min(old_part.end, new_part.end)
-#                         any_overlap = True
-
-#                 if not any_overlap:
-#                     old_part += new_part
-#         else:
-#             old_loc = new_loc
-
-#     return old_loc
 
 def condense(x: list[SeqFeature], attrib) -> deque[tuple[int,list[SeqFeature]]]:
     """
     "Condense" a *sorted* flat list of features by their start or end locations (`attrib` parameter).
     It returns a deque of tuples, where the first element is the location value and the second element is a list of features at location.
     """
-    # current_feature = x[0]
-    # current_value: int = current_feature.location.__getattribute__(attrib)
-    # condensed: deque[tuple[int,list[SeqFeature]]] = deque([(current_value, [current_feature])])
     condensed: deque[tuple[int, list[SeqFeature]]] = deque()
     current_value:int = -1    # Initial state assumption: No feature has a location value -1 
 
