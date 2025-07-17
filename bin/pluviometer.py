@@ -464,7 +464,7 @@ if __name__ == "__main__":
                 logging.info(f"Ended counting on record {record.id}")
             
             record_ctx.aggregate_writer.write_rows_with_data(
-                record_ctx.record.id,
+                record.id,
                 ["."],
                 ".",
                 ".",
@@ -472,6 +472,11 @@ if __name__ == "__main__":
             )
             genome_ctx.update_aggregate_counters(record_ctx.aggregate_counters)
             genome_ctx.total_counter.merge(record_ctx.total_counter)
+
+            total_counter_dict: defaultdict = defaultdict(None)
+            total_counter_dict[record.id] = record_ctx.total_counter
+
+            record_ctx.aggregate_writer.write_rows_with_data(record.id, ["."], ".", ".", total_counter_dict)
 
         genome_ctx.aggregate_writer.write_rows_with_data(
             ".",
