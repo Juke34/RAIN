@@ -85,7 +85,7 @@ def make_chimaera(self: SeqFeature) -> None:
     chimaeric_location: SimpleLocation | CompoundLocation = location_union(
         target_locations
     )
-    logging.info(f"Created {chimaeric_type} chimaera of feature {self.id}: {len(transcript_like_list)} were merged into one transcript of {len(chimaeric_location.parts)} elements")
+    logging.info(f"Created {chimaeric_type} chimaera of feature {self.id}: {len(transcript_like_list)} transcripts were merged into one transcript of {len(chimaeric_location.parts)} elements")
 
     chimaeric_feature: SeqFeature = SeqFeature(
         location=chimaeric_location,
