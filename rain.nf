@@ -30,6 +30,7 @@ params.multiqc_config = "$baseDir/config/multiqc_config.yaml" // MultiQC config 
 params.region = "" // e.g. chr21 - Used to limit the analysis to a specific region by REDITOOLS2
 
 // others
+params.hyperediting = false
 params.help = null
 params.monochrome_logs = false // if true, no color in logs
 
@@ -116,6 +117,7 @@ def helpMSG() {
     --output                    Path to the output directory [default: $params.outdir]
 
        Optional input:
+    --hyperediting              Activate hyperediting detection via genome recoding
     --aligner                   Aligner to use [default: $params.aligner]
     --edit_site_tool            Tool used for detecting edited sites. [default: $params.edit_site_tool]
     --strandedness              Set the strandedness for all your input reads [default: $params.strandedness]. In auto mode salmon will guess the library type for each fastq sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
@@ -140,6 +142,7 @@ General Parameters
     strandedness               : ${params.strandedness}
     read_type                  : ${params.read_type}
     outdir                     : ${params.outdir}
+    hyperediting               : ${params.hyperediting}
 
 Alignment Parameters
  aline_profiles                : ${params.aline_profiles}
@@ -175,6 +178,7 @@ include {reditools3} from "./modules/reditools3.nf"
 include {jacusa2} from "./modules/jacusa2.nf"
 include {sapin} from "./modules/sapin.nf"
 include {normalize_gxf} from "./modules/agat.nf"
+include {genome_recoder} from "./modules/genome_recoder.nf"
 include {pluviometer as pluviometer_jacusa2; pluviometer as pluviometer_reditools2; pluviometer as pluviometer_reditools3; pluviometer as pluviometer_sapin} from "./modules/pluviometer.nf"
 
 //*************************************************
@@ -470,6 +474,10 @@ workflow {
         }
         Channel.empty().set{aline_alignments_all}
         if (aline_data_in){
+
+            if (hyperediting) {
+                genome_recoder()
+            }
 
             ALIGNMENT (
                 'Juke34/AliNe -r v1.5.2', // Select pipeline
