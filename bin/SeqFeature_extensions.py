@@ -51,10 +51,6 @@ def make_chimaera(self: SeqFeature) -> None:
     else:
         return None
 
-    # for sub_feature in self.sub_features:
-    #     for part in sub_feature.sub_features:
-    #         print(part.type)
-
     transcript_like_list: list[SeqFeature] = list(
         filter(
             lambda transcript: any(map(lambda part: part.type == "CDS", transcript.sub_features)),
@@ -76,7 +72,6 @@ def make_chimaera(self: SeqFeature) -> None:
     if len(transcript_like_list) == 0:
         return None
     
-    logging.info(f"Creating chimaera of feature {self.id}: {len(transcript_like_list)} transcripts identified")
 
     target_locations: list[SimpleLocation | CompoundLocation] = []
     for transcript in transcript_like_list:
@@ -90,9 +85,8 @@ def make_chimaera(self: SeqFeature) -> None:
     chimaeric_location: SimpleLocation | CompoundLocation = location_union(
         target_locations
     )
-    logging.info(f"Created chimaera of feature {self.id}: transcript of {len(chimaeric_location.parts)} components")
+    logging.info(f"Created {chimaeric_type} chimaera of feature {self.id}: {len(transcript_like_list)} were merged into one transcript of {len(chimaeric_location.parts)} elements")
 
-    # print(chimaeric_location)
     chimaeric_feature: SeqFeature = SeqFeature(
         location=chimaeric_location,
         type=chimaeric_type + "-chimaera",
