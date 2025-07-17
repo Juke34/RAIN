@@ -251,7 +251,7 @@ class RecordCountingContext(CountingContext):
         max_total_length: int = 0
 
         for child_id, child_type, child_length in transcript_like_children:
-            if child_type == "cds":
+            if child_type == "CDS":
                 if has_cds:
                     if child_length > max_total_length:
                         representative_feature_id = child_id
@@ -266,6 +266,8 @@ class RecordCountingContext(CountingContext):
                 elif child_length > max_total_length:
                         representative_feature_id = child_id
                         max_total_length = child_length
+
+        logging.info(f"Record {self.record.id}, gene {feature.id}: Selected the transcript {representative_feature_id} with {"CDS" if has_cds else "exons"} as the representative feature.")
 
         # Perform aggregations, selecting only the "representative feature"
         for child in feature.sub_features:
@@ -282,9 +284,6 @@ class RecordCountingContext(CountingContext):
 
         # Merge the feature-level aggregation counters into the record-level aggregation counters
         self.update_aggregate_counters(level1_aggregation_counters)
-        # for aggregation_type, feature_aggregation_counter in aggregation_counters.items():
-        #     record_aggregation_counter: MultiCounter = self.aggregate_counters[aggregation_type]
-        #     record_aggregation_counter.merge(feature_aggregation_counter)
 
         return level1_aggregation_counters
 
