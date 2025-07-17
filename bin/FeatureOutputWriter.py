@@ -1,8 +1,6 @@
-from numpy.typing import NDArray
 from MultiCounter import MultiCounter
 from Bio.SeqFeature import SeqFeature
 from Bio.SeqFeature import ExactPosition
-from Bio.SeqRecord import SeqRecord
 from collections import defaultdict
 from typing import TextIO
 from utils import BASE_TYPES, MATCH_MISMATCH_TYPES
@@ -23,7 +21,7 @@ FEATURE_OUTPUT_FIELDS = [
 
 FEATURE_METADATA_OUTPUT_FIELDS = [
     "SeqID",
-    "Parents",
+    "ParentsIDs",
     "FeatureID",
     "Type",
     "Start",
@@ -40,6 +38,7 @@ FEATURE_DATA_OUTPUT_FIELDS = [
 
 AGGREGATE_METADATA_OUTPUT_FIELDS = [
     "SeqID",
+    "ParentsIDs",
     "FeatureID",
     "ParentType",
     "AggregateType",
@@ -159,10 +158,10 @@ class AggregateFileWriter(RainFileWriter):
     def write_metadata(self, seq_id: str, feature: SeqFeature, aggregate_type: str, mode: str) -> int:
         return super().write_metadata(seq_id, make_parent_path(feature.parent_list), feature.id, feature.type, aggregate_type, mode)
     
-    def write_row_with_data(self, record_id: str, feature: SeqFeature, counters: defaultdict[str,MultiCounter]) -> int:
+    def write_rows_with_feature_and_data(self, record_id: str, feature: SeqFeature, counter_dict: defaultdict[str,MultiCounter]) -> int:
         b: int = 0
 
-        for aggregate_type, aggregate_counter in counters.items():
+        for aggregate_type, aggregate_counter in counter_dict.items():
             b += self.write_metadata(record_id, feature, aggregate_type, "")
             b += self.write_data(
                 str(aggregate_counter.genome_base_freqs.sum()),
@@ -172,109 +171,24 @@ class AggregateFileWriter(RainFileWriter):
             )
 
         return b
-        
-# class FeatureFileWriter:
-#     def __init__(self, handle: TextIO):
-#         self.handle: TextIO = handle
-
-#         return None
-
-#     def write_header(self) -> int:
-#         return self.handle.write("\t".join(FEATURE_OUTPUT_FIELDS) + "\n")
-
-#     def write_comment(self, comment: str) -> int:
-#         b = self.handle.write("# ")
-#         b += self.handle.write(comment)
-#         b += self.handle.write("\n")
-
-#         return b
-
-#     def write_feature_with_data(
-#         self, record: SeqRecord, feature: SeqFeature, counter: MultiCounter
-#     ) -> int:
-#         b: int = 0
-#         b += self.handle.write(record.id)
-#         b += self.handle.write("\t")
-#         b += self.handle.write(feature.id)
-#         b += self.handle.write("\t")
-#         b += self.handle.write(feature.type)
-#         b += self.handle.write("\t")
-#         b += self.handle.write(str(feature.location.start + 1))
-#         b += self.handle.write("\t")
-#         b += self.handle.write(str(feature.location.end))
-#         b += self.handle.write("\t")
-#         b += self.handle.write(str(feature.location.strand))
-#         b += self.handle.write("\t")
-#         b += self.handle.write(str(counter.genome_base_freqs.sum()))
-#         b += self.handle.write("\t")
-#         b += self.handle.write(",".join(map(str, counter.genome_base_freqs.flat)))
-#         b += self.handle.write("\t")
-#         b += self.handle.write(",".join(map(str, counter.edit_site_freqs.flat)))
-#         b += self.handle.write("\t")
-#         b += self.handle.write(",".join(map(str, counter.edit_read_freqs.flat)))
-#         b += self.handle.write("\n")
-
-#         return b
-
-#     def write_feature_without_data(self, record: SeqRecord, feature: SeqFeature) -> int:
-#         b: int = 0
-#         b += self.handle.write(record.id)
-#         b += self.handle.write("\t")
-#         b += self.handle.write(feature.id)
-#         b += self.handle.write("\t")
-#         b += self.handle.write(feature.type)
-#         b += self.handle.write("\t")
-#         b += self.handle.write(str(feature.location.start + 1))
-#         b += self.handle.write("\t")
-#         b += self.handle.write(str(feature.location.end))
-#         b += self.handle.write("\t")
-#         b += self.handle.write(str(feature.location.strand))
-#         b += self.handle.write("\t")
-#         b += self.handle.write("0")
-#         b += self.handle.write("\t")
-#         b += self.handle.write(STR_ZERO_BASE_FREQS)
-#         b += self.handle.write("\t")
-#         b += self.handle.write(STR_ZERO_EDIT_FREQS)
-#         b += self.handle.write("\t")
-#         b += self.handle.write(STR_ZERO_EDIT_FREQS)
-#         b += self.handle.write("\n")
-
-#         return b
-
-
-class AggregateWriter:
-    def __init__(self, handle: TextIO):
-        self.handle: TextIO = handle
-
-        return None
-
-    def write_header(self) -> int:
-        return self.handle.write("\t".join(AGGREGATE_OUTPUT_FIELDS) + "\n")
-
-    def write_aggregate_data(
-        self,
-        record: SeqRecord,
-        feature: SeqFeature,
-        aggregate_type: str,
-        mode: str,
-        counter: MultiCounter,
-    ) -> int:
+    
+    def write_rows_with_data(
+            self,
+            record_id: str,
+            parent_list: list[str],
+            feature_id: str,
+            feature_type: str,
+            counter_dict: defaultdict[str,MultiCounter]
+            ) -> int:
         b: int = 0
-        b += self.handle.write(record.id)
-        b += self.handle.write("\t")
-        b += self.handle.write(feature.id)
-        b += self.handle.write("\t")
-        b += self.handle.write(aggregate_type)
-        b += self.handle.write("\t")
-        b += self.handle.write(mode)
-        b += self.handle.write("\t")
-        b += self.handle.write(str(counter.genome_base_freqs.sum()))
-        b += self.handle.write("\t")
-        b += self.handle.write(",".join(map(str, counter.genome_base_freqs.flat)))
-        b += self.handle.write("\t")
-        b += self.handle.write(",".join(map(str, counter.edit_site_freqs.flat)))
-        b += self.handle.write("\t")
-        b += self.handle.write(",".join(map(str, counter.edit_read_freqs.flat)))
-        b += self.handle.write("\n")
+
+        for aggregate_type, aggregate_counter in counter_dict.items():
+            b += super().write_metadata(record_id, make_parent_path(parent_list), feature_id, feature_type, aggregate_type, ".")
+            b += self.write_data(
+                str(aggregate_counter.genome_base_freqs.sum()),
+                ",".join(map(str, aggregate_counter.genome_base_freqs.flat)),
+                ",".join(map(str, aggregate_counter.edit_site_freqs.flat)),
+                ",".join(map(str, aggregate_counter.edit_read_freqs.flat)),
+            )
 
         return b
