@@ -155,7 +155,7 @@ class AggregateFileWriter(RainFileWriter):
         return None
 
     def write_metadata(self, seq_id: str, feature: SeqFeature, aggregate_type: str) -> int:
-        return super().write_metadata(seq_id, make_parent_path(feature.parent_list), feature.id, feature.type, aggregate_type, mode)
+        return super().write_metadata(seq_id, make_parent_path(feature.parent_list), feature.id, feature.type, aggregate_type)
     
     def write_rows_with_feature_and_data(self, record_id: str, feature: SeqFeature, counter_dict: defaultdict[str,MultiCounter]) -> int:
         b: int = 0
