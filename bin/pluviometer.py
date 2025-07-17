@@ -151,7 +151,6 @@ class RecordCountingContext(CountingContext):
 
         # if "chimaera" not in root_feature.type:
         if level == 1:
-            logging.info(f"Creating chimaera of feature {root_feature.id}")
             root_feature.make_chimaera()
 
         for part in root_feature.location.parts:
@@ -249,7 +248,7 @@ class RecordCountingContext(CountingContext):
         # If there are CDS sub-features, select the onte with greatest total CDS length. Elsewise, select the sub-feature with the greatest total exon length.
         representative_feature_id: str = ""
         has_cds: bool = False
-        max_total_length: bool = 0
+        max_total_length: int = 0
 
         for child_id, child_type, child_length in transcript_like_children:
             if child_type == "cds":
