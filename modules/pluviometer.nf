@@ -21,7 +21,7 @@ process pluviometer {
             --format ${tool_format} \
             --cov 1 \
             --edit_threshold ${params.edit_threshold} \
-            --threads ${task.cpu} \
+            --threads ${task.cpus} \
             --aggregation_mode ${params.aggregation_mode}
         """
 }
