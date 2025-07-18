@@ -3,13 +3,15 @@ from numpy.typing import NDArray
 from typing import TextIO, Optional
 from utils import SiteVariantData, NUC_STR_TO_IND, EDIT_TYPES, NONEDIT_TYPES
 from abc import ABC, abstractmethod
+import logging
+import sys
 
 REDITOOLS_FIELDS = ["Seqid", "Position", "Reference", "Strand", "Coverage", "MeanQ", "Frequencies"]
-REDITOOLS_FIELD_INDEX = {field: i for i, field in  enumerate(REDITOOLS_FIELDS)}
+REDITOOLS_FIELD_INDEX = {sys.intern(field): i for i, field in  enumerate(REDITOOLS_FIELDS)}
 
 # Jacusa output file fields in the extended BED6 format
 JACUSA_FIELDS = ["contig", "start", "end", "name", "score", "strand", "bases11", "info", "filter", "ref"]
-JACUSA_FIELDS_INDEX = {field: i for i, field in enumerate(JACUSA_FIELDS)}
+JACUSA_FIELDS_INDEX = {sys.intern(field): i for i, field in enumerate(JACUSA_FIELDS)}
 
 def skip_comments(handle: TextIO, s: str) -> Optional[str]:
     """
@@ -32,10 +34,25 @@ class RNAVariantReader(ABC):
 
     @abstractmethod
     def read(self) -> Optional[SiteVariantData]:
+        """Return the next site variant data entry"""
         pass
 
     @abstractmethod
+    def seek_record(self, record_id: str) -> Optional[SiteVariantData]:
+        """Return the next site variant data entry that matches a given record ID."""
+        # Slow fallback method.
+        svdata: Optional[SiteVariantData] = self.read()
+        while svdata and svdata.seqid != record_id:
+            svdata = self.read()
+
+        if svdata is not None:
+            logging.info(f"Site variant data found matching the record {record_id}")
+
+        return svdata
+
+    @abstractmethod
     def close(self) -> None:
+        """Close the file handle"""
         pass
 
 
@@ -148,6 +165,31 @@ class ReditoolsXReader(RNAVariantReader):
             frequencies=np.int32(self.parts[REDITOOLS_FIELD_INDEX["Frequencies"]][1:-1].split(",") + [0]),
             score=0.0
         )
+    
+    def seek_record(self, record_id: str) -> Optional[SiteVariantData]:
+        # Similar to reading in a while loop, but skipping the parsing
+
+        line = self.file_handle.readline()
+        
+        if line == "":
+            # End of file reached
+            return None
+
+        self._get_parts(line)
+
+        while self.parts[REDITOOLS_FIELD_INDEX["Seqid"]] != record_id:
+            line = self.file_handle.readline()
+        
+            if line == "":
+                # End of file reached
+                return None
+
+            self._get_parts(line)
+
+        logging.info(f"Site variant data found matching the record {record_id}")
+
+        return self._parse_parts()
+
 
     def read(self) -> Optional[SiteVariantData]:
         """Read the data of the next variant site"""
@@ -202,14 +244,7 @@ class Jacusa2Reader(RNAVariantReader):
         
         return None
     
-    def read(self) -> Optional[SiteVariantData]:
-        line: str = self.file_handle.readline().strip()
-
-        if line == "":
-            return None
-
-        parts: list[str] = line.split('\t')
-
+    def _read(self, parts: list[str]) -> Optional[SiteVariantData]:
         reference_nuc_str: str = parts[JACUSA_FIELDS_INDEX["ref"]]
 
         strand_str: str = parts[JACUSA_FIELDS_INDEX["strand"]]
@@ -234,6 +269,36 @@ class Jacusa2Reader(RNAVariantReader):
             frequencies=frequencies,
             score=float(parts[JACUSA_FIELDS_INDEX["score"]])
         )
+    
+    def read(self) -> Optional[SiteVariantData]:
+        line: str = self.file_handle.readline().strip()
+
+        if line == "":
+            return None
+        
+        parts: list[str] = line.split('\t')
+        
+        return self._read(parts)
+    
+    def seek_record(self, record_id) -> Optional[SiteVariantData]:
+        line: str = self.file_handle.readline().strip()
+
+        if line == "":
+            return None
+        
+        parts: list[str] = line.split('\t')
+
+        while parts[JACUSA_FIELDS_INDEX["contig"]] != record_id:
+            line: str = self.file_handle.readline().strip()
+
+            if line == "":
+                return None
+            
+            parts: list[str] = line.split('\t')
+
+        logging.info(f"Site variant data found matching the record {record_id}")
+
+        return self._read(parts)
     
     def close(self):
         self.file_handle.close()

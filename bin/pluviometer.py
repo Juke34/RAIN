@@ -1,31 +1,412 @@
 #!/usr/bin/env python
-
-#####################
-# Conventions:
-#   - Both internally and in the output, when base type information is represented in an array, the array indices follow the order ACGT
-#   - Always use explicit return
-#   - Test that collections are empty (or not) by comparing their lengths to zero (don't test "if x" as though x where False or None)
-#####################
-
-from BCBio import GFF
+from FeatureOutputWriter import FeatureFileWriter, AggregateFileWriter
+from typing import Any, Optional, Generator, Callable, TextIO
+from SeqFeature_extensions import SeqFeature
+from collections import deque, defaultdict
+from dataclasses import dataclass, field
+from MultiCounter import MultiCounter
 from Bio.SeqRecord import SeqRecord
-from Bio.SeqFeature import SeqFeature
-import numpy as np
-from numpy.typing import NDArray
-from typing import TextIO, NamedTuple, Optional, Generator
-from site_variant_readers import RNAVariantReader, Reditools2Reader, Reditools3Reader, Jacusa2Reader
-import argparse
-from contextlib import nullcontext
-import sys
-from utils import SiteVariantData, BASE_TYPES, EDIT_TYPES, MATCH_MISMATCH_TYPES
-from collections import deque
+from SiteFilter import SiteFilter
+from utils import SiteVariantData
+from site_variant_readers import (
+    RNAVariantReader,
+    Reditools2Reader,
+    Reditools3Reader,
+    Jacusa2Reader,
+)
+from natsort import natsorted
+import multiprocessing
+from BCBio import GFF
+from os import remove
 import progressbar
+import tempfile
+import argparse
+import logging
 import math
-from feature_aggregator import FeatureAggregator
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True, frozen=True)
+class QueueActionList:
+    """
+    Contains lists of features to "activate" (add the feature to an active_features dict) and features to "deactivate" (remove it from the active_features dict)
+    """
+
+    activate: list[SeqFeature] = field(default_factory=list)
+    deactivate: list[SeqFeature] = field(default_factory=list)
+
+
+def has_children_of_type(self: SeqFeature, target_type: str) -> bool:
+    """
+    Return `True` if the feature contains sub-features of a specific target type
+    """
+    for child in self.sub_features:
+        if child.type == target_type:
+            return True
+
+    return False
+
+
+class CountingContext:
+    def __init__(self, aggregate_writer: AggregateFileWriter, filter: SiteFilter):
+        self.aggregate_writer: AggregateFileWriter = aggregate_writer
+        self.filter: SiteFilter = filter
+        self.aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
+            DefaultMultiCounterFactory(self.filter)
+        )
+        self.total_counter: MultiCounter = MultiCounter(self.filter)
+
+        return None
+
+    def update_aggregate_counters(self, new_counters: defaultdict[str, MultiCounter]) -> None:
+        for counter_type, new_counter in new_counters.items():
+            target_counter: MultiCounter = self.aggregate_counters[counter_type]
+            target_counter.merge(new_counter)
+
+        return None
+
+
+class RecordCountingContext(CountingContext):
+    def __init__(
+        self,
+        feature_writer: FeatureFileWriter,
+        aggregate_writer: AggregateFileWriter,
+        filter: SiteFilter,
+        use_progress_bar: bool,
+    ):
+        super().__init__(aggregate_writer, filter)
+        self.active_features: dict[str, SeqFeature] = dict()
+        self.feature_writer: FeatureFileWriter = feature_writer
+        self.counters: defaultdict[str, MultiCounter] = defaultdict(
+            DefaultMultiCounterFactory(self.filter)
+        )
+        self.use_progress_bar: bool = use_progress_bar
+        self.action_queue: deque[tuple[int, QueueActionList]] = deque()
+        self.svdata: Optional[SiteVariantData] = None
+        self.deactivation_list: list[SeqFeature] = []
+
+        if self.use_progress_bar:
+            self.progbar_increment = self._active_progbar_increment
+        else:
+            self.progbar_increment = self._inactive_progbar_increment
+
+        return None
+    
+    def set_record(self, record: SeqRecord) -> None:
+        logging.info(f"Switching to record {record.id}")
+        if len(self.active_features) != 0:
+            logging.info(
+                f"Features in active queque not cleared prior to switching!\n{','.join(self.active_features.keys())}"
+            )
+            self.active_features.clear()
+        if len(self.action_queue) != 0:
+            logging.info(
+                f"Positions in action queque not cleared prior to switching!\n{','.join(str(x[0]) for x in self.action_queue)}"
+            )
+            self.action_queue.clear()
+        self.counters.clear()
+
+        self.record: SeqRecord = record
+
+        # Map positions to activation feature and deactivation actions
+        logging.info("Pre-processing features")
+        position_actions: defaultdict[int, QueueActionList] = defaultdict(QueueActionList)
+        for feature in record.features:
+            self.load_action_queue(position_actions, feature, 1, ["."])
+
+        # Create a queue of actions sorted by positions
+        self.action_queue.extend(sorted(position_actions.items()))
+        logging.info(
+            f"Pre-processing complete. Action positions detected: {len(self.action_queue)}"
+        )
+
+        if self.use_progress_bar:
+            max_value: int = len(self.action_queue)
+            self.progbar: progressbar.ProgressBar = progressbar.ProgressBar(
+                max_value=max_value,
+                widgets=[
+                    f"Record {self.record.id}: Position ",
+                    progressbar.Counter(
+                        format=f"%(value)0{math.floor(math.log(max_value, 10))}d out of %(max_value)d"
+                    ),
+                    " (",
+                    progressbar.Percentage(),
+                    ") ",
+                    progressbar.Bar("█", "|", "|"),
+                    " ",
+                    progressbar.Timer(),
+                    " - ",
+                    progressbar.SmoothingETA(),
+                ],
+                poll_interval=1,  # Updates every 1 second
+            )
+
+        return None
+
+    def _active_progbar_increment(self, i: int) -> None:
+        """Just a wrapper for the `ProgressBar.increment` method"""
+        self.progbar: progressbar.ProgressBar
+        self.progbar.increment(i)
+
+        return None
+
+    def _inactive_progbar_increment(self, i: int) -> None:
+        """Dummy method that does nothing when the progress bar is deactivated"""
+        pass
+
+    def load_action_queue(
+        self,
+        location_actions: dict[int, QueueActionList],
+        root_feature: SeqFeature,
+        level: int,
+        parent_list: list[str],
+    ) -> None:
+        """
+        Traverse a hierarchy stemming from a `root_feature`: Each visited feature is added to activation and deactivation actions in the `action_queue` according to the feature's `start` and `end` positions.
+        """
+
+        # Iterate over the `parts` of a location for compatibility with `SimpleLocation` and `CompoundLocation`
+        # assert root_feature.location
+        assert root_feature.location
+        #     print(root_feature.location.parts)
+        feature_strand: Optional[int] = root_feature.location.parts[0].strand
+
+        root_feature.level = level
+        root_feature.parent_list = parent_list
+
+        # if "chimaera" not in root_feature.type:
+        if level == 1:
+            root_feature.make_chimaera()
+
+        for part in root_feature.location.parts:
+            if feature_strand != part.strand:
+                raise Exception(
+                    f"feature {root_feature.id} contains parts on different strands ({feature_strand} and {part.strand}). I cannot work with this!"
+                )
+
+            actions: QueueActionList = location_actions[int(part.start)]
+            actions.activate.append(root_feature)
+
+            actions: QueueActionList = location_actions[int(part.end)]
+            actions.deactivate.append(root_feature)
+
+        # Visit children
+        if hasattr(root_feature, "sub_features"):
+            for child in root_feature.sub_features:
+                self.load_action_queue(
+                    location_actions, child, level + 1, parent_list + [root_feature.id]
+                )
+
+        return None
+
+    def state_update_cycle(self, new_position: int) -> None:
+        """
+        Activate or deactivate features depending on the actions in the `actions_queue` up to the current position.
+        """
+
+        visited_positions: int = 0
+
+        while (
+            len(self.action_queue) > 0 and self.action_queue[0][0] < new_position
+        ):  # Use < instead of <= because of Python's right-exclusive indexing
+            _, actions = self.action_queue.popleft()
+            visited_positions += 1
+
+            for feature in actions.activate:
+                self.active_features[feature.id] = feature
+
+            for feature in actions.deactivate:
+                if feature.level == 1:
+                    self.checkout(feature)
+
+                self.active_features.pop(feature.id, None)
+
+        self.progbar_increment(visited_positions)
+
+        return None
+
+    def flush_queues(self) -> None:
+        logging.info(
+            f"Actions remaining in action queue: {len(self.action_queue)}. Flushing action queue"
+        )
+        while len(self.action_queue) > 0:
+            _, actions = self.action_queue.popleft()
+
+            for feature in actions.activate:
+                self.active_features[feature.id] = feature
+
+            for feature in actions.deactivate:
+                if feature.level == 1:
+                    self.checkout(feature)
+
+                self.active_features.pop(feature.id, None)
+        logging.info(
+            f"Actions remaining in action queue: {len(self.action_queue)} after flushing action queue"
+        )
+
+        return None
+
+    def checkout(self, feature: SeqFeature) -> defaultdict[str, MultiCounter]:
+        self.active_features.pop(feature.id, None)
+
+        # Counter for the feature itself
+        counter: Optional[MultiCounter] = self.counters.get(feature.id, None)
+
+        if counter:
+            self.feature_writer.write_row_with_data(self.record.id, feature, counter)
+            del self.counters[feature.id]
+        else:
+            self.feature_writer.write_row_without_data(self.record.id, feature)
+
+        # Aggregation counters from the feature's sub-features
+        if feature.level == 1:
+            aggregation_counters: dict[str, MultiCounter] = self.aggregate_level1(feature)
+        else:
+            aggregation_counters: dict[str, MultiCounter] = self.aggregate_children(feature)
+
+        # Recursively check-out children
+        for child in feature.sub_features:
+            self.checkout(child)
+
+        return aggregation_counters
+
+    def aggregate_level1(self, feature: SeqFeature) -> dict[str, MultiCounter]:
+        level1_aggregation_counters: defaultdict[str, MultiCounter] = defaultdict(DefaultMultiCounterFactory(self.filter))
+
+        # List of tuples of transcript-like sub-features. In each tuple:
+        # - 0: ID of the sub-feature
+        # - 1: Type of the sub-feature
+        # - 2: Total length of the sub-feature
+        transcript_like_children: list[tuple[str, str, int]] = (
+            feature.get_transcript_like()
+        )  # Custom method added to the class
+
+        # Select the transcript-like feature that is representative of this gene.
+        # If there are CDS sub-features, select the onte with greatest total CDS length. Elsewise, select the sub-feature with the greatest total exon length.
+        representative_feature_id: str = ""
+        has_cds: bool = False
+        max_total_length: int = 0
+
+        for child_id, child_type, child_length in transcript_like_children:
+            if child_type == "CDS":
+                if has_cds:
+                    if child_length > max_total_length:
+                        representative_feature_id = child_id
+                        max_total_length = child_length
+                else:
+                    representative_feature_id = child_id
+                    max_total_length = child_length
+                    has_cds = True
+            elif child_type == "exon":
+                if has_cds:
+                    continue
+                elif child_length > max_total_length:
+                    representative_feature_id = child_id
+                    max_total_length = child_length
+
+        logging.info(
+            f"Record {self.record.id}, gene {feature.id}: Selected the transcript {representative_feature_id} with {'CDS' if has_cds else 'exons'} as the representative feature."
+        )
+
+        # Perform aggregations, selecting only the "representative feature"
+        for child in feature.sub_features:
+            # Compute aggregates in the child. Recursively aggregates on all its children.
+            aggregation_counters_from_child = self.aggregate_children(child)
+
+            if child.id == representative_feature_id:
+                # Merge the aggregates from the child with all the other aggregates under this feature
+                for (
+                    child_aggregation_type,
+                    child_aggregation_counter,
+                ) in aggregation_counters_from_child.items():
+                    aggregation_counter: MultiCounter = level1_aggregation_counters[
+                        child_aggregation_type
+                    ]
+                    aggregation_counter.merge(child_aggregation_counter)
+
+        self.aggregate_writer.write_rows_with_feature_and_data(
+            self.record.id, feature, level1_aggregation_counters
+        )
+
+        # Merge the feature-level aggregation counters into the record-level aggregation counters
+        self.update_aggregate_counters(level1_aggregation_counters)
+
+        return level1_aggregation_counters
+
+    def aggregate_children(self, feature: SeqFeature) -> dict[str, MultiCounter]:
+        aggregation_counters: defaultdict[str, MultiCounter] = defaultdict(
+            DefaultMultiCounterFactory(self.filter)
+        )
+
+        for child in feature.sub_features:
+            # Compute aggregates in the child
+            aggregation_counters_from_child = self.aggregate_children(child)
+
+            # Merge the aggregates from the child with all the other aggregates under this feature
+            for (
+                child_aggregation_type,
+                child_aggregation_counter,
+            ) in aggregation_counters_from_child.items():
+                aggregation_counter: MultiCounter = aggregation_counters[child_aggregation_type]
+                aggregation_counter.merge(child_aggregation_counter)
+
+            # Add the child itself to the aggregations
+            aggregation_counter: MultiCounter = aggregation_counters[child.type]
+            feature_counter: Optional[MultiCounter] = self.counters.get(child.id, None)
+            if feature_counter:
+                aggregation_counter.merge(feature_counter)
+
+        self.aggregate_writer.write_rows_with_feature_and_data(
+            self.record.id, feature, aggregation_counters
+        )
+
+        return aggregation_counters
+
+    def update_active_counters(self, site_data: SiteVariantData) -> None:
+        """
+        Update the multicounters matching the ID of features in the `active_features` set.
+        A new multicounter is created if no matching ID is found.
+        """
+        for feature_key, feature in self.active_features.items():
+            if feature.location.strand == site_data.strand:
+                counter: MultiCounter = self.counters[feature_key]
+                counter.update(site_data)
+
+        return None
+
+    def is_finished(self) -> bool:
+        return len(self.action_queue) > 0 or len(self.active_features) > 0
+
+    def launch_counting(self, reader: RNAVariantReader) -> None:
+        next_svdata: Optional[SiteVariantData] = reader.seek_record(self.record.id)
+        if next_svdata:
+            logging.info(f"Record {self.record.id} · Found site variant data matching the record")
+
+        while next_svdata and next_svdata.seqid == self.record.id:
+            self.svdata = next_svdata
+            self.state_update_cycle(self.svdata.position)
+            self.update_active_counters(self.svdata)
+            self.total_counter.update(self.svdata)
+            next_svdata: Optional[SiteVariantData] = reader.read()
+
+        if self.svdata:
+            logging.info(
+                f"Record {self.record.id} · Last position in genome reached: {self.svdata.position}"
+            )
+
+        if not self.is_finished():
+            self.flush_queues()
+
+        if self.use_progress_bar:
+            self.progbar.finish()
+
+        return None
 
 
 def parse_cli_input() -> argparse.Namespace:
     """Parse command line input"""
+
     parser = argparse.ArgumentParser(description="Rain counter")
     parser.add_argument(
         "--sites",
@@ -46,7 +427,7 @@ def parse_cli_input() -> argparse.Namespace:
         "-o",
         default="",
         type=str,
-        help="Name of the output file (leave empty to write to stdout)",
+        help="Prefix for the names of the output files",
     )
     parser.add_argument(
         "--format",
@@ -65,7 +446,7 @@ def parse_cli_input() -> argparse.Namespace:
     )
     parser.add_argument(
         "--edit_threshold",
-        "-t",
+        "-T",
         type=int,
         default=1,
         help="Minimum number of edited reads for counting a site as edited",
@@ -79,468 +460,223 @@ def parse_cli_input() -> argparse.Namespace:
         help='Mode for aggregating counts: "all" aggregates features of every transcript; "cds_longest" aggregates features of the longest CDS or non-coding transcript',
     )
     parser.add_argument(
-        "--progress", action="store_true", default="false", help="Display progress bar"
+        "-t",
+        "--threads",
+        type=int,
+        default=1,
+        help="Number of threads (actually, processes) to use for parallel computing",
+    )
+    parser.add_argument(
+        "--progress", action="store_true", default=False, help="Display progress bar"
     )
 
     return parser.parse_args()
 
 
-def write_output_file_header(handle: TextIO) -> int:
-    return handle.write(
-        "SeqID\tGrandParentID\tParentID\tFeatureID\tType\tStart\tEnd\tStrand\tCoveredSites"
-        + "\tGenomeBases["
-        + ",".join(BASE_TYPES)
-        + "]"
-        + "\tSiteBasePairs["
-        + ",".join(MATCH_MISMATCH_TYPES)
-        + "]"
-        + "\tReadBasePairs["
-        + ",".join(MATCH_MISMATCH_TYPES)
-        + "]"
-        + "\n"
-    )
-
-
-class SiteFilter:
-    def __init__(self, cov_threshold: int, edit_threshold: int) -> None:
-        self.cov_threshold: int = cov_threshold
-        self.edit_threshold: int = edit_threshold
-        self.frequencies: NDArray[np.int32] = np.zeros(5, np.int32)
-
-    def apply(self, variant_data: SiteVariantData) -> None:
-        if variant_data.coverage >= self.cov_threshold:
-            np.copyto(
-                self.frequencies,
-                variant_data.frequencies * variant_data.frequencies
-                >= self.edit_threshold,
-            )
-        else:
-            self.frequencies.fill(0)
+class DefaultMultiCounterFactory:
+    def __init__(self, filter: SiteFilter):
+        self.filter: SiteFilter = filter
 
         return None
+    
+    def __call__(self):
+        return MultiCounter(self.filter)
 
 
-class MultiCounter:
-    """Holds the counter data and logic for a feature, feature aggregate, or record"""
-
-    def __init__(self, site_filter: SiteFilter) -> None:
-        """
-        Tallies of the numbers of reads per edit type
-        This is a numpy matrix where the rows represent the reference base and the columns the edited base
-        Rows and column indices correspond to bases in alphabetic order (ACGT)
-        Row-columns corresponding to the same base (e.g. (0,0) -> (A,A)) do not represent edits, and should remain 0
-        """
-        self.edit_read_freqs: NDArray[np.int32] = np.zeros((5, 5), dtype=np.int32)
-        self.edit_site_freqs: NDArray[np.int32] = np.zeros((5, 5), dtype=np.int32)
-
-        self.genome_base_freqs: NDArray[np.int32] = np.zeros(5, dtype=np.int32)
-
-        self.filter = site_filter
-
-        return None
-
-    def update(self, variant_data: SiteVariantData) -> None:
-        """Increment the counters from the data in a SiteVariantData object."""
-        i: int = variant_data.reference
-
-        self.edit_read_freqs[i, :] += variant_data.frequencies
-
-        self.filter.apply(variant_data)
-        self.edit_site_freqs[i, :] += self.filter.frequencies
-
-        self.genome_base_freqs[i] += 1
-
-        return None
-
-    def report(self, output_handle: TextIO) -> int:
-        b = 0
-
-        # Write the number of covered sites
-        b += output_handle.write(str(self.genome_base_freqs.sum()))
-        b += output_handle.write("\t")
-
-        # Write the base frequencies in the genome
-        b += write_base_array(output_handle, self.genome_base_freqs)
-        b += output_handle.write("\t")
-
-        # Write edited sites
-        b += write_edit_array(output_handle, self.edit_site_freqs)
-        b += output_handle.write("\t")
-
-        # Write edit frequencies
-        b += write_edit_array(output_handle, self.edit_read_freqs)
-
-        return b
-
-
-def write_base_array(output_handle: TextIO, x: NDArray) -> int:
-    return output_handle.write(",".join(str(value) for value in x))
-
-def write_edit_array(output_handle: TextIO, x: NDArray) -> int:
+def run_job(record: SeqRecord) -> dict[str,Any]:
     """
-    Print a flattened version of an edit array in alphabetical order (AA, AC, AG, AT, CA, CC, etc...)
+    A wrapper function for performing counting parallelized by record. The return value is a dict containing all the information needed for integrating
+    the output of all records after the computations are finished.
     """
-    return output_handle.write(
-        ",".join(",".join(str(x[i, j]) for j in range(4)) for i in range(4))
-    )
+    assert record.id  # Stupid assertion for pylance
+    logging.info(f"Record {record.id} · Start processing the record")
 
-class FeatureGroupManager:
-    """
-    Manages a collection of level-1 features and all their sub-features, plus the associated counters
-    A feature collection contains roots
-    """
+    tmp_feature_output_file: str = tempfile.mkstemp()[1]
+    tmp_aggregate_output_file: str = tempfile.mkstemp()[1]
 
-    def __init__(self, root: SeqFeature, recman: "RecordManager"):
-        """Level-1 features"""
-        self.roots: list[SeqFeature] = [root]
-        self.counters: dict[str, MultiCounter] = dict()
-        self.recman: "RecordManager" = recman
-        self.nb_remaining_target_nodes: int = 0
-
-        self.recman.aggregator.aggregate_sub_features(root)
-
-        self.init_children(root)
-
-    def init_children(self, feature: SeqRecord) -> None:
-        for child in feature.sub_features:
-            self.init_children(child)
-
-        if feature.location.strand:
-            self.recman.sorted_target_features.append(ManagedFeature(feature, self))
-            if feature.id in self.counters:
-                counter = self.counters[feature.id]  # Doesn't do anything!
-            else:
-                counter = MultiCounter(self.recman.filter)
-                self.counters[feature.id] = counter
-
-            self.nb_remaining_target_nodes += 1
-
-        return None
-
-    def add_root(self, feature: SeqRecord) -> None:
-        if self.roots[0].id != feature.id:
-            raise Exception(
-                f"Cannot add feature with id {feature.id} to the roots of feature group manager with id {self.roots[0].id}"
-            )
-
-        self.roots.append(feature)
-
-        self.recman.aggregator.aggregate_sub_features(feature)
-
-        self.init_children(feature)
-
-        return None
-
-    def update_counters(self, feature: SeqFeature, variant_data: SiteVariantData) -> None:
-        if feature.location.strand == variant_data.strand:
-            self.counters[feature.id].update(variant_data)
-
-        return None
-
-    def write_feature_data(
-        self, feature: SeqFeature, grandparent: str, parent: str, output_handle: TextIO
-    ) -> None:
-        b: int = 0
-        b += output_handle.write(
-            f"{self.recman.record.id}\t{grandparent}\t{parent}\t{feature.id}\t{feature.type}\t"
-            +
-            # Shift start location to GFF 1-based index
-            f"{feature.location.start + 1}\t{feature.location.end}\t{feature.location.strand}\t"
-        )
-
-        b += self.counters[feature.id].report(output_handle)
-        b += output_handle.write("\n")
-
-        return b
-
-    def checkout(
-        self, feature: SeqFeature, grandparent: str, parent: str, output_handle: TextIO
-    ) -> None:
-        if feature.id in self.counters:
-            self.write_feature_data(feature, grandparent, parent, output_handle)
-            self.counters.pop(feature.id, None)
-
-        for child in feature.sub_features:
-            self.checkout(child, parent, feature.id, output_handle)
-
-        return None
-
-    def update_progress(self, output_handle: TextIO) -> None:
-        self.nb_remaining_target_nodes -= 1
-        if self.nb_remaining_target_nodes == 0:
-            for root in self.roots:
-                self.checkout(root, ".", ".", output_handle)
-
-        return None
-
-
-class ManagedFeature(NamedTuple):
-    """Wrapper for keeping the association between a feature and its feature group manager"""
-
-    feature: SeqFeature
-    manager: FeatureGroupManager
-
-
-class QueueUpdates(NamedTuple):
-    activated: int
-    dectivated: int
-    skipped: int
-
-
-class RecordManager:
-    def __init__(
-        self,
-        record: SeqRecord,
-        global_filter: SiteFilter,
-        output_handle: TextIO,
-        aggregation_mode: str,
-        progress_bar: bool = False,
-    ):
-        self.record: SeqRecord = record
-        self.pos: int = 0
-        self.final_pos: int = len(record.seq)
-        self.downstream_queue: deque[ManagedFeature] = deque()
-        self.active_queue: deque[ManagedFeature] = deque()
-        self.next_start: int = -1
-        self.next_end: int = -1
-        self.sorted_target_features: list[ManagedFeature] = []
-        self.feature_managers: dict[str, FeatureGroupManager] = dict()
-        self.output_handle: TextIO = output_handle
-        self.filter: SiteFilter = global_filter
-        self.counter: MultiCounter = MultiCounter(self.filter)
-        self.aggregator: FeatureAggregator = FeatureAggregator(aggregation_mode)
-
-        self.start_pos = record.features[0].location.start
-
-        for feature in record.features:
-            self.start_pos = min(self.start_pos, feature.location.start)
-            if feature.id in self.feature_managers:
-                self.feature_managers[feature.id].add_root(feature)
-            else:
-                feature_manager = FeatureGroupManager(feature, self)
-                self.feature_managers[feature.id] = feature_manager
-
-        self.sorted_target_features.sort(
-            key=lambda x: (x.feature.location.start, x.feature.location.end)
-        )
-        self.nb_targets = len(self.sorted_target_features)
-
-        nb_targets_d_format = math.floor(math.log(self.nb_targets, 10))
-
-        self.use_progress_bar = progress_bar
-        if self.use_progress_bar:
-            self.progress_bar: progressbar.ProgressBar = progressbar.ProgressBar(
-                max_value=self.nb_targets,
-                widgets=[
-                    f"Record {self.record.id}: Processed target feature ",
-                    progressbar.Counter(
-                        format=f"%(value)0{nb_targets_d_format}d out of %(max_value)d"
-                    ),
-                    " (",
-                    progressbar.Percentage(),
-                    ") ",
-                    progressbar.Bar("█", "|", "|"),
-                    " ",
-                    progressbar.Timer(),
-                    " - ",
-                    progressbar.SmoothingETA(),
-                ],
-                poll_interval=1,  # Updates every 1 second
-            )
-
-        self.downstream_queue.extend(self.sorted_target_features)
-
-        self.next_start = self.downstream_queue[0].feature.location.start
-        self.next_end = self.downstream_queue[0].feature.location.end
-
-        return None
-
-    def is_finished(self) -> bool:
-        return len(self.downstream_queue) + len(self.active_queue) == 0
-
-    def load_active_queue(self, new: ManagedFeature) -> None:
-        for i, old in enumerate(self.active_queue):
-            if new.feature.location.end < old.feature.location.end:
-                self.active_queue.insert(i, new)
-
-                return None
-
-        self.active_queue.append(new)
-
-        return None
-
-    def update_queues(self, pos: int) -> QueueUpdates:
-        activated: int = 0
-        deactivated: int = 0
-        skipped: int = 0
-
-        while (
-            len(self.active_queue) > 0 and self.active_queue[0].feature.location.end < pos
+    with (
+        open(args.sites) as sv_handle,
+        open(tmp_feature_output_file, "w") as tmp_feature_output_handle,
+        open(tmp_aggregate_output_file, "w") as tmp_aggregate_output_handle
         ):
-            item: ManagedFeature = self.active_queue.popleft()
-            deactivated += 1
-            item.manager.update_progress(self.output_handle)
+        # Set up output
+        feature_writer: FeatureFileWriter = FeatureFileWriter(tmp_feature_output_handle)
+        aggregate_writer: AggregateFileWriter = AggregateFileWriter(tmp_aggregate_output_handle)
 
-            if self.use_progress_bar:
-                self.progress_bar.next()
+        # Set up context
+        filter: SiteFilter = SiteFilter(cov_threshold=args.cov, edit_threshold=args.edit_threshold)
 
-        while (
-            len(self.downstream_queue) > 0
-            and self.downstream_queue[0].feature.location.end < pos
-        ):
-            item = self.downstream_queue.popleft()
-            skipped += 1
-            item.manager.update_progress(self.output_handle)
-
-            if self.use_progress_bar:
-                self.progress_bar.next()
-
-        while (
-            len(self.downstream_queue) > 0
-            and self.downstream_queue[0].feature.location.start <= pos
-        ):
-            item = self.downstream_queue.popleft()
-
-            if item.feature.location.end < pos:
-                skipped += 1
-                item.manager.update_progress(self.output_handle)
-                if self.use_progress_bar:
-                    self.progress_bar.next()
-            else:
-                self.load_active_queue(item)
-                activated += 1
-
-        if len(self.active_queue) > 0:
-            self.next_end = self.active_queue[0].feature.location.end
-
-        if len(self.downstream_queue) > 0:
-            self.next_start = self.downstream_queue[0].feature.location.start
-
-        return QueueUpdates(activated, deactivated, skipped)
-
-    def flush(self) -> QueueUpdates:
-        """Process remaining items in the queues after the reader has reached its end."""
-        deactivated: int = 0
-        skipped: int = 0
-
-        while len(self.active_queue) > 0:
-            item = self.active_queue.popleft()
-            deactivated += 1
-            item.manager.update_progress(self.output_handle)
-
-            if self.use_progress_bar:
-                self.progress_bar.next()
-
-        while len(self.downstream_queue) > 0:
-            item = self.downstream_queue.popleft()
-            skipped += 1
-            item.manager.update_progress(self.output_handle)
-
-            if self.use_progress_bar:
-                self.progress_bar.next()
-
-        return QueueUpdates(0, deactivated, skipped)
-
-    def write_total_data(self):
-        b: int = 0
-        b += self.output_handle.write(
-            f"{self.record.id}\t.\t.\t.\taggregate\t{self.start_pos}\t{self.final_pos}\t0\t"
+        record_ctx: RecordCountingContext = RecordCountingContext(
+            feature_writer, aggregate_writer, filter, args.progress
         )
 
-        self.counter.report(self.output_handle)
+        # Count
+        reader: RNAVariantReader = reader_factory(sv_handle)
+        record_ctx.set_record(record)
+        record_ctx.launch_counting(reader)
 
-        b += self.output_handle.write("\n")
+        # Write aggregate counter data of the record
+        aggregate_writer.write_rows_with_data(record.id, ["."], ".", ".", record_ctx.aggregate_counters)
 
-        return b
+        # Write the total counter data of the record. A dummy dict needs to be created to use the `write_rows_with_data` method
+        total_counter_dict: defaultdict[str, MultiCounter] = defaultdict(lambda: MultiCounter(genome_filter))
+        total_counter_dict["."] = record_ctx.total_counter
+        aggregate_writer.write_rows_with_data(record.id, ["."], ".", ".", total_counter_dict)
 
-    def scan_and_count(self, reader: RNAVariantReader) -> None:
-        """Count and write to output
-        all the site variation data of interest of the features in this record, based
-        on the variation data stream of a reader.
-        """
-        activated: int = 0
-        deactivated: int = 0
-        skipped: int = 0
-
-        variant_data: Optional[SiteVariantData] = reader.read()
-
-        while variant_data and not self.is_finished():
-            # Global tally
-            self.counter.update(variant_data)
-
-            # Feature tallies
-            updates = self.update_queues(variant_data.position)
-
-            activated += updates.activated
-            deactivated += updates.dectivated
-            skipped += updates.skipped
-
-            for item in self.active_queue:
-                feature: SeqFeature = item.feature
-                manager: FeatureGroupManager = item.manager
-                manager.update_counters(feature, variant_data)
-
-            # The reader returns None when it reaches EOF, breaking the loop
-            variant_data: Optional[SiteVariantData] = reader.read()
-
-        updates = self.flush()
-        activated += updates.activated
-        deactivated += updates.dectivated
-        skipped += updates.skipped
-
-        self.write_total_data()
-
-        # Free memory
-        self.feature_managers.clear()
-        self.sorted_target_features = []
-        self.record.features = []
-
-        print(
-            f"\nTargets in record {self.record.id}:\n"
-            + f"\tActivated: {activated} · Deactivated: {deactivated} · Skipped: {skipped}\n"
-            + f"\tExpected: {self.nb_targets} · Visited: {deactivated + skipped}"
-        )
-
-        return None
-
+    return {
+        "record_id": record.id,
+        "tmp_feature_output_file": tmp_feature_output_file,
+        "tmp_aggregate_output_file": tmp_aggregate_output_file,
+        "aggregate_counters": record_ctx.aggregate_counters,
+        "total_counter": record_ctx.total_counter,
+    }
+    
 
 if __name__ == "__main__":
-    args = parse_cli_input()
+    global args
+
+    args: argparse.Namespace = parse_cli_input()
+    LOGGING_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
+    log_filename: str = args.output + ".pluviometer.log" if args.output else "pluviometer.log"
+    logging.basicConfig(filename=log_filename, level=logging.INFO, format=LOGGING_FORMAT)
+    logging.info(f"Pluviometer started. Log file: {log_filename}")
+    feature_output_filename: str = args.output + ".features.tsv" if args.output else "features.tsv"
+    aggregate_output_filename: str = (
+        args.output + ".aggregates.tsv" if args.output else "aggregates.tsv"
+    )
+
+    global reader_factory
+
     with (
         open(args.gff) as gff_handle,
-        open(args.sites) as sv_handle,
-        open(args.output, "w")
-        if len(args.output) > 0
-        else nullcontext(sys.stdout) as output_handle,
+        open(feature_output_filename, "w") as feature_output_handle,
+        open(aggregate_output_filename, "w") as aggregate_output_handle,
     ):
         match args.format:
             case "reditools2":
-                print("Reditools2 format\n")
-                sv_reader: RNAVariantReader = Reditools2Reader(sv_handle)
+                reader_factory = Reditools2Reader
             case "reditools3":
-                print("Reditools3 format\n")
-                sv_reader: RNAVariantReader = Reditools3Reader(sv_handle)
+                reader_factory = Reditools3Reader
             case "jacusa2":
-                print("Jacusa2 BED6 extended format")
-                sv_reader: RNAVariantReader = Jacusa2Reader(sv_handle)
+                reader_factory = Jacusa2Reader
             case _:
                 raise Exception(f'Unimplemented format "{args.format}"')
 
+        # feature_writer: FeatureFileWriter = FeatureFileWriter(feature_output_handle)
+        # feature_writer.write_header()
+
+        # aggregate_writer = AggregateFileWriter(aggregate_output_handle)
+        # aggregate_writer.write_header()
+
+        logging.info("Parsing GFF3 file...")
         records: Generator[SeqRecord, None, None] = GFF.parse(gff_handle)
+        logging.info("GFF3 parsing completed.")
 
-        sv_data: SiteVariantData = sv_reader.read()
+        # global_filter: SiteFilter = SiteFilter(
+        #     cov_threshold=args.cov, edit_threshold=args.edit_threshold
+        # )
 
-        global_filter: SiteFilter = SiteFilter(
+        # genome_ctx: CountingContext = CountingContext(aggregate_writer, global_filter)
+
+        # record_ctx = RecordCountingContext(
+        #     feature_writer, aggregate_writer, global_filter, args.progress
+        # )
+        # logging.info("Fetching records...")
+        # for i, record in enumerate(records):
+        #     with open(args.sites) as sv_handle:
+        #         sv_reader = reader_factory(sv_handle)
+        #         logging.info(f"Record {record.id} setup")
+        #         record_ctx.set_record(record)
+        #         logging.info(f"Start counting on record {record.id}")
+        #         record_ctx.launch_counting(sv_reader)
+        #         logging.info(f"Ended counting on record {record.id}")
+
+        #     record_ctx.aggregate_writer.write_rows_with_data(
+        #         record.id, ["."], ".", ".", record_ctx.aggregate_counters
+        #     )
+        #     genome_ctx.update_aggregate_counters(record_ctx.aggregate_counters)
+        #     genome_ctx.total_counter.merge(record_ctx.total_counter)
+
+        #     total_counter_dict: defaultdict = defaultdict(None)
+        #     total_counter_dict[record.id] = record_ctx.total_counter
+
+        #     record_ctx.aggregate_writer.write_rows_with_data(
+        #         record.id, ["."], ".", ".", total_counter_dict
+        #     )
+
+        # genome_ctx.aggregate_writer.write_rows_with_data(
+        #     ".", ["."], ".", ".", genome_ctx.aggregate_counters
+        # )
+
+        # # Finally, create a dummy defaultdict to use the same method for writing the genome total
+        # total_counter_dict: defaultdict = defaultdict(None)
+        # total_counter_dict["."] = genome_ctx.total_counter
+
+        # genome_ctx.aggregate_writer.write_rows_with_data(".", ["."], ".", ".", total_counter_dict)
+
+        genome_filter: SiteFilter = SiteFilter(
             cov_threshold=args.cov, edit_threshold=args.edit_threshold
         )
+        genome_total_counter: MultiCounter = MultiCounter(genome_filter)
+        genome_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
+            lambda: MultiCounter(genome_filter)
+        )
 
-        write_output_file_header(output_handle)
+        feature_writer: FeatureFileWriter = FeatureFileWriter(feature_output_handle)
+        aggregate_writer: AggregateFileWriter = AggregateFileWriter(aggregate_output_handle)
 
-        for record in records:
-            manager: RecordManager = RecordManager(
-                record=record,
-                global_filter=global_filter,
-                output_handle=output_handle,
-                aggregation_mode=args.aggregation_mode,
+        feature_writer.write_header()
+        aggregate_writer.write_header()
+
+        with multiprocessing.Pool(processes=args.threads) as pool:
+            # Run the jobs and save the result of each record in a dict stored in the `record_data` list
+            record_data_list: list[dict[str, Any]] = pool.map(run_job, records)
+
+        # Sort record results in lexicographical order
+        record_data_list = sorted(record_data_list, key=lambda x: x["record_id"])
+
+    with (
+        open(feature_output_filename, "a") as feature_output_handle,
+        open(aggregate_output_filename, "a") as aggregate_output_handle,
+    ):
+    
+        for record_data in record_data_list:
+            logging.info(
+                f"Record {record_data['record_id']} · Merging temporary output files..."
             )
-            manager.scan_and_count(sv_reader)
+
+            with open(record_data["tmp_feature_output_file"]) as tmp_output_handle:
+                feature_output_handle.write(tmp_output_handle.read())
+            remove(record_data["tmp_feature_output_file"])
+
+            with open(record_data["tmp_aggregate_output_file"]) as tmp_output_handle:
+                aggregate_output_handle.write(tmp_output_handle.read())
+            remove(record_data["tmp_aggregate_output_file"])
+
+            # Update the genome's aggregate counters from the record data aggregate counters
+            for record_aggregate_type, record_aggregate_counter in record_data[
+                "aggregate_counters"
+            ].items():
+                genome_aggregate_counter: MultiCounter = genome_aggregate_counters[
+                    record_aggregate_type
+                ]
+                genome_aggregate_counter.merge(record_aggregate_counter)
+
+            # Update the genome's total counter from the record data total counter
+            genome_total_counter.merge(record_data["total_counter"])
+
+        logging.info("Writing genome totals...")
+
+        aggregate_writer: AggregateFileWriter = AggregateFileWriter(aggregate_output_handle)
+
+        # Write genomic counts
+        aggregate_writer.write_rows_with_data(".", ["."], ".", ".", genome_aggregate_counters)
+
+        # Write the genomic total. A dummy dict needs to be created to use the `write_rows_with_data` method
+        genomic_total_counter_dict: defaultdict[str, MultiCounter] = defaultdict(
+            lambda: MultiCounter(genome_filter)
+        )
+        genomic_total_counter_dict["."] = genome_total_counter
+        aggregate_writer.write_rows_with_data(".", ["."], ".", ".", genomic_total_counter_dict)
+
+        logging.info("Program finished")

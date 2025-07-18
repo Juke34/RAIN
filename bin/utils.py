@@ -1,7 +1,14 @@
 import numpy as np
 from numpy.typing import NDArray
 from dataclasses import dataclass
+from Bio.SeqFeature import SeqFeature, SimpleLocation, CompoundLocation
 import itertools
+from collections import deque
+from typing import Optional
+from functools import reduce
+import logging
+
+logger = logging.getLogger(__name__)
 
 BASE_TYPES = ["A", "C", "G", "T"]
 
@@ -50,3 +57,60 @@ class SiteVariantData:
     mean_quality: float
     frequencies: NDArray[np.int32]
     score: float
+
+def overlaps(self: SimpleLocation, location: SimpleLocation) -> bool:
+    """
+    Return `True` if the location overlaps another location. Location strand is taken into account.
+    """
+    return (self.strand == location.strand) and (self.start <= location.start <= self.end) or (self.start <= location.end <= self.end)
+
+setattr(SimpleLocation, "overlaps", overlaps)
+
+def location_union(locations: list[SimpleLocation|CompoundLocation]) -> SimpleLocation|CompoundLocation:
+    """Return a `Location` (`SimpleLocation` or `CompoundLocation`) that is that is the union of the locations in a list"""
+    assert len(locations) > 0
+
+    if len(locations) == 1:
+        return locations[0]
+
+    comp_locations: CompoundLocation = reduce(lambda x, y: x + y, locations)
+    comp_locations.parts.sort(key=lambda part: (part.start, part.end), reverse=True)
+
+    original_range = (comp_locations.parts[-1].start, max(map(lambda part: part.end, comp_locations.parts)))
+
+    current_part: SimpleLocation = comp_locations.parts.pop()
+    result: Optional[SimpleLocation] = None
+
+    while len(comp_locations.parts) > 0:
+        new_part = comp_locations.parts.pop()
+
+        if current_part.start <= new_part.start <= current_part.end:
+            current_part = SimpleLocation(current_part.start, max(current_part.end, new_part.end), current_part.strand)
+
+        else:
+            result = result + current_part if result else current_part
+            current_part = new_part
+
+    result = result + current_part if result else current_part
+    assert original_range[0] == result.parts[0].start
+    assert original_range[1] == result.parts[-1].end
+
+    return result
+
+def condense(x: list[SeqFeature], attrib) -> deque[tuple[int,list[SeqFeature]]]:
+    """
+    "Condense" a *sorted* flat list of features by their start or end locations (`attrib` parameter).
+    It returns a deque of tuples, where the first element is the location value and the second element is a list of features at location.
+    """
+    condensed: deque[tuple[int, list[SeqFeature]]] = deque()
+    current_value:int = -1    # Initial state assumption: No feature has a location value -1 
+
+    for feature in x:
+        feature_value: int = feature.location.__getattribute__(attrib)
+        if current_value == feature_value:
+            condensed[-1][1].append(feature)
+        else:
+            current_value = feature_value
+            condensed.append((current_value, [feature]))
+
+    return condensed
