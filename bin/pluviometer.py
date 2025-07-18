@@ -547,9 +547,6 @@ if __name__ == "__main__":
 
     global reader_factory
 
-    # Pre-emptively remove the aggregate output to avoid appending to old data
-    remove(aggregate_output_filename)
-
     with (
         open(args.gff) as gff_handle,
         open(feature_output_filename, "w") as feature_output_handle,
