@@ -41,7 +41,7 @@ setattr(SeqFeature, "get_transcript_like", get_transcript_like)
 
 setattr(SeqFeature, "parent_list", [""])
 
-def make_chimaera(self: SeqFeature) -> None:
+def make_chimaera(self: SeqFeature, record_id: str) -> None:
     """
     If the feature contains
     """
@@ -85,7 +85,7 @@ def make_chimaera(self: SeqFeature) -> None:
     chimaeric_location: SimpleLocation | CompoundLocation = location_union(
         target_locations
     )
-    logging.info(f"Created {chimaeric_type} chimaera of feature {self.id}: {len(transcript_like_list)} transcripts were merged into one transcript of {len(chimaeric_location.parts)} elements")
+    logging.info(f"Record {record_id} · Created {chimaeric_type} chimaera of feature {self.id}: {len(transcript_like_list)} transcripts were merged into one transcript of {len(chimaeric_location.parts)} elements")
 
     chimaeric_feature: SeqFeature = SeqFeature(
         location=chimaeric_location,

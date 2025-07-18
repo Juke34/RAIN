@@ -177,7 +177,7 @@ class RecordCountingContext(CountingContext):
 
         # if "chimaera" not in root_feature.type:
         if level == 1:
-            root_feature.make_chimaera()
+            root_feature.make_chimaera(self.record.id)
 
         for part in root_feature.location.parts:
             if feature_strand != part.strand:
@@ -489,7 +489,7 @@ def run_job(record: SeqRecord) -> dict[str,Any]:
     the output of all records after the computations are finished.
     """
     assert record.id  # Stupid assertion for pylance
-    logging.info(f"Record {record.id} · Start processing the record")
+    logging.info(f"Record {record.id} · Record parsed. Counting beings.")
 
     tmp_feature_output_file: str = tempfile.mkstemp()[1]
     tmp_aggregate_output_file: str = tempfile.mkstemp()[1]
@@ -570,7 +570,6 @@ if __name__ == "__main__":
 
         logging.info("Parsing GFF3 file...")
         records: Generator[SeqRecord, None, None] = GFF.parse(gff_handle)
-        logging.info("GFF3 parsing completed.")
 
         # global_filter: SiteFilter = SiteFilter(
         #     cov_threshold=args.cov, edit_threshold=args.edit_threshold
