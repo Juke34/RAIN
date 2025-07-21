@@ -55,7 +55,7 @@ class SiteVariantData:
     strand: int
     coverage: int
     mean_quality: float
-    frequencies: NDArray[np.int32]
+    frequencies: NDArray[np.int64]
     score: float
 
 def overlaps(self: SimpleLocation, location: SimpleLocation) -> bool:
