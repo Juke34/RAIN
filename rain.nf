@@ -225,6 +225,7 @@ workflow {
         // unzip it if needed
         fasta_unzip(genome_raw)
         fasta_unzip.out.genomeFa.set{genome} // set genome to the output of fasta_unzip
+
 // ----------------------------------------------------------------------------
         // --- DEAL WITH ANNOTATION ---
         Channel.empty().set{annotation}
@@ -474,9 +475,12 @@ workflow {
         }
         Channel.empty().set{aline_alignments_all}
         if (aline_data_in){
-
-            if (hyperediting) {
-                genome_recoder()
+            
+            if (params.hyperediting) {
+                genome_recoder(genome)
+                genome_for_aline = genome_recoder.out
+            } else {
+                genome_for_aline = genome
             }
 
             ALIGNMENT (
@@ -484,7 +488,7 @@ workflow {
                 "${workflow.resume?'-resume':''} -profile ${aline_profile}", // workflow opts supplied as params for flexibility
                 "-config ${params.aline_profiles}",
                 "--reads ${aline_data_in}",
-                genome,
+                genome_for_aline,
                 "--read_type ${params.read_type}",
                 "--aligner ${params.aligner}",
                 "--strandedness ${params.strandedness}",
