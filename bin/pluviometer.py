@@ -562,56 +562,8 @@ if __name__ == "__main__":
             case _:
                 raise Exception(f'Unimplemented format "{args.format}"')
 
-        # feature_writer: FeatureFileWriter = FeatureFileWriter(feature_output_handle)
-        # feature_writer.write_header()
-
-        # aggregate_writer = AggregateFileWriter(aggregate_output_handle)
-        # aggregate_writer.write_header()
-
         logging.info("Parsing GFF3 file...")
         records: Generator[SeqRecord, None, None] = GFF.parse(gff_handle)
-
-        # global_filter: SiteFilter = SiteFilter(
-        #     cov_threshold=args.cov, edit_threshold=args.edit_threshold
-        # )
-
-        # genome_ctx: CountingContext = CountingContext(aggregate_writer, global_filter)
-
-        # record_ctx = RecordCountingContext(
-        #     feature_writer, aggregate_writer, global_filter, args.progress
-        # )
-        # logging.info("Fetching records...")
-        # for i, record in enumerate(records):
-        #     with open(args.sites) as sv_handle:
-        #         sv_reader = reader_factory(sv_handle)
-        #         logging.info(f"Record {record.id} setup")
-        #         record_ctx.set_record(record)
-        #         logging.info(f"Start counting on record {record.id}")
-        #         record_ctx.launch_counting(sv_reader)
-        #         logging.info(f"Ended counting on record {record.id}")
-
-        #     record_ctx.aggregate_writer.write_rows_with_data(
-        #         record.id, ["."], ".", ".", record_ctx.aggregate_counters
-        #     )
-        #     genome_ctx.update_aggregate_counters(record_ctx.aggregate_counters)
-        #     genome_ctx.total_counter.merge(record_ctx.total_counter)
-
-        #     total_counter_dict: defaultdict = defaultdict(None)
-        #     total_counter_dict[record.id] = record_ctx.total_counter
-
-        #     record_ctx.aggregate_writer.write_rows_with_data(
-        #         record.id, ["."], ".", ".", total_counter_dict
-        #     )
-
-        # genome_ctx.aggregate_writer.write_rows_with_data(
-        #     ".", ["."], ".", ".", genome_ctx.aggregate_counters
-        # )
-
-        # # Finally, create a dummy defaultdict to use the same method for writing the genome total
-        # total_counter_dict: defaultdict = defaultdict(None)
-        # total_counter_dict["."] = genome_ctx.total_counter
-
-        # genome_ctx.aggregate_writer.write_rows_with_data(".", ["."], ".", ".", total_counter_dict)
 
         genome_filter: SiteFilter = SiteFilter(
             cov_threshold=args.cov, edit_threshold=args.edit_threshold
