@@ -6,8 +6,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-setattr(SeqFeature, "level", 0)
 
+setattr(SeqFeature, "level", 0)
+setattr(SeqFeature, "is_chimaera", False)
 
 def get_transcript_like(self: SeqFeature) -> list[tuple[str, str, int]]:
     """
@@ -93,6 +94,7 @@ def make_chimaera(self: SeqFeature, record_id: str) -> None:
         id=self.id + "-chimaera",
         qualifiers={"Parent": self.id},
     )
+    chimaeric_feature.is_chimaera = True
 
     chimaeric_feature.sub_features = []
 

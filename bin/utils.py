@@ -73,7 +73,7 @@ def location_union(locations: list[SimpleLocation|CompoundLocation]) -> SimpleLo
     if len(locations) == 1:
         return locations[0]
 
-    comp_locations: CompoundLocation = reduce(lambda x, y: x + y, locations)
+    comp_locations: SimpleLocation|CompoundLocation = reduce(lambda x, y: x + y, locations)
     comp_locations.parts.sort(key=lambda part: (part.start, part.end), reverse=True)
 
     original_range = (comp_locations.parts[-1].start, max(map(lambda part: part.end, comp_locations.parts)))

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from FeatureOutputWriter import FeatureFileWriter, AggregateFileWriter
+from RainFileWriters import FeatureFileWriter, AggregateFileWriter
 from typing import Any, Optional, Generator, Callable, TextIO
 from SeqFeature_extensions import SeqFeature
 from collections import deque, defaultdict
@@ -52,7 +52,13 @@ class CountingContext:
     def __init__(self, aggregate_writer: AggregateFileWriter, filter: SiteFilter):
         self.aggregate_writer: AggregateFileWriter = aggregate_writer
         self.filter: SiteFilter = filter
-        self.aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
+        self.longest_isoform_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
+            DefaultMultiCounterFactory(self.filter)
+        )
+        self.chimaera_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
+            DefaultMultiCounterFactory(self.filter)
+        )
+        self.all_isoforms_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
             DefaultMultiCounterFactory(self.filter)
         )
         self.total_counter: MultiCounter = MultiCounter(self.filter)
@@ -61,13 +67,23 @@ class CountingContext:
 
     def update_aggregate_counters(self, new_counters: defaultdict[str, MultiCounter]) -> None:
         for counter_type, new_counter in new_counters.items():
-            target_counter: MultiCounter = self.aggregate_counters[counter_type]
+            target_counter: MultiCounter = self.longest_isoform_aggregate_counters[counter_type]
             target_counter.merge(new_counter)
 
         return None
 
 
-class RecordCountingContext(CountingContext):
+def merge_aggregation_counter_dicts(
+    dst: defaultdict[str, MultiCounter], src: defaultdict[str, MultiCounter]
+) -> None:
+    for src_type, src_counter in src.items():
+        dst_counter: MultiCounter = dst[src_type]
+        dst_counter.merge(src_counter)
+
+    return None
+
+
+class RecordCountingContext:
     def __init__(
         self,
         feature_writer: FeatureFileWriter,
@@ -75,7 +91,20 @@ class RecordCountingContext(CountingContext):
         filter: SiteFilter,
         use_progress_bar: bool,
     ):
-        super().__init__(aggregate_writer, filter)
+        # super().__init__(aggregate_writer, filter)
+        self.aggregate_writer: AggregateFileWriter = aggregate_writer
+        self.filter: SiteFilter = filter
+        self.longest_isoform_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
+            DefaultMultiCounterFactory(self.filter)
+        )
+        self.chimaera_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
+            DefaultMultiCounterFactory(self.filter)
+        )
+        self.all_isoforms_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
+            DefaultMultiCounterFactory(self.filter)
+        )
+        self.total_counter: MultiCounter = MultiCounter(self.filter)
+
         self.active_features: dict[str, SeqFeature] = dict()
         self.feature_writer: FeatureFileWriter = feature_writer
         self.counters: defaultdict[str, MultiCounter] = defaultdict(
@@ -92,7 +121,23 @@ class RecordCountingContext(CountingContext):
             self.progbar_increment = self._inactive_progbar_increment
 
         return None
-    
+
+    def update_aggregate_counters(
+        self, aggregate_counter_tag: str, new_counters: defaultdict[str, MultiCounter]
+    ) -> None:
+        """
+        Update a dict of aggregate counters by merging them with matching items in another dict of counters.
+        The tag refers to the different kinds of aggregate counters: "all_isoforms", "chimaera", and "longest_isoform"
+        """
+        aggregate_counters: defaultdict[str, MultiCounter] = getattr(
+            self, aggregate_counter_tag + "_aggregate_counters"
+        )
+        for counter_type, new_counter in new_counters.items():
+            target_counter: MultiCounter = aggregate_counters[counter_type]
+            target_counter.merge(new_counter)
+
+        return None
+
     def set_record(self, record: SeqRecord) -> None:
         logging.info(f"Switching to record {record.id}")
         if len(self.active_features) != 0:
@@ -175,7 +220,6 @@ class RecordCountingContext(CountingContext):
         root_feature.level = level
         root_feature.parent_list = parent_list
 
-        # if "chimaera" not in root_feature.type:
         if level == 1:
             root_feature.make_chimaera(self.record.id)
 
@@ -247,7 +291,7 @@ class RecordCountingContext(CountingContext):
 
         return None
 
-    def checkout(self, feature: SeqFeature) -> defaultdict[str, MultiCounter]:
+    def checkout(self, feature: SeqFeature) -> None:
         self.active_features.pop(feature.id, None)
 
         # Counter for the feature itself
@@ -259,20 +303,40 @@ class RecordCountingContext(CountingContext):
         else:
             self.feature_writer.write_row_without_data(self.record.id, feature)
 
+        all_isoforms_aggregation_counters: Optional[defaultdict[str, MultiCounter]] = None
+
+        assert self.record.id    # Placate Pylance
+
         # Aggregation counters from the feature's sub-features
         if feature.level == 1:
-            aggregation_counters: dict[str, MultiCounter] = self.aggregate_level1(feature)
+            level1_longest_isoform_aggregation_counters, level1_all_isoforms_aggregation_counters = self.aggregate_level1(feature)
+            merge_aggregation_counter_dicts(self.all_isoforms_aggregate_counters, level1_all_isoforms_aggregation_counters)
+
+            self.aggregate_writer.write_rows_with_feature_and_data(
+            self.record.id, feature, "longest_isoform", level1_longest_isoform_aggregation_counters
+            )
+            self.aggregate_writer.write_rows_with_feature_and_data(
+                self.record.id, feature, "all_isoforms", level1_all_isoforms_aggregation_counters
+            )
         else:
-            aggregation_counters: dict[str, MultiCounter] = self.aggregate_children(feature)
+            feature_aggregation_counters = self.aggregate_children(feature)
+            self.aggregate_writer.write_rows_with_feature_and_data(
+                self.record.id, feature, "feature", feature_aggregation_counters
+            )
 
         # Recursively check-out children
         for child in feature.sub_features:
             self.checkout(child)
 
-        return aggregation_counters
+        return None
 
-    def aggregate_level1(self, feature: SeqFeature) -> dict[str, MultiCounter]:
-        level1_aggregation_counters: defaultdict[str, MultiCounter] = defaultdict(DefaultMultiCounterFactory(self.filter))
+    def aggregate_level1(self, feature: SeqFeature) -> tuple[defaultdict[str, MultiCounter], defaultdict[str, MultiCounter]]:
+        level1_longest_isoform_aggregation_counters: defaultdict[str, MultiCounter] = defaultdict(
+            DefaultMultiCounterFactory(self.filter)
+        )
+        level1_all_isoforms_aggregation_counters: defaultdict[str, MultiCounter] = defaultdict(
+            DefaultMultiCounterFactory(self.filter)
+        )
 
         # List of tuples of transcript-like sub-features. In each tuple:
         # - 0: ID of the sub-feature
@@ -309,32 +373,35 @@ class RecordCountingContext(CountingContext):
             f"Record {self.record.id}, gene {feature.id}: Selected the transcript {representative_feature_id} with {'CDS' if has_cds else 'exons'} as the representative feature."
         )
 
-        # Perform aggregations, selecting only the "representative feature"
+        # Perform aggregations
         for child in feature.sub_features:
             # Compute aggregates in the child. Recursively aggregates on all its children.
-            aggregation_counters_from_child = self.aggregate_children(child)
+            aggregation_counters_from_child: defaultdict[str, MultiCounter] = (
+                self.aggregate_children(child)
+            )
+
+            merge_aggregation_counter_dicts(level1_all_isoforms_aggregation_counters, aggregation_counters_from_child)
 
             if child.id == representative_feature_id:
                 # Merge the aggregates from the child with all the other aggregates under this feature
-                for (
-                    child_aggregation_type,
-                    child_aggregation_counter,
-                ) in aggregation_counters_from_child.items():
-                    aggregation_counter: MultiCounter = level1_aggregation_counters[
-                        child_aggregation_type
-                    ]
-                    aggregation_counter.merge(child_aggregation_counter)
+                merge_aggregation_counter_dicts(level1_longest_isoform_aggregation_counters, aggregation_counters_from_child)
 
-        self.aggregate_writer.write_rows_with_feature_and_data(
-            self.record.id, feature, level1_aggregation_counters
-        )
+        # assert self.record.id
+        # self.aggregate_writer.write_rows_with_feature_and_data(
+        #     self.record.id, feature, "longest_isoform", level1_longest_isoform_aggregation_counters
+        # )
+        # self.aggregate_writer.write_rows_with_feature_and_data(
+        #     self.record.id, feature, "all_isoforms", level1_all_isoforms_aggregation_counters
+        # )
 
         # Merge the feature-level aggregation counters into the record-level aggregation counters
-        self.update_aggregate_counters(level1_aggregation_counters)
+        self.update_aggregate_counters(
+            "longest_isoform", level1_longest_isoform_aggregation_counters
+        )
 
-        return level1_aggregation_counters
+        return (level1_longest_isoform_aggregation_counters, level1_all_isoforms_aggregation_counters)
 
-    def aggregate_children(self, feature: SeqFeature) -> dict[str, MultiCounter]:
+    def aggregate_children(self, feature: SeqFeature) -> defaultdict[str, MultiCounter]:
         aggregation_counters: defaultdict[str, MultiCounter] = defaultdict(
             DefaultMultiCounterFactory(self.filter)
         )
@@ -357,9 +424,9 @@ class RecordCountingContext(CountingContext):
             if feature_counter:
                 aggregation_counter.merge(feature_counter)
 
-        self.aggregate_writer.write_rows_with_feature_and_data(
-            self.record.id, feature, aggregation_counters
-        )
+        # self.aggregate_writer.write_rows_with_feature_and_data(
+        #     self.record.id, feature, "feature", aggregation_counters
+        # )
 
         return aggregation_counters
 
@@ -474,16 +541,18 @@ def parse_cli_input() -> argparse.Namespace:
 
 
 class DefaultMultiCounterFactory:
+    """Callable class to enable the pickling of a MultiCounter factory for multiprocessing (lambdas cannot be pickled)"""
+
     def __init__(self, filter: SiteFilter):
         self.filter: SiteFilter = filter
 
         return None
-    
+
     def __call__(self):
         return MultiCounter(self.filter)
 
 
-def run_job(record: SeqRecord) -> dict[str,Any]:
+def run_job(record: SeqRecord) -> dict[str, Any]:
     """
     A wrapper function for performing counting parallelized by record. The return value is a dict containing all the information needed for integrating
     the output of all records after the computations are finished.
@@ -497,8 +566,8 @@ def run_job(record: SeqRecord) -> dict[str,Any]:
     with (
         open(args.sites) as sv_handle,
         open(tmp_feature_output_file, "w") as tmp_feature_output_handle,
-        open(tmp_aggregate_output_file, "w") as tmp_aggregate_output_handle
-        ):
+        open(tmp_aggregate_output_file, "w") as tmp_aggregate_output_handle,
+    ):
         # Set up output
         feature_writer: FeatureFileWriter = FeatureFileWriter(tmp_feature_output_handle)
         aggregate_writer: AggregateFileWriter = AggregateFileWriter(tmp_aggregate_output_handle)
@@ -516,21 +585,41 @@ def run_job(record: SeqRecord) -> dict[str,Any]:
         record_ctx.launch_counting(reader)
 
         # Write aggregate counter data of the record
-        aggregate_writer.write_rows_with_data(record.id, ["."], ".", ".", record_ctx.aggregate_counters)
+        aggregate_writer.write_rows_with_data(
+            record.id,
+            ["."],
+            ".",
+            ".",
+            "longest_isoform",
+            record_ctx.longest_isoform_aggregate_counters,
+        )
+        aggregate_writer.write_rows_with_data(
+            record.id,
+            ["."],
+            ".",
+            ".",
+            "all_isoforms",
+            record_ctx.all_isoforms_aggregate_counters,
+        )
 
         # Write the total counter data of the record. A dummy dict needs to be created to use the `write_rows_with_data` method
-        total_counter_dict: defaultdict[str, MultiCounter] = defaultdict(lambda: MultiCounter(genome_filter))
+        total_counter_dict: defaultdict[str, MultiCounter] = defaultdict(
+            lambda: MultiCounter(genome_filter)
+        )
         total_counter_dict["."] = record_ctx.total_counter
-        aggregate_writer.write_rows_with_data(record.id, ["."], ".", ".", total_counter_dict)
+        aggregate_writer.write_rows_with_data(
+            record.id, ["."], ".", ".", "all_sites", total_counter_dict
+        )
 
     return {
         "record_id": record.id,
         "tmp_feature_output_file": tmp_feature_output_file,
         "tmp_aggregate_output_file": tmp_aggregate_output_file,
-        "aggregate_counters": record_ctx.aggregate_counters,
+        "longest_isoform_aggregate_counters": record_ctx.longest_isoform_aggregate_counters,
+        "all_isoforms_aggregate_counters": record_ctx.all_isoforms_aggregate_counters,
         "total_counter": record_ctx.total_counter,
     }
-    
+
 
 if __name__ == "__main__":
     global args
@@ -540,9 +629,9 @@ if __name__ == "__main__":
     log_filename: str = args.output + ".pluviometer.log" if args.output else "pluviometer.log"
     logging.basicConfig(filename=log_filename, level=logging.INFO, format=LOGGING_FORMAT)
     logging.info(f"Pluviometer started. Log file: {log_filename}")
-    feature_output_filename: str = args.output + ".features.tsv" if args.output else "features.tsv"
+    feature_output_filename: str = args.output + "features.tsv" if args.output else "features.tsv"
     aggregate_output_filename: str = (
-        args.output + ".aggregates.tsv" if args.output else "aggregates.tsv"
+        args.output + "aggregates.tsv" if args.output else "aggregates.tsv"
     )
 
     global reader_factory
@@ -569,7 +658,14 @@ if __name__ == "__main__":
             cov_threshold=args.cov, edit_threshold=args.edit_threshold
         )
         genome_total_counter: MultiCounter = MultiCounter(genome_filter)
-        genome_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
+
+        genome_longest_isoform_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
+            lambda: MultiCounter(genome_filter)
+        )
+        genome_all_isoforms_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
+            lambda: MultiCounter(genome_filter)
+        )
+        genome_chimaera_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
             lambda: MultiCounter(genome_filter)
         )
 
@@ -584,17 +680,14 @@ if __name__ == "__main__":
             record_data_list: list[dict[str, Any]] = pool.map(run_job, records)
 
         # Sort record results in lexicographical order
-        record_data_list = sorted(record_data_list, key=lambda x: x["record_id"])
+        record_data_list = natsorted(record_data_list, key=lambda x: x["record_id"])
 
     with (
         open(feature_output_filename, "a") as feature_output_handle,
         open(aggregate_output_filename, "a") as aggregate_output_handle,
     ):
-    
         for record_data in record_data_list:
-            logging.info(
-                f"Record {record_data['record_id']} · Merging temporary output files..."
-            )
+            logging.info(f"Record {record_data['record_id']} · Merging temporary output files...")
 
             with open(record_data["tmp_feature_output_file"]) as tmp_output_handle:
                 feature_output_handle.write(tmp_output_handle.read())
@@ -606,28 +699,38 @@ if __name__ == "__main__":
 
             # Update the genome's aggregate counters from the record data aggregate counters
             for record_aggregate_type, record_aggregate_counter in record_data[
-                "aggregate_counters"
+                "longest_isoform_aggregate_counters"
             ].items():
-                genome_aggregate_counter: MultiCounter = genome_aggregate_counters[
+                genome_aggregate_counter: MultiCounter = genome_longest_isoform_aggregate_counters[
                     record_aggregate_type
                 ]
                 genome_aggregate_counter.merge(record_aggregate_counter)
+
+            merge_aggregation_counter_dicts(genome_all_isoforms_aggregate_counters, record_data["all_isoforms_aggregate_counters"])
 
             # Update the genome's total counter from the record data total counter
             genome_total_counter.merge(record_data["total_counter"])
 
         logging.info("Writing genome totals...")
 
+
         aggregate_writer: AggregateFileWriter = AggregateFileWriter(aggregate_output_handle)
 
         # Write genomic counts
-        aggregate_writer.write_rows_with_data(".", ["."], ".", ".", genome_aggregate_counters)
+        aggregate_writer.write_rows_with_data(
+            ".", ["."], ".", ".", "longest_isoform", genome_longest_isoform_aggregate_counters
+        )
+        aggregate_writer.write_rows_with_data(
+            ".", ["."], ".", ".", "all_isoforms", genome_all_isoforms_aggregate_counters
+        )
 
         # Write the genomic total. A dummy dict needs to be created to use the `write_rows_with_data` method
         genomic_total_counter_dict: defaultdict[str, MultiCounter] = defaultdict(
             lambda: MultiCounter(genome_filter)
         )
         genomic_total_counter_dict["."] = genome_total_counter
-        aggregate_writer.write_rows_with_data(".", ["."], ".", ".", genomic_total_counter_dict)
+        aggregate_writer.write_rows_with_data(
+            ".", ["."], ".", ".", "all_sites", genomic_total_counter_dict
+        )
 
         logging.info("Program finished")
