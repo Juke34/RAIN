@@ -213,9 +213,7 @@ class RecordCountingContext:
         """
 
         # Iterate over the `parts` of a location for compatibility with `SimpleLocation` and `CompoundLocation`
-        # assert root_feature.location
         assert root_feature.location
-        #     print(root_feature.location.parts)
         feature_strand: Optional[int] = root_feature.location.parts[0].strand
 
         root_feature.level = level
@@ -302,7 +300,6 @@ class RecordCountingContext:
 
         assert self.record.id
 
-        # print(f"Chimaera?: {feature.id} - {feature.is_chimaera}\t{len(feature.sub_features)}")
         if counter:
             if feature.is_chimaera:
                 assert parent_feature  # A chimaera must always have a parent feature (a gene)
@@ -376,7 +373,7 @@ class RecordCountingContext:
 
         # Select the transcript-like feature that is representative of this gene.
         # If there are CDS sub-features, select the onte with greatest total CDS length. Elsewise, select the sub-feature with the greatest total exon length.
-        representative_feature_id: str = ""
+        longest_isoform_id: str = ""
         has_cds: bool = False
         max_total_length: int = 0
 
@@ -384,21 +381,21 @@ class RecordCountingContext:
             if child_type == "CDS":
                 if has_cds:
                     if child_length > max_total_length:
-                        representative_feature_id = child_id
+                        longest_isoform_id = child_id
                         max_total_length = child_length
                 else:
-                    representative_feature_id = child_id
+                    longest_isoform_id = child_id
                     max_total_length = child_length
                     has_cds = True
             elif child_type == "exon":
                 if has_cds:
                     continue
                 elif child_length > max_total_length:
-                    representative_feature_id = child_id
+                    longest_isoform_id = child_id
                     max_total_length = child_length
 
         logging.info(
-            f"Record {self.record.id}, gene {feature.id}: Selected the transcript {representative_feature_id} with {'CDS' if has_cds else 'exons'} as the representative feature."
+            f"Record {self.record.id}, gene {feature.id}: Selected the transcript {longest_isoform_id} with {'CDS' if has_cds else 'exons'} as the representative feature."
         )
 
         # Perform aggregations
@@ -412,7 +409,7 @@ class RecordCountingContext:
                 level1_all_isoforms_aggregation_counters, aggregation_counters_from_child
             )
 
-            if child.id == representative_feature_id:
+            if child.id == longest_isoform_id:
                 # Merge the aggregates from the child with all the other aggregates under this feature
                 merge_aggregation_counter_dicts(
                     level1_longest_isoform_aggregation_counters, aggregation_counters_from_child
