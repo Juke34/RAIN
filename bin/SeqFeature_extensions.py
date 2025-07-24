@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 setattr(SeqFeature, "level", 0)
 setattr(SeqFeature, "is_chimaera", False)
-
+setattr(SeqFeature, "longest_isoform", None)
 
 def get_transcript_like(self: SeqFeature) -> list[tuple[str, str, int]]:
     """

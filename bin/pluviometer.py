@@ -304,18 +304,18 @@ class RecordCountingContext:
         self.active_features.pop(feature.id, None)
 
         # Counter for the feature itself
-        counter: Optional[MultiCounter] = self.counters.get(feature.id, None)
+        aggregate_counter: Optional[MultiCounter] = self.counters.get(feature.id, None)
 
         assert self.record.id
 
-        if counter:
+        if aggregate_counter:
             if feature.is_chimaera:
                 assert parent_feature  # A chimaera must always have a parent feature (a gene)
                 self.aggregate_writer.write_row_chimaera_with_data(
-                    self.record.id, feature, parent_feature, counter
+                    self.record.id, feature, parent_feature, aggregate_counter
                 )
             else:
-                self.feature_writer.write_row_with_data(self.record.id, feature, counter)
+                self.feature_writer.write_row_with_data(self.record.id, feature, aggregate_counter)
             del self.counters[feature.id]
         else:
             if feature.is_chimaera:
@@ -340,20 +340,42 @@ class RecordCountingContext:
                 self.all_isoforms_aggregate_counters, level1_all_isoforms_aggregation_counters
             )
 
-            self.aggregate_writer.write_rows_with_feature_and_data(
-                self.record.id,
-                feature,
-                "longest_isoform",
-                level1_longest_isoform_aggregation_counters,
-            )
-            self.aggregate_writer.write_rows_with_feature_and_data(
-                self.record.id, feature, "all_isoforms", level1_all_isoforms_aggregation_counters
-            )
+            for aggregate_type, aggregate_counter in level1_longest_isoform_aggregation_counters.items():
+                self.aggregate_writer.write_metadata_direct(
+                    seq_id=self.record.id,
+                    parent_ids=".," + feature.id,
+                    aggregate_id=feature.longest_isoform + "-longest_isoform",
+                    parent_type=feature.type,
+                    aggregate_type=aggregate_type,
+                    aggregation_mode="longest_isoform"
+                )
+                self.aggregate_writer.write_counter_data(aggregate_counter)
+                
+            for aggregate_type, aggregate_counter in level1_all_isoforms_aggregation_counters.items():
+                self.aggregate_writer.write_metadata_direct(
+                    seq_id=self.record.id,
+                    parent_ids=".," + feature.id,
+                    aggregate_id=feature.id + "-all_isoforms",
+                    parent_type=feature.type,
+                    aggregate_type=aggregate_type,
+                    aggregation_mode="all_isoforms"
+                )
+                self.aggregate_writer.write_counter_data(aggregate_counter)
         else:
             feature_aggregation_counters = self.aggregate_children(feature)
-            self.aggregate_writer.write_rows_with_feature_and_data(
-                self.record.id, feature, "feature", feature_aggregation_counters
-            )
+            for aggregate_type, aggregate_counter in feature_aggregation_counters.items():
+                self.aggregate_writer.write_metadata_direct(
+                    seq_id=self.record.id,
+                    parent_ids=','.join(feature.parent_list),
+                    aggregate_id=feature.id,
+                    parent_type=parent_feature.type,
+                    aggregate_type=aggregate_type,
+                    aggregation_mode="feature"
+                )
+                self.aggregate_writer.write_counter_data(aggregate_counter)
+            # self.aggregate_writer.write_rows_with_feature_and_data(
+            #     self.record.id, feature, "feature", feature_aggregation_counters
+            # )
 
         # Recursively check-out children
         for child in feature.sub_features:
@@ -402,8 +424,10 @@ class RecordCountingContext:
                     longest_isoform_id = child_id
                     max_total_length = child_length
 
+        feature.longest_isoform = longest_isoform_id
+
         logging.info(
-            f"Record {self.record.id}, gene {feature.id}: Selected the transcript {longest_isoform_id} with {'CDS' if has_cds else 'exons'} as the representative feature."
+            f"Record {self.record.id}, gene {feature.id}: The longest isoform is {longest_isoform_id}."
         )
 
         # Perform aggregations

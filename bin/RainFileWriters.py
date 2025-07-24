@@ -109,6 +109,19 @@ class RainFileWriter:
         b += self.handle.write("\n")
 
         return b
+    
+    def write_counter_data(self, counter: MultiCounter) -> int:
+        b: int = self.handle.write(str(counter.genome_base_freqs.sum()))
+        b += self.handle.write('\t')
+        b += self.handle.write(",".join(map(str, counter.genome_base_freqs[0:4].flat)))
+        b += self.handle.write('\t')
+        b += self.handle.write(",".join(map(str, counter.edit_site_freqs[0:4, 0:4].flat)))
+        b += self.handle.write('\t')
+        b += self.handle.write(",".join(map(str, counter.edit_read_freqs[0:4, 0:4].flat)))
+        b += self.handle.write('\n')
+
+        return b
+
 
 
 class FeatureFileWriter(RainFileWriter):
@@ -149,7 +162,31 @@ class AggregateFileWriter(RainFileWriter):
         super().__init__(handle, AGGREGATE_METADATA_OUTPUT_FIELDS, AGGREGATE_DATA_OUTPUT_FIELDS)
 
         return None
+    
+    def write_metadata_direct(
+            self,
+            seq_id: str,
+            parent_ids: str,
+            aggregate_id: str,
+            parent_type: str,
+            aggregate_type: str,
+            aggregation_mode: str
+    ) -> int:
+        b: int = self.handle.write(seq_id)
+        b += self.handle.write('\t')
+        b += self.handle.write(parent_ids)
+        b += self.handle.write('\t')
+        b += self.handle.write(aggregate_id)
+        b += self.handle.write('\t')
+        b += self.handle.write(parent_type)
+        b += self.handle.write('\t')
+        b += self.handle.write(aggregate_type)
+        b += self.handle.write('\t')
+        b += self.handle.write(aggregation_mode)
+        b += self.handle.write('\t')
 
+        return b
+    
     def write_metadata(
         self, seq_id: str, feature: SeqFeature, aggregate_type: str, aggregation_mode: str
     ) -> int:
