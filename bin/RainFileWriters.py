@@ -193,3 +193,20 @@ class AggregateFileWriter(RainFileWriter):
             )
 
         return b
+    
+    def write_row_chimaera_with_data(
+            self,
+            record_id: str, 
+            feature: SeqFeature,
+            parent_feature: SeqFeature,
+            counter: MultiCounter
+    ) -> int:
+        b: int = super().write_metadata(record_id, make_parent_path(feature.parent_list), feature.id, parent_feature.type, feature.type, "chimaera")
+        b += self.write_data(
+            str(counter.genome_base_freqs.sum()),
+            ",".join(map(str, counter.genome_base_freqs.flat)),
+            ",".join(map(str, counter.edit_site_freqs.flat)),
+            ",".join(map(str, counter.edit_read_freqs.flat)),
+        )
+
+        return b

@@ -42,15 +42,17 @@ setattr(SeqFeature, "get_transcript_like", get_transcript_like)
 
 setattr(SeqFeature, "parent_list", [""])
 
-def make_chimaera(self: SeqFeature, record_id: str) -> None:
+def make_chimaeras(self: SeqFeature, record_id: str) -> list[SeqFeature]:
     """
     If the feature contains
     """
     if hasattr(self, "sub_features"):
         if len(self.sub_features) == 0:
-            return None
+            return []
     else:
-        return None
+        return []
+    
+    new_chimaeras: list[SeqFeature] = []
 
     transcript_like_list: list[SeqFeature] = list(
         filter(
@@ -60,7 +62,7 @@ def make_chimaera(self: SeqFeature, record_id: str) -> None:
     )
 
     if len(transcript_like_list) == 0:
-        chimaeric_type: str = "exon"
+        chimaeric_type_cds_or_exon: str = "exon"
         transcript_like_list: list[SeqFeature] = list(
             filter(
                 lambda transcript: any(map(lambda part: part.type == "exon", transcript.sub_features)),
@@ -68,39 +70,78 @@ def make_chimaera(self: SeqFeature, record_id: str) -> None:
             )
         )
     else:
-        chimaeric_type: str = "CDS"
+        chimaeric_type_cds_or_exon: str = "CDS"
 
     if len(transcript_like_list) == 0:
         return None
     
 
-    target_locations: list[SimpleLocation | CompoundLocation] = []
+    target_locations_cds_or_exon: list[SimpleLocation | CompoundLocation] = []
+    target_locations_five_prime_utr: list[SimpleLocation | CompoundLocation] = []
+    target_locations_three_prime_utr: list[SimpleLocation | CompoundLocation] = []
     for transcript in transcript_like_list:
-        target_locations.extend(
+        target_locations_cds_or_exon.extend(
             list(map(
                 lambda part: part.location,
-                filter(lambda part: part.type == chimaeric_type, transcript.sub_features),
+                filter(lambda part: part.type == chimaeric_type_cds_or_exon, transcript.sub_features),
+            ))
+        )
+        target_locations_five_prime_utr.extend(
+            list(map(
+                lambda part: part.location,
+                filter(lambda part: part.type == "five-prime-utr", transcript.sub_features),
+            ))
+        )
+        target_locations_three_prime_utr.extend(
+            list(map(
+                lambda part: part.location,
+                filter(lambda part: part.type == "three-prime-utr", transcript.sub_features),
             ))
         )
 
-    chimaeric_location: SimpleLocation | CompoundLocation = location_union(
-        target_locations
+    chimaeric_location_cds_or_exon: SimpleLocation | CompoundLocation = location_union(
+        target_locations_cds_or_exon
     )
-    logging.info(f"Record {record_id} · Created {chimaeric_type} chimaera of feature {self.id}: {len(transcript_like_list)} transcripts were merged into one transcript of {len(chimaeric_location.parts)} elements")
+    logging.info(f"Record {record_id} · Created {chimaeric_type_cds_or_exon} chimaera of feature {self.id}: {len(transcript_like_list)} transcripts were merged into one transcript of {len(chimaeric_location_cds_or_exon.parts)} elements")
 
-    chimaeric_feature: SeqFeature = SeqFeature(
-        location=chimaeric_location,
-        type=chimaeric_type + "-chimaera",
+    chimaeric_feature_cds_or_exon: SeqFeature = SeqFeature(
+        location=chimaeric_location_cds_or_exon,
+        type=chimaeric_type_cds_or_exon + "-chimaera",
         id=self.id + "-chimaera",
         qualifiers={"Parent": self.id},
     )
-    chimaeric_feature.is_chimaera = True
+    chimaeric_feature_cds_or_exon.is_chimaera = True
+    chimaeric_feature_cds_or_exon.sub_features = []
+    self.sub_features.append(chimaeric_feature_cds_or_exon)
+    new_chimaeras.append(chimaeric_feature_cds_or_exon)
+    
+    if len(target_locations_five_prime_utr) > 0:
+        chimaeric_location_five_prime_utr: SimpleLocation | CompoundLocation = location_union(target_locations_five_prime_utr)[0]     # Pick only the first element so that there is only one 5'-UTR
+        chimaeric_feature_five_prime_utr: SeqFeature = SeqFeature(
+            location=chimaeric_location_five_prime_utr,
+            type="five-prime-utr-chimaera",
+            id=self.id + "-chimaera",
+            qualifiers={"Parent": self.id},
+        )
+        chimaeric_feature_five_prime_utr.is_chimaera = True
+        chimaeric_feature_five_prime_utr.sub_features = []
+        self.sub_features.append(chimaeric_feature_five_prime_utr)
+        new_chimaeras.append(chimaeric_feature_five_prime_utr)
 
-    chimaeric_feature.sub_features = []
+    if len(target_locations_three_prime_utr) > 0:
+        chimaeric_location_three_prime_utr: SimpleLocation | CompoundLocation = location_union(target_locations_three_prime_utr)[-1]  # Pick only the last element so that there is only one 3'-UTR
+        chimaeric_feature_three_prime_utr: SeqFeature = SeqFeature(
+            location=chimaeric_location_three_prime_utr,
+            type="three-prime-utr-chimaera",
+            id=self.id + "-chimaera",
+            qualifiers={"Parent": self.id},
+        )
+        chimaeric_feature_three_prime_utr.is_chimaera = True
+        chimaeric_feature_three_prime_utr.sub_features = []
+        self.sub_features.append(chimaeric_feature_three_prime_utr)
+        new_chimaeras.append(chimaeric_feature_three_prime_utr)
 
-    self.sub_features.append(chimaeric_feature)
-
-    return None
+    return new_chimaeras
 
 
-setattr(SeqFeature, "make_chimaera", make_chimaera)
+setattr(SeqFeature, "make_chimaeras", make_chimaeras)

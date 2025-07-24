@@ -218,10 +218,12 @@ class RecordCountingContext:
         feature_strand: Optional[int] = root_feature.location.parts[0].strand
 
         root_feature.level = level
+        if not hasattr(root_feature, "is_chimaera"):
+            root_feature.is_chimaera = False
         root_feature.parent_list = parent_list
 
         if level == 1:
-            root_feature.make_chimaera(self.record.id)
+            root_feature.make_chimaeras(self.record.id)
 
         for part in root_feature.location.parts:
             if feature_strand != part.strand:
@@ -262,7 +264,7 @@ class RecordCountingContext:
 
             for feature in actions.deactivate:
                 if feature.level == 1:
-                    self.checkout(feature)
+                    self.checkout(feature, None)
 
                 self.active_features.pop(feature.id, None)
 
@@ -282,7 +284,7 @@ class RecordCountingContext:
 
             for feature in actions.deactivate:
                 if feature.level == 1:
-                    self.checkout(feature)
+                    self.checkout(feature, None)
 
                 self.active_features.pop(feature.id, None)
         logging.info(
@@ -291,17 +293,27 @@ class RecordCountingContext:
 
         return None
 
-    def checkout(self, feature: SeqFeature) -> None:
+    def checkout(self, feature: SeqFeature, parent_feature: Optional[SeqFeature]) -> None:
         self.active_features.pop(feature.id, None)
 
         # Counter for the feature itself
         counter: Optional[MultiCounter] = self.counters.get(feature.id, None)
 
+        assert self.record.id
+
+        # print(f"Chimaera?: {feature.id} - {feature.is_chimaera}\t{len(feature.sub_features)}")
         if counter:
-            self.feature_writer.write_row_with_data(self.record.id, feature, counter)
+            if feature.is_chimaera:
+                assert parent_feature    # A chimaera must always have a parent feature (a gene)
+                self.aggregate_writer.write_row_chimaera_with_data(self.record.id, feature, parent_feature, counter)
+            else:
+                self.feature_writer.write_row_with_data(self.record.id, feature, counter)
             del self.counters[feature.id]
         else:
-            self.feature_writer.write_row_without_data(self.record.id, feature)
+            if feature.is_chimaera:
+                pass
+            else:
+                self.feature_writer.write_row_without_data(self.record.id, feature)
 
         all_isoforms_aggregation_counters: Optional[defaultdict[str, MultiCounter]] = None
 
@@ -326,7 +338,7 @@ class RecordCountingContext:
 
         # Recursively check-out children
         for child in feature.sub_features:
-            self.checkout(child)
+            self.checkout(child, feature)
 
         return None
 
