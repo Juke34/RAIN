@@ -223,7 +223,7 @@ class RecordCountingContext:
         root_feature.parent_list = parent_list
 
         if level == 1:
-            root_feature.make_chimaeras(self.record.id)
+            root_feature.make_chimaeras2(self.record.id)
 
         for part in root_feature.location.parts:
             if feature_strand != part.strand:
@@ -379,7 +379,7 @@ class RecordCountingContext:
             feature.get_transcript_like()
         )  # Custom method added to the class
 
-        # Select the transcript-like feature that is representative of this gene.
+        # Select the transcript-like feature that is representative of this gene: the longest isoform.
         # If there are CDS sub-features, select the onte with greatest total CDS length. Elsewise, select the sub-feature with the greatest total exon length.
         longest_isoform_id: str = ""
         has_cds: bool = False
