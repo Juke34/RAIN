@@ -1,11 +1,11 @@
-import numpy as np
-from numpy.typing import NDArray
-from dataclasses import dataclass
 from Bio.SeqFeature import SeqFeature, SimpleLocation, CompoundLocation
-import itertools
+from dataclasses import dataclass
+from numpy.typing import NDArray
 from collections import deque
-from typing import Optional
 from functools import reduce
+from typing import Optional
+import numpy as np
+import itertools
 import logging
 
 logger = logging.getLogger(__name__)

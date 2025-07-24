@@ -1,9 +1,9 @@
+from utils import BASE_TYPES, MATCH_MISMATCH_TYPES
+from Bio.SeqFeature import ExactPosition
 from MultiCounter import MultiCounter
 from Bio.SeqFeature import SeqFeature
-from Bio.SeqFeature import ExactPosition
 from collections import defaultdict
 from typing import TextIO
-from utils import BASE_TYPES, MATCH_MISMATCH_TYPES
 
 FEATURE_OUTPUT_FIELDS = [
     "SeqID",
@@ -14,9 +14,9 @@ FEATURE_OUTPUT_FIELDS = [
     "End",
     "Strand",
     "CoveredSites",
-    f"GenomeBases[{','.join(BASE_TYPES)}]",
-    f"SiteBasePairs[{','.join(MATCH_MISMATCH_TYPES)}]",
-    f"ReadBasePairs[{','.join(MATCH_MISMATCH_TYPES)}]",
+    "GenomeBases",
+    "SiteBasePairings",
+    "ReadBasePairings"
 ]
 
 FEATURE_METADATA_OUTPUT_FIELDS = [
@@ -31,9 +31,9 @@ FEATURE_METADATA_OUTPUT_FIELDS = [
 
 FEATURE_DATA_OUTPUT_FIELDS = [
     "CoveredSites",
-    f"GenomeBases[{','.join(BASE_TYPES)}]",
-    f"SiteBasePairs[{','.join(MATCH_MISMATCH_TYPES)}]",
-    f"ReadBasePairs[{','.join(MATCH_MISMATCH_TYPES)}]",
+    "GenomeBases",
+    "SiteBasePairings",
+    "ReadBasePairings"
 ]
 
 AGGREGATE_METADATA_OUTPUT_FIELDS = [
@@ -42,18 +42,18 @@ AGGREGATE_METADATA_OUTPUT_FIELDS = [
     "FeatureID",
     "ParentType",
     "AggregateType",
-    "AggregationMode"
+    "AggregationMode",
 ]
 
 AGGREGATE_DATA_OUTPUT_FIELDS = [
     "CoveredSites",
-    f"GenomeBases[{','.join(BASE_TYPES)}]",
-    f"SiteBasePairs[{','.join(MATCH_MISMATCH_TYPES)}]",
-    f"ReadBasePairs[{','.join(MATCH_MISMATCH_TYPES)}]",
+    "GenomeBases",
+    "SiteBasePairings",
+    "ReadBasePairings",
 ]
 
-STR_ZERO_BASE_FREQS = ",".join('0' for _ in range(len(BASE_TYPES)))
-STR_ZERO_EDIT_FREQS = ",".join('0' for _ in range(len(MATCH_MISMATCH_TYPES)))
+STR_ZERO_BASE_FREQS = ",".join("0" for _ in range(len(BASE_TYPES)))
+STR_ZERO_EDIT_FREQS = ",".join("0" for _ in range(len(MATCH_MISMATCH_TYPES)))
 
 
 def make_parent_path(parent_list: list[str]) -> str:
@@ -63,13 +63,11 @@ def make_parent_path(parent_list: list[str]) -> str:
 
     Consult the GFF3 specification for details: https://github.com/The-Sequence-Ontology/Specifications/blob/master/gff3.md
     """
-    return ','.join(parent_list)
+    return ",".join(parent_list)
 
 
 class RainFileWriter:
-    def __init__(
-        self, handle: TextIO, metadata_fields: list[str], data_fields: list[str]
-    ):
+    def __init__(self, handle: TextIO, metadata_fields: list[str], data_fields: list[str]):
         self.handle = handle
         self.metadata_fields: list[str] = metadata_fields
         self.n_metadata: int = len(self.metadata_fields)
@@ -115,9 +113,7 @@ class RainFileWriter:
 
 class FeatureFileWriter(RainFileWriter):
     def __init__(self, handle: TextIO):
-        super().__init__(
-            handle, FEATURE_METADATA_OUTPUT_FIELDS, FEATURE_DATA_OUTPUT_FIELDS
-        )
+        super().__init__(handle, FEATURE_METADATA_OUTPUT_FIELDS, FEATURE_DATA_OUTPUT_FIELDS)
 
         return None
 
@@ -137,76 +133,115 @@ class FeatureFileWriter(RainFileWriter):
     ) -> int:
         return self.write_metadata(record_id, feature) + self.write_data(
             str(counter.genome_base_freqs.sum()),
-            ",".join(map(str, counter.genome_base_freqs.flat)),
-            ",".join(map(str, counter.edit_site_freqs.flat)),
-            ",".join(map(str, counter.edit_read_freqs.flat)),
+            ",".join(map(str, counter.genome_base_freqs[0:4].flat)),
+            ",".join(map(str, counter.edit_site_freqs[0:4, 0:4].flat)),
+            ",".join(map(str, counter.edit_read_freqs[0:4, 0:4].flat)),
         )
 
     def write_row_without_data(self, record_id: str, feature: SeqFeature) -> int:
         return self.write_metadata(record_id, feature) + self.write_data(
-            '0', STR_ZERO_BASE_FREQS, STR_ZERO_EDIT_FREQS, STR_ZERO_EDIT_FREQS
+            "0", STR_ZERO_BASE_FREQS, STR_ZERO_EDIT_FREQS, STR_ZERO_EDIT_FREQS
         )
+
 
 class AggregateFileWriter(RainFileWriter):
     def __init__(self, handle: TextIO):
-        super().__init__(
-            handle, AGGREGATE_METADATA_OUTPUT_FIELDS, AGGREGATE_DATA_OUTPUT_FIELDS
-        )
+        super().__init__(handle, AGGREGATE_METADATA_OUTPUT_FIELDS, AGGREGATE_DATA_OUTPUT_FIELDS)
 
         return None
 
-    def write_metadata(self, seq_id: str, feature: SeqFeature, aggregate_type: str, aggregation_mode: str) -> int:
-        return super().write_metadata(seq_id, make_parent_path(feature.parent_list), feature.id, feature.type, aggregate_type, aggregation_mode)
-    
-    def write_rows_with_feature_and_data(self, record_id: str, feature: SeqFeature, aggregation_mode: str, counter_dict: defaultdict[str,MultiCounter]) -> int:
+    def write_metadata(
+        self, seq_id: str, feature: SeqFeature, aggregate_type: str, aggregation_mode: str
+    ) -> int:
+        return super().write_metadata(
+            seq_id,
+            make_parent_path(feature.parent_list),
+            feature.id,
+            feature.type,
+            aggregate_type,
+            aggregation_mode,
+        )
+
+    def write_rows_with_feature_and_data(
+        self,
+        record_id: str,
+        feature: SeqFeature,
+        aggregation_mode: str,
+        counter_dict: defaultdict[str, MultiCounter],
+    ) -> int:
         b: int = 0
 
         for aggregate_type, aggregate_counter in counter_dict.items():
             b += self.write_metadata(record_id, feature, aggregate_type, aggregation_mode)
             b += self.write_data(
                 str(aggregate_counter.genome_base_freqs.sum()),
-                ",".join(map(str, aggregate_counter.genome_base_freqs.flat)),
-                ",".join(map(str, aggregate_counter.edit_site_freqs.flat)),
-                ",".join(map(str, aggregate_counter.edit_read_freqs.flat)),
+                ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),
+                ",".join(map(str, aggregate_counter.edit_site_freqs[0:4, 0:4].flat)),
+                ",".join(map(str, aggregate_counter.edit_read_freqs[0:4, 0:4].flat)),
             )
 
         return b
-    
+
     def write_rows_with_data(
-            self,
-            record_id: str,
-            parent_list: list[str],
-            feature_id: str,
-            feature_type: str,
-            aggregation_mode: str,
-            counter_dict: defaultdict[str,MultiCounter]
-            ) -> int:
+        self,
+        record_id: str,
+        parent_list: list[str],
+        feature_id: str,
+        feature_type: str,
+        aggregation_mode: str,
+        counter_dict: defaultdict[str, MultiCounter],
+    ) -> int:
         b: int = 0
 
         for aggregate_type, aggregate_counter in counter_dict.items():
-            b += super().write_metadata(record_id, make_parent_path(parent_list), feature_id, feature_type, aggregate_type, aggregation_mode)
+            b += super().write_metadata(
+                record_id,
+                make_parent_path(parent_list),
+                feature_id,
+                feature_type,
+                aggregate_type,
+                aggregation_mode,
+            )
             b += self.write_data(
                 str(aggregate_counter.genome_base_freqs.sum()),
-                ",".join(map(str, aggregate_counter.genome_base_freqs.flat)),
-                ",".join(map(str, aggregate_counter.edit_site_freqs.flat)),
-                ",".join(map(str, aggregate_counter.edit_read_freqs.flat)),
+                ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),
+                ",".join(map(str, aggregate_counter.edit_site_freqs[0:4, 0:4].flat)),
+                ",".join(map(str, aggregate_counter.edit_read_freqs[0:4, 0:4].flat)),
             )
 
         return b
-    
+
     def write_row_chimaera_with_data(
-            self,
-            record_id: str, 
-            feature: SeqFeature,
-            parent_feature: SeqFeature,
-            counter: MultiCounter
+        self, record_id: str, feature: SeqFeature, parent_feature: SeqFeature, counter: MultiCounter
     ) -> int:
-        b: int = super().write_metadata(record_id, make_parent_path(feature.parent_list), feature.id, parent_feature.type, feature.type, "chimaera")
+        b: int = super().write_metadata(
+            record_id,
+            make_parent_path(feature.parent_list),
+            feature.id,
+            parent_feature.type,
+            feature.type,
+            "chimaera",
+        )
         b += self.write_data(
             str(counter.genome_base_freqs.sum()),
-            ",".join(map(str, counter.genome_base_freqs.flat)),
-            ",".join(map(str, counter.edit_site_freqs.flat)),
-            ",".join(map(str, counter.edit_read_freqs.flat)),
+            ",".join(map(str, counter.genome_base_freqs[0:4].flat)),
+            ",".join(map(str, counter.edit_site_freqs[0:4, 0:4].flat)),
+            ",".join(map(str, counter.edit_read_freqs[0:4, 0:4].flat)),
         )
+
+        return b
+
+    def write_row_chimaera_without_data(
+        self, record_id: str, feature: SeqFeature, parent_feature: SeqFeature
+    ) -> int:
+        b: int = super().write_metadata(
+            record_id,
+            make_parent_path(feature.parent_list),
+            feature.id,
+            parent_feature.type,
+            feature.type,
+            "chimaera",
+        )
+        b += self.write_data("0", STR_ZERO_BASE_FREQS, STR_ZERO_EDIT_FREQS, STR_ZERO_EDIT_FREQS)
 
         return b

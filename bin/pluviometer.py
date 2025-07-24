@@ -7,13 +7,13 @@ from dataclasses import dataclass, field
 from MultiCounter import MultiCounter
 from Bio.SeqRecord import SeqRecord
 from SiteFilter import SiteFilter
-from utils import SiteVariantData
 from site_variant_readers import (
     RNAVariantReader,
     Reditools2Reader,
     Reditools3Reader,
     Jacusa2Reader,
 )
+from utils import SiteVariantData
 from natsort import natsorted
 import multiprocessing
 from BCBio import GFF
@@ -311,7 +311,8 @@ class RecordCountingContext:
             del self.counters[feature.id]
         else:
             if feature.is_chimaera:
-                pass
+                assert parent_feature
+                self.aggregate_writer.write_row_chimaera_without_data(self.record.id, feature, parent_feature)
             else:
                 self.feature_writer.write_row_without_data(self.record.id, feature)
 
