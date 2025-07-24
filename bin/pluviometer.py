@@ -115,10 +115,11 @@ class RecordCountingContext:
         self.svdata: Optional[SiteVariantData] = None
         self.deactivation_list: list[SeqFeature] = []
 
-        if self.use_progress_bar:
-            self.progbar_increment = self._active_progbar_increment
-        else:
-            self.progbar_increment = self._inactive_progbar_increment
+        self.progbar_increment: Callable = (
+            self._active_progbar_increment
+            if self.use_progress_bar
+            else self._inactive_progbar_increment
+        )
 
         return None
 
@@ -304,29 +305,41 @@ class RecordCountingContext:
         # print(f"Chimaera?: {feature.id} - {feature.is_chimaera}\t{len(feature.sub_features)}")
         if counter:
             if feature.is_chimaera:
-                assert parent_feature    # A chimaera must always have a parent feature (a gene)
-                self.aggregate_writer.write_row_chimaera_with_data(self.record.id, feature, parent_feature, counter)
+                assert parent_feature  # A chimaera must always have a parent feature (a gene)
+                self.aggregate_writer.write_row_chimaera_with_data(
+                    self.record.id, feature, parent_feature, counter
+                )
             else:
                 self.feature_writer.write_row_with_data(self.record.id, feature, counter)
             del self.counters[feature.id]
         else:
             if feature.is_chimaera:
                 assert parent_feature
-                self.aggregate_writer.write_row_chimaera_without_data(self.record.id, feature, parent_feature)
+                self.aggregate_writer.write_row_chimaera_without_data(
+                    self.record.id, feature, parent_feature
+                )
             else:
                 self.feature_writer.write_row_without_data(self.record.id, feature)
 
         all_isoforms_aggregation_counters: Optional[defaultdict[str, MultiCounter]] = None
 
-        assert self.record.id    # Placate Pylance
+        assert self.record.id  # Placate Pylance
 
         # Aggregation counters from the feature's sub-features
         if feature.level == 1:
-            level1_longest_isoform_aggregation_counters, level1_all_isoforms_aggregation_counters = self.aggregate_level1(feature)
-            merge_aggregation_counter_dicts(self.all_isoforms_aggregate_counters, level1_all_isoforms_aggregation_counters)
+            (
+                level1_longest_isoform_aggregation_counters,
+                level1_all_isoforms_aggregation_counters,
+            ) = self.aggregate_level1(feature)
+            merge_aggregation_counter_dicts(
+                self.all_isoforms_aggregate_counters, level1_all_isoforms_aggregation_counters
+            )
 
             self.aggregate_writer.write_rows_with_feature_and_data(
-            self.record.id, feature, "longest_isoform", level1_longest_isoform_aggregation_counters
+                self.record.id,
+                feature,
+                "longest_isoform",
+                level1_longest_isoform_aggregation_counters,
             )
             self.aggregate_writer.write_rows_with_feature_and_data(
                 self.record.id, feature, "all_isoforms", level1_all_isoforms_aggregation_counters
@@ -343,7 +356,9 @@ class RecordCountingContext:
 
         return None
 
-    def aggregate_level1(self, feature: SeqFeature) -> tuple[defaultdict[str, MultiCounter], defaultdict[str, MultiCounter]]:
+    def aggregate_level1(
+        self, feature: SeqFeature
+    ) -> tuple[defaultdict[str, MultiCounter], defaultdict[str, MultiCounter]]:
         level1_longest_isoform_aggregation_counters: defaultdict[str, MultiCounter] = defaultdict(
             DefaultMultiCounterFactory(self.filter)
         )
@@ -393,11 +408,15 @@ class RecordCountingContext:
                 self.aggregate_children(child)
             )
 
-            merge_aggregation_counter_dicts(level1_all_isoforms_aggregation_counters, aggregation_counters_from_child)
+            merge_aggregation_counter_dicts(
+                level1_all_isoforms_aggregation_counters, aggregation_counters_from_child
+            )
 
             if child.id == representative_feature_id:
                 # Merge the aggregates from the child with all the other aggregates under this feature
-                merge_aggregation_counter_dicts(level1_longest_isoform_aggregation_counters, aggregation_counters_from_child)
+                merge_aggregation_counter_dicts(
+                    level1_longest_isoform_aggregation_counters, aggregation_counters_from_child
+                )
 
         # assert self.record.id
         # self.aggregate_writer.write_rows_with_feature_and_data(
@@ -412,7 +431,10 @@ class RecordCountingContext:
             "longest_isoform", level1_longest_isoform_aggregation_counters
         )
 
-        return (level1_longest_isoform_aggregation_counters, level1_all_isoforms_aggregation_counters)
+        return (
+            level1_longest_isoform_aggregation_counters,
+            level1_all_isoforms_aggregation_counters,
+        )
 
     def aggregate_children(self, feature: SeqFeature) -> defaultdict[str, MultiCounter]:
         aggregation_counters: defaultdict[str, MultiCounter] = defaultdict(
@@ -719,13 +741,15 @@ if __name__ == "__main__":
                 ]
                 genome_aggregate_counter.merge(record_aggregate_counter)
 
-            merge_aggregation_counter_dicts(genome_all_isoforms_aggregate_counters, record_data["all_isoforms_aggregate_counters"])
+            merge_aggregation_counter_dicts(
+                genome_all_isoforms_aggregate_counters,
+                record_data["all_isoforms_aggregate_counters"],
+            )
 
             # Update the genome's total counter from the record data total counter
             genome_total_counter.merge(record_data["total_counter"])
 
         logging.info("Writing genome totals...")
-
 
         aggregate_writer: AggregateFileWriter = AggregateFileWriter(aggregate_output_handle)
 
