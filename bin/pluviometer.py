@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from RainFileWriters import FeatureFileWriter, AggregateFileWriter
 from typing import Any, Optional, Generator, Callable, TextIO
+from Bio.SeqFeature import SimpleLocation, CompoundLocation
 from SeqFeature_extensions import SeqFeature
 from collections import deque, defaultdict
 from dataclasses import dataclass, field
@@ -230,10 +231,17 @@ class RecordCountingContext:
                     f"feature {root_feature.id} contains parts on different strands ({feature_strand} and {part.strand}). I cannot work with this!"
                 )
 
+        old_part: Optional[SimpleLocation | CompoundLocation] = None
+
+        for part in root_feature.location.parts:
+            if old_part:
+                if old_part.contains(part.start) or old_part.contains(part.stop):
+                    raise Exception(f"feature {root_feature.id} has a compound location containing overlapping parts. There must be no overlapping.")
+                
             actions: QueueActionList = location_actions[int(part.start)]
             actions.activate.append(root_feature)
 
-            actions: QueueActionList = location_actions[int(part.end)]
+            actions = location_actions[int(part.end)]
             actions.deactivate.append(root_feature)
 
         # Visit children
