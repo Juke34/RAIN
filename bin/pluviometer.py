@@ -315,6 +315,7 @@ class RecordCountingContext:
                 self.aggregate_writer.write_row_chimaera_with_data(
                     self.record.id, feature, parent_feature, feature_counter
                 )
+                self.chimaera_aggregate_counters[feature.type].merge(feature_counter)
             else:
                 self.feature_writer.write_row_with_data(self.record.id, feature, feature_counter)
             del self.counters[feature.id]
@@ -663,6 +664,14 @@ def run_job(record: SeqRecord) -> dict[str, Any]:
             "all_isoforms",
             record_ctx.all_isoforms_aggregate_counters,
         )
+        aggregate_writer.write_rows_with_data(
+            record.id,
+            ["."],
+            ".",
+            ".",
+            "chimaera",
+            record_ctx.chimaera_aggregate_counters,
+        )
 
         # Write the total counter data of the record. A dummy dict needs to be created to use the `write_rows_with_data` method
         total_counter_dict: defaultdict[str, MultiCounter] = defaultdict(
@@ -677,6 +686,7 @@ def run_job(record: SeqRecord) -> dict[str, Any]:
         "record_id": record.id,
         "tmp_feature_output_file": tmp_feature_output_file,
         "tmp_aggregate_output_file": tmp_aggregate_output_file,
+        "chimaera_aggregate_counters": record_ctx.chimaera_aggregate_counters,
         "longest_isoform_aggregate_counters": record_ctx.longest_isoform_aggregate_counters,
         "all_isoforms_aggregate_counters": record_ctx.all_isoforms_aggregate_counters,
         "total_counter": record_ctx.total_counter,
@@ -768,6 +778,10 @@ if __name__ == "__main__":
                 ]
                 genome_aggregate_counter.merge(record_aggregate_counter)
 
+            for record_aggregate_type, record_aggregate_counter in record_data["chimaera_aggregate_counters"].items():
+                genome_aggregate_counter: MultiCounter = genome_chimaera_aggregate_counters[record_aggregate_type]
+                genome_aggregate_counter.merge(record_aggregate_counter)
+
             merge_aggregation_counter_dicts(
                 genome_all_isoforms_aggregate_counters,
                 record_data["all_isoforms_aggregate_counters"],
@@ -786,6 +800,9 @@ if __name__ == "__main__":
         )
         aggregate_writer.write_rows_with_data(
             ".", ["."], ".", ".", "all_isoforms", genome_all_isoforms_aggregate_counters
+        )
+        aggregate_writer.write_rows_with_data(
+            ".", ["."], ".", ".", "chimaera", genome_chimaera_aggregate_counters
         )
 
         # Write the genomic total. A dummy dict needs to be created to use the `write_rows_with_data` method
