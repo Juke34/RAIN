@@ -1,11 +1,11 @@
-import numpy as np
-from numpy.typing import NDArray
-from dataclasses import dataclass
 from Bio.SeqFeature import SeqFeature, SimpleLocation, CompoundLocation
-import itertools
+from dataclasses import dataclass
+from numpy.typing import NDArray
 from collections import deque
-from typing import Optional
 from functools import reduce
+from typing import Optional
+import numpy as np
+import itertools
 import logging
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ class SiteVariantData:
     strand: int
     coverage: int
     mean_quality: float
-    frequencies: NDArray[np.int32]
+    frequencies: NDArray[np.int64]
     score: float
 
 def overlaps(self: SimpleLocation, location: SimpleLocation) -> bool:
@@ -73,7 +73,7 @@ def location_union(locations: list[SimpleLocation|CompoundLocation]) -> SimpleLo
     if len(locations) == 1:
         return locations[0]
 
-    comp_locations: CompoundLocation = reduce(lambda x, y: x + y, locations)
+    comp_locations: SimpleLocation|CompoundLocation = reduce(lambda x, y: x + y, locations)
     comp_locations.parts.sort(key=lambda part: (part.start, part.end), reverse=True)
 
     original_range = (comp_locations.parts[-1].start, max(map(lambda part: part.end, comp_locations.parts)))
