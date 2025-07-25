@@ -262,7 +262,7 @@ class RecordCountingContext:
 
         while (
             len(self.action_queue) > 0 and self.action_queue[0][0] < new_position
-        ):  # Use < instead of <= because of Python's right-exclusive indexing
+        ):  # Use < instead of <= because of Python's right-exclusive indfgexing
             _, actions = self.action_queue.popleft()
             visited_positions += 1
 
@@ -304,18 +304,19 @@ class RecordCountingContext:
         self.active_features.pop(feature.id, None)
 
         # Counter for the feature itself
-        aggregate_counter: Optional[MultiCounter] = self.counters.get(feature.id, None)
+        feature_counter: Optional[MultiCounter] = self.counters.get(feature.id, None)
+        # aggregate_counter: Optional[MultiCounter] = self.counters.get(feature.id, None)
 
         assert self.record.id
 
-        if aggregate_counter:
+        if feature_counter:
             if feature.is_chimaera:
                 assert parent_feature  # A chimaera must always have a parent feature (a gene)
                 self.aggregate_writer.write_row_chimaera_with_data(
-                    self.record.id, feature, parent_feature, aggregate_counter
+                    self.record.id, feature, parent_feature, feature_counter
                 )
             else:
-                self.feature_writer.write_row_with_data(self.record.id, feature, aggregate_counter)
+                self.feature_writer.write_row_with_data(self.record.id, feature, feature_counter)
             del self.counters[feature.id]
         else:
             if feature.is_chimaera:
@@ -373,9 +374,6 @@ class RecordCountingContext:
                     aggregation_mode="feature"
                 )
                 self.aggregate_writer.write_counter_data(aggregate_counter)
-            # self.aggregate_writer.write_rows_with_feature_and_data(
-            #     self.record.id, feature, "feature", feature_aggregation_counters
-            # )
 
         # Recursively check-out children
         for child in feature.sub_features:
