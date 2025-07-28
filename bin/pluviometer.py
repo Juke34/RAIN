@@ -49,31 +49,6 @@ def has_children_of_type(self: SeqFeature, target_type: str) -> bool:
     return False
 
 
-class CountingContext:
-    def __init__(self, aggregate_writer: AggregateFileWriter, filter: SiteFilter):
-        self.aggregate_writer: AggregateFileWriter = aggregate_writer
-        self.filter: SiteFilter = filter
-        self.longest_isoform_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
-            DefaultMultiCounterFactory(self.filter)
-        )
-        self.chimaera_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
-            DefaultMultiCounterFactory(self.filter)
-        )
-        self.all_isoforms_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
-            DefaultMultiCounterFactory(self.filter)
-        )
-        self.total_counter: MultiCounter = MultiCounter(self.filter)
-
-        return None
-
-    def update_aggregate_counters(self, new_counters: defaultdict[str, MultiCounter]) -> None:
-        for counter_type, new_counter in new_counters.items():
-            target_counter: MultiCounter = self.longest_isoform_aggregate_counters[counter_type]
-            target_counter.merge(new_counter)
-
-        return None
-
-
 def merge_aggregation_counter_dicts(
     dst: defaultdict[str, MultiCounter], src: defaultdict[str, MultiCounter]
 ) -> None:
