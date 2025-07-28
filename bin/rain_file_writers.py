@@ -1,6 +1,6 @@
 from utils import BASE_TYPES, MATCH_MISMATCH_TYPES
 from Bio.SeqFeature import ExactPosition
-from MultiCounter import MultiCounter
+from multi_counter import MultiCounter
 from Bio.SeqFeature import SeqFeature
 from collections import defaultdict
 from typing import TextIO
@@ -21,7 +21,7 @@ FEATURE_OUTPUT_FIELDS = [
 
 FEATURE_METADATA_OUTPUT_FIELDS = [
     "SeqID",
-    "ParentsIDs",
+    "ParentIDs",
     "FeatureID",
     "Type",
     "Start",
@@ -38,7 +38,7 @@ FEATURE_DATA_OUTPUT_FIELDS = [
 
 AGGREGATE_METADATA_OUTPUT_FIELDS = [
     "SeqID",
-    "ParentsIDs",
+    "ParentIDs",
     "FeatureID",
     "ParentType",
     "AggregateType",

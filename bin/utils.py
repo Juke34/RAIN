@@ -1,7 +1,6 @@
 from Bio.SeqFeature import SeqFeature, SimpleLocation, CompoundLocation
 from dataclasses import dataclass
 from numpy.typing import NDArray
-from collections import deque
 from functools import reduce
 from typing import Optional
 import numpy as np
@@ -27,28 +26,8 @@ MATCH_MISMATCH_TYPES = ["".join([x, y]) for x in BASE_TYPES for y in BASE_TYPES]
 # Possible base non-edits, sorted alphabetically
 NONEDIT_TYPES = ["AA", "CC", "GG", "TT"]
 
-
-def only(collection):
-    """
-    Unwrap the item from a collection that should contain a single item.
-    """
-    assert len(collection) == 1
-
-    for item in collection:
-        return item
-
-
-def argmax(collection) -> int:
-    """
-    Return the first index of the largest element in a collection. Equivalent to `numpy.argmax`.
-    """
-    return max(range(len(collection)), key=lambda i: collection[i])
-
-nucs = ('A', 'C', 'G', 'T')
-
-
 @dataclass(frozen=True, slots=True)
-class SiteVariantData:
+class RNASiteVariantData:
     seqid: str
     position: int
     reference: int
@@ -58,13 +37,6 @@ class SiteVariantData:
     frequencies: NDArray[np.int64]
     score: float
 
-def overlaps(self: SimpleLocation, location: SimpleLocation) -> bool:
-    """
-    Return `True` if the location overlaps another location. Location strand is taken into account.
-    """
-    return (self.strand == location.strand) and (self.start <= location.start <= self.end) or (self.start <= location.end <= self.end)
-
-setattr(SimpleLocation, "overlaps", overlaps)
 
 def location_union(locations: list[SimpleLocation|CompoundLocation]) -> SimpleLocation|CompoundLocation:
     """Return a `Location` (`SimpleLocation` or `CompoundLocation`) that is that is the union of the locations in a list"""
@@ -96,21 +68,3 @@ def location_union(locations: list[SimpleLocation|CompoundLocation]) -> SimpleLo
     assert original_range[1] == result.parts[-1].end
 
     return result
-
-def condense(x: list[SeqFeature], attrib) -> deque[tuple[int,list[SeqFeature]]]:
-    """
-    "Condense" a *sorted* flat list of features by their start or end locations (`attrib` parameter).
-    It returns a deque of tuples, where the first element is the location value and the second element is a list of features at location.
-    """
-    condensed: deque[tuple[int, list[SeqFeature]]] = deque()
-    current_value:int = -1    # Initial state assumption: No feature has a location value -1 
-
-    for feature in x:
-        feature_value: int = feature.location.__getattribute__(attrib)
-        if current_value == feature_value:
-            condensed[-1][1].append(feature)
-        else:
-            current_value = feature_value
-            condensed.append((current_value, [feature]))
-
-    return condensed

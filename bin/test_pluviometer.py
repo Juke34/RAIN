@@ -3,13 +3,13 @@
 import argparse
 from BCBio import GFF
 from Bio.SeqRecord import SeqRecord
-from site_variant_readers import TestReader
+from rna_site_variant_readers import TestRNASiteVariantReader
 from pluviometer import RecordManager
 from pluviometer import SiteFilter
 from pluviometer import write_output_file_header
 from contextlib import nullcontext
 from typing import Generator
-from utils import SiteVariantData
+from utils import RNASiteVariantData
 import sys
 
 def parse_cli_input() -> argparse.Namespace:
@@ -57,11 +57,11 @@ if __name__ == "__main__":
         write_output_file_header(output_handle)
         
         for record in records:
-            sv_reader = TestReader(
+            sv_reader = TestRNASiteVariantReader(
                 strand=args.strand,
                 edit=args.edit.upper()
             )
-            sv_data: SiteVariantData = sv_reader.read()
+            sv_data: RNASiteVariantData = sv_reader.read()
 
             manager: RecordManager = RecordManager(
                 record,

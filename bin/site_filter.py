@@ -1,4 +1,4 @@
-from utils import SiteVariantData
+from utils import RNASiteVariantData
 import numpy as np
 from numpy.typing import NDArray
 
@@ -8,7 +8,7 @@ class SiteFilter:
         self.edit_threshold: int = edit_threshold
         self.frequencies: NDArray[np.int32] = np.zeros(5, np.int32)
 
-    def apply(self, variant_data: SiteVariantData) -> None:
+    def apply(self, variant_data: RNASiteVariantData) -> None:
         if variant_data.coverage >= self.cov_threshold:
             np.copyto(
                 self.frequencies,

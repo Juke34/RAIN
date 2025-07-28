@@ -2,9 +2,9 @@
 from BCBio import GFF
 from Bio import SeqIO, SeqRecord
 from Bio.SeqFeature import SeqFeature
-from site_variant_readers import Reditools2Reader
+from rna_site_variant_readers import Reditools2Reader
 from typing import Optional
-from utils import SiteVariantData, NUC_STR_TO_IND
+from utils import RNASiteVariantData, NUC_STR_TO_IND
 import numpy as np
 import argparse
 
@@ -62,7 +62,7 @@ if __name__ == "__main__":
         for feature in target_features:
             with open(args.sites) as sites_handle:
                 reader = Reditools2Reader(sites_handle)
-                variant_data: SiteVariantData = reader.read()
+                variant_data: RNASiteVariantData = reader.read()
 
                 while variant_data.position <= feature.location.end:
                     while variant_data.position < feature.location.start:

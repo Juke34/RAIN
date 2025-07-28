@@ -1,20 +1,20 @@
 #!/usr/bin/env python
-from RainFileWriters import FeatureFileWriter, AggregateFileWriter
+from rain_file_writers import FeatureFileWriter, AggregateFileWriter
 from typing import Any, Optional, Generator, Callable, TextIO
 from Bio.SeqFeature import SimpleLocation, CompoundLocation
 from SeqFeature_extensions import SeqFeature
 from collections import deque, defaultdict
 from dataclasses import dataclass, field
-from MultiCounter import MultiCounter
+from multi_counter import MultiCounter
 from Bio.SeqRecord import SeqRecord
-from SiteFilter import SiteFilter
-from site_variant_readers import (
-    RNAVariantReader,
+from site_filter import SiteFilter
+from rna_site_variant_readers import (
+    RNASiteVariantReader,
     Reditools2Reader,
     Reditools3Reader,
     Jacusa2Reader,
 )
-from utils import SiteVariantData
+from utils import RNASiteVariantData
 from natsort import natsorted
 import multiprocessing
 from BCBio import GFF
@@ -113,7 +113,7 @@ class RecordCountingContext:
         )
         self.use_progress_bar: bool = use_progress_bar
         self.action_queue: deque[tuple[int, QueueActionList]] = deque()
-        self.svdata: Optional[SiteVariantData] = None
+        self.svdata: Optional[RNASiteVariantData] = None
         self.deactivation_list: list[SeqFeature] = []
 
         self.progbar_increment: Callable = (
@@ -493,7 +493,7 @@ class RecordCountingContext:
 
         return aggregation_counters
 
-    def update_active_counters(self, site_data: SiteVariantData) -> None:
+    def update_active_counters(self, site_data: RNASiteVariantData) -> None:
         """
         Update the multicounters matching the ID of features in the `active_features` set.
         A new multicounter is created if no matching ID is found.
@@ -508,8 +508,8 @@ class RecordCountingContext:
     def is_finished(self) -> bool:
         return len(self.action_queue) > 0 or len(self.active_features) > 0
 
-    def launch_counting(self, reader: RNAVariantReader) -> None:
-        next_svdata: Optional[SiteVariantData] = reader.seek_record(self.record.id)
+    def launch_counting(self, reader: RNASiteVariantReader) -> None:
+        next_svdata: Optional[RNASiteVariantData] = reader.seek_record(self.record.id)
         if next_svdata:
             logging.info(f"Record {self.record.id} · Found site variant data matching the record")
 
@@ -518,7 +518,7 @@ class RecordCountingContext:
             self.state_update_cycle(self.svdata.position)
             self.update_active_counters(self.svdata)
             self.total_counter.update(self.svdata)
-            next_svdata: Optional[SiteVariantData] = reader.read()
+            next_svdata: Optional[RNASiteVariantData] = reader.read()
 
         if self.svdata:
             logging.info(
@@ -643,7 +643,7 @@ def run_job(record: SeqRecord) -> dict[str, Any]:
         )
 
         # Count
-        reader: RNAVariantReader = reader_factory(sv_handle)
+        reader: RNASiteVariantReader = reader_factory(sv_handle)
         record_ctx.set_record(record)
         record_ctx.launch_counting(reader)
 

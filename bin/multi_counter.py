@@ -1,7 +1,7 @@
-from utils import SiteVariantData
+from utils import RNASiteVariantData
 import numpy as np
 from numpy.typing import NDArray
-from SiteFilter import SiteFilter
+from site_filter import SiteFilter
 from typing import TextIO
 
 class MultiCounter:
@@ -23,7 +23,7 @@ class MultiCounter:
 
         return None
 
-    def update(self, variant_data: SiteVariantData) -> None:
+    def update(self, variant_data: RNASiteVariantData) -> None:
         """Increment the counters from the data in a SiteVariantData object."""
         i: int = variant_data.reference
 

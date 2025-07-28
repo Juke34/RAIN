@@ -2,11 +2,11 @@
 
 import argparse
 import numpy as np
-from utils import SiteVariantData
-from SiteFilter import SiteFilter
+from utils import RNASiteVariantData
+from site_filter import SiteFilter
 from typing import Optional
-from site_variant_readers import (
-    RNAVariantReader,
+from rna_site_variant_readers import (
+    RNASiteVariantReader,
     Reditools2Reader,
     Reditools3Reader,
     Jacusa2Reader
@@ -37,7 +37,7 @@ if __name__ == "__main__":
     filter: SiteFilter = SiteFilter(1, 0)
 
     with open(args.input) as input_handle:
-        reader: RNAVariantReader
+        reader: RNASiteVariantReader
         match args.format:
             case "reditools2":
                 reader = Reditools2Reader(input_handle)
@@ -53,7 +53,7 @@ if __name__ == "__main__":
         genome_reads: np.typing.NDArray = np.zeros(5, dtype=np.int64)
         genome_sites: int = 0
 
-        svdata: Optional[SiteVariantData] = reader.read()
+        svdata: Optional[RNASiteVariantData] = reader.read()
 
         if svdata:
             current_record_id: str = svdata.seqid
