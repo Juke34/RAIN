@@ -37,18 +37,6 @@ class QueueActionList:
     activate: list[SeqFeature] = field(default_factory=list)
     deactivate: list[SeqFeature] = field(default_factory=list)
 
-
-def has_children_of_type(self: SeqFeature, target_type: str) -> bool:
-    """
-    Return `True` if the feature contains sub-features of a specific target type
-    """
-    for child in self.sub_features:
-        if child.type == target_type:
-            return True
-
-    return False
-
-
 def merge_aggregation_counter_dicts(
     dst: defaultdict[str, MultiCounter], src: defaultdict[str, MultiCounter]
 ) -> None:
@@ -131,6 +119,10 @@ class RecordCountingContext:
         """
         Update a dict of aggregate counters by merging them with matching items in another dict of counters.
         The tag refers to the different kinds of aggregate counters: "all_isoforms", "chimaera", and "longest_isoform"
+
+        Arguments:
+            aggregate_counter_tag: str  Prefix for selecting one of the aggregate counter dictionaries of the different aggregation modes: "all_isoforms", "longest_isoform", and "chimaera"
+            new_counters: defaultdict[str, MultiCounter]    Defaultdict of counters to merge with the counters selected by the aggregate counter tag.
         """
         aggregate_counters: defaultdict[str, MultiCounter] = getattr(
             self, aggregate_counter_tag + "_aggregate_counters"
@@ -142,6 +134,13 @@ class RecordCountingContext:
         return None
 
     def set_record(self, record: SeqRecord) -> None:
+        """
+        Assign a specific record to the RecordCountingContext.
+        If the context was already assigned to another record, the queues and counters are cleared before proceeding (this was used in a previous version that recycled the record counting context, but it isn't used since parallelization was implemented).
+        Makes the reader seek the first entry matching the record ID, and initiates the pre-processing of the features.
+        1. Parse all the features in the record and load the resulting actions into the action queue
+        2. 
+        """
         logging.info(f"Switching to record {record.id}")
         if len(self.active_features) != 0:
             logging.info(
@@ -159,12 +158,18 @@ class RecordCountingContext:
 
         # Map positions to activation feature and deactivation actions
         logging.info("Pre-processing features")
-        position_actions: defaultdict[int, QueueActionList] = defaultdict(QueueActionList)
+        location_actions: defaultdict[int, QueueActionList] = defaultdict(QueueActionList)
         for feature in record.features:
-            self.load_action_queue(position_actions, feature, 1, ["."])
+            # Loading is recursive
+            self.load_location_actions_dict(
+                location_actions=location_actions,
+                root_feature=feature, 
+                level=1,
+                parent_list=["."]   # "." represents the record root, i.e. the parent of a level-1 position
+                )
 
         # Create a queue of actions sorted by positions
-        self.action_queue.extend(sorted(position_actions.items()))
+        self.action_queue.extend(sorted(location_actions.items()))
         logging.info(
             f"Pre-processing complete. Action positions detected: {len(self.action_queue)}"
         )
@@ -203,7 +208,7 @@ class RecordCountingContext:
         """Dummy method that does nothing when the progress bar is deactivated"""
         pass
 
-    def load_action_queue(
+    def load_location_actions_dict(
         self,
         location_actions: dict[int, QueueActionList],
         root_feature: SeqFeature,
@@ -250,7 +255,7 @@ class RecordCountingContext:
         # Visit children
         if hasattr(root_feature, "sub_features"):
             for child in root_feature.sub_features:
-                self.load_action_queue(
+                self.load_location_actions_dict(
                     location_actions, child, level + 1, parent_list + [root_feature.id]
                 )
 
@@ -283,6 +288,10 @@ class RecordCountingContext:
         return None
 
     def flush_queues(self) -> None:
+        """
+        Finish processing all the queues without checking for more data from the RNA variant input file
+        """
+
         logging.info(
             f"Actions remaining in action queue: {len(self.action_queue)}. Flushing action queue"
         )
@@ -304,11 +313,17 @@ class RecordCountingContext:
         return None
 
     def checkout(self, feature: SeqFeature, parent_feature: Optional[SeqFeature]) -> None:
+        """
+        Deactivate and post-process a feature (and its sub-features, recursively) and write to output the associated counting data.
+        
+        Checkout should be triggered after a level-1 feature is completely cleared. Aggregation of the level-1 feature and all its descentants proceeds.
+        """
+
+        # Deactivate the feature
         self.active_features.pop(feature.id, None)
 
         # Counter for the feature itself
         feature_counter: Optional[MultiCounter] = self.counters.get(feature.id, None)
-        # aggregate_counter: Optional[MultiCounter] = self.counters.get(feature.id, None)
 
         assert self.record.id
 
@@ -331,7 +346,7 @@ class RecordCountingContext:
             else:
                 self.feature_writer.write_row_without_data(self.record.id, feature)
 
-        all_isoforms_aggregation_counters: Optional[defaultdict[str, MultiCounter]] = None
+        # all_isoforms_aggregation_counters: Optional[defaultdict[str, MultiCounter]] = None
 
         assert self.record.id  # Placate Pylance
 
@@ -394,6 +409,13 @@ class RecordCountingContext:
     def aggregate_level1(
         self, feature: SeqFeature
     ) -> tuple[defaultdict[str, MultiCounter], defaultdict[str, MultiCounter]]:
+        """
+        Perform aggregation for level-1 feature.
+        
+        It handles the special cases caused by the different modes of aggregation (all_isoforms, longest_isoform, and chimaera).
+        Triggers the recursive aggregation of the feature descendants (features of higher levels)
+        """
+
         level1_longest_isoform_aggregation_counters: defaultdict[str, MultiCounter] = defaultdict(
             DefaultMultiCounterFactory(self.filter)
         )
@@ -455,14 +477,6 @@ class RecordCountingContext:
                     level1_longest_isoform_aggregation_counters, aggregation_counters_from_child
                 )
 
-        # assert self.record.id
-        # self.aggregate_writer.write_rows_with_feature_and_data(
-        #     self.record.id, feature, "longest_isoform", level1_longest_isoform_aggregation_counters
-        # )
-        # self.aggregate_writer.write_rows_with_feature_and_data(
-        #     self.record.id, feature, "all_isoforms", level1_all_isoforms_aggregation_counters
-        # )
-
         # Merge the feature-level aggregation counters into the record-level aggregation counters
         self.update_aggregate_counters(
             "longest_isoform", level1_longest_isoform_aggregation_counters
@@ -474,6 +488,10 @@ class RecordCountingContext:
         )
 
     def aggregate_children(self, feature: SeqFeature) -> defaultdict[str, MultiCounter]:
+        """
+        Perform aggregation of features. Not intended to handle level-1 features (see `aggregate_level1`)
+        """
+
         aggregation_counters: defaultdict[str, MultiCounter] = defaultdict(
             DefaultMultiCounterFactory(self.filter)
         )
@@ -495,10 +513,6 @@ class RecordCountingContext:
             feature_counter: Optional[MultiCounter] = self.counters.get(child.id, None)
             if feature_counter:
                 aggregation_counter.merge(feature_counter)
-
-        # self.aggregate_writer.write_rows_with_feature_and_data(
-        #     self.record.id, feature, "feature", aggregation_counters
-        # )
 
         return aggregation_counters
 
