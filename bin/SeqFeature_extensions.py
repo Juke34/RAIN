@@ -41,6 +41,11 @@ setattr(SeqFeature, "parent_list", [""])
 
 
 def make_chimaeras(self: SeqFeature, record_id: str) -> None:
+    """
+    Create chimaeras out of all the feature types of the sub-features.
+
+    The chimaeric features are added as sub-features, with their feature ID and feature types suffixed with "-chimaera"
+    """
     target_type_locations: dict[str, list[SimpleLocation | CompoundLocation]] = {}
 
     for transcript in self.sub_features:
@@ -53,6 +58,7 @@ def make_chimaeras(self: SeqFeature, record_id: str) -> None:
             else:
                 target_type_locations[child.type] = child.location.parts
 
+    # Create a dict of the feature types to chimaerize
     chimaeric_type_locations: dict[str, SimpleLocation | CompoundLocation] = {
         key: location_union(location_parts) for key, location_parts in target_type_locations.items()
     }
