@@ -59,7 +59,7 @@ if __name__ == "__main__":
         for record in records:
             sv_reader = TestRNASiteVariantReader(
                 strand=args.strand,
-                edit=args.edit.upper()
+                pairing=args.edit.upper()
             )
             sv_data: RNASiteVariantData = sv_reader.read()
 

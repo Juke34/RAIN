@@ -1,59 +1,9 @@
-from utils import BASE_TYPES, MATCH_MISMATCH_TYPES
+from utils import OUTPUT_BASE_TYPES, OUTPUT_MATCH_MISMATCH_TYPES
 from Bio.SeqFeature import ExactPosition
 from multi_counter import MultiCounter
 from Bio.SeqFeature import SeqFeature
 from collections import defaultdict
 from typing import TextIO
-
-FEATURE_OUTPUT_FIELDS = [
-    "SeqID",
-    "Parents",
-    "FeatureID",
-    "Type",
-    "Start",
-    "End",
-    "Strand",
-    "CoveredSites",
-    "GenomeBases",
-    "SiteBasePairings",
-    "ReadBasePairings"
-]
-
-FEATURE_METADATA_OUTPUT_FIELDS = [
-    "SeqID",
-    "ParentIDs",
-    "FeatureID",
-    "Type",
-    "Start",
-    "End",
-    "Strand",
-]
-
-FEATURE_DATA_OUTPUT_FIELDS = [
-    "CoveredSites",
-    "GenomeBases",
-    "SiteBasePairings",
-    "ReadBasePairings"
-]
-
-AGGREGATE_METADATA_OUTPUT_FIELDS = [
-    "SeqID",
-    "ParentIDs",
-    "FeatureID",
-    "ParentType",
-    "AggregateType",
-    "AggregationMode",
-]
-
-AGGREGATE_DATA_OUTPUT_FIELDS = [
-    "CoveredSites",
-    "GenomeBases",
-    "SiteBasePairings",
-    "ReadBasePairings",
-]
-
-STR_ZERO_BASE_FREQS = ",".join("0" for _ in range(len(BASE_TYPES)))
-STR_ZERO_EDIT_FREQS = ",".join("0" for _ in range(len(MATCH_MISMATCH_TYPES)))
 
 
 def make_parent_path(parent_list: list[str]) -> str:
@@ -67,12 +17,28 @@ def make_parent_path(parent_list: list[str]) -> str:
 
 
 class RainFileWriter:
-    def __init__(self, handle: TextIO, metadata_fields: list[str], data_fields: list[str]):
-        self.handle = handle
-        self.metadata_fields: list[str] = metadata_fields
-        self.n_metadata: int = len(self.metadata_fields)
-        self.data_fields: list[str] = data_fields
-        self.n_data: int = len(self.data_fields)
+    """
+    Base class for output file writers.
+    
+    The specialized writer classes exist to help ensure that the output is properly formatted, e.g. with no missing fields and with 1-based indexing of the genomic positions.
+    This makes it easier to update the code when changes are introduces to the output format.
+    """
+
+    STR_ZERO_BASE_FREQS: str = ",".join("0" for _ in range(len(OUTPUT_BASE_TYPES)))
+    """Pre-formatted string with a list of zeros for writing out genome base frequencies of features/aggregates without reads"""
+
+    STR_ZERO_PAIRING_FREQS: str = ",".join("0" for _ in range(len(OUTPUT_MATCH_MISMATCH_TYPES)))
+    """Pre-formatted string with a list of zeros for writing out read/site base frequencies of features/aggregates without reads"""
+
+    metadata_fields: list[str]
+    """List of metadata field names, which is printed out in the header"""
+
+    data_fields: list[str]
+    """List of data field names, which is printed out in the header"""
+
+    def __init__(self, handle: TextIO):
+        self.handle: TextIO = handle
+        """Handle of the output file"""
 
         return None
 
@@ -125,12 +91,34 @@ class RainFileWriter:
 
 
 class FeatureFileWriter(RainFileWriter):
+    metadata_fields: list[str] = [
+    "SeqID",
+    "ParentIDs",
+    "FeatureID",
+    "Type",
+    "Start",
+    "End",
+    "Strand",
+    ]
+
+    data_fields: list[str] = [
+        "CoveredSites",
+        "GenomeBases",
+        "SiteBasePairings",
+        "ReadBasePairings"
+    ]
+
     def __init__(self, handle: TextIO):
-        super().__init__(handle, FEATURE_METADATA_OUTPUT_FIELDS, FEATURE_DATA_OUTPUT_FIELDS)
+        super().__init__(handle)
 
         return None
 
     def write_metadata(self, record_id: str, feature: SeqFeature) -> int:
+        """Write the metadata fields of an output line"""
+
+        # Assertions to placate Pylance
+        assert feature.location
+
         return super().write_metadata(
             record_id,
             make_parent_path(feature.parent_list),
@@ -144,22 +132,45 @@ class FeatureFileWriter(RainFileWriter):
     def write_row_with_data(
         self, record_id: str, feature: SeqFeature, counter: MultiCounter
     ) -> int:
+        """Write the data fields (coverage, read frequency, &c) of an output line, taken from the informations in a counter object"""
         return self.write_metadata(record_id, feature) + self.write_data(
             str(counter.genome_base_freqs.sum()),
+            # Subindexing is used below because counter matrices are 5x5 because they contain pairings with N, which we don't print
+            # Use the flat attribute of the NumPy arrays to flatten the matrix row-wise to attain the desired base pairing order in the output
             ",".join(map(str, counter.genome_base_freqs[0:4].flat)),
             ",".join(map(str, counter.edit_site_freqs[0:4, 0:4].flat)),
             ",".join(map(str, counter.edit_read_freqs[0:4, 0:4].flat)),
         )
 
     def write_row_without_data(self, record_id: str, feature: SeqFeature) -> int:
+        """
+        Write the data fields (coverage, read frequency, &c) of an output line for a feature without a counter object.
+        This is faster than creating dummy counter objects with zero observations.
+        """
         return self.write_metadata(record_id, feature) + self.write_data(
-            "0", STR_ZERO_BASE_FREQS, STR_ZERO_EDIT_FREQS, STR_ZERO_EDIT_FREQS
+            "0", self.STR_ZERO_BASE_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS
         )
 
 
 class AggregateFileWriter(RainFileWriter):
+    metadata_fields: list[str] = [
+    "SeqID",
+    "ParentIDs",
+    "FeatureID",
+    "ParentType",
+    "AggregateType",
+    "AggregationMode",
+    ]
+
+    data_fields: list[str] = [
+        "CoveredSites",
+        "GenomeBases",
+        "SiteBasePairings",
+        "ReadBasePairings",
+    ]
+
     def __init__(self, handle: TextIO):
-        super().__init__(handle, AGGREGATE_METADATA_OUTPUT_FIELDS, AGGREGATE_DATA_OUTPUT_FIELDS)
+        super().__init__(handle)
 
         return None
     
@@ -279,6 +290,6 @@ class AggregateFileWriter(RainFileWriter):
             feature.type,
             "chimaera",
         )
-        b += self.write_data("0", STR_ZERO_BASE_FREQS, STR_ZERO_EDIT_FREQS, STR_ZERO_EDIT_FREQS)
+        b += self.write_data("0", self.STR_ZERO_BASE_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS)
 
         return b
