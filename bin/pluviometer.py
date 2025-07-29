@@ -224,7 +224,7 @@ class RecordCountingContext:
         root_feature.parent_list = parent_list
 
         if level == 1:
-            root_feature.make_chimaeras2(self.record.id)
+            root_feature.make_chimaeras(self.record.id)
 
         for part in root_feature.location.parts:
             if feature_strand != part.strand:
