@@ -60,6 +60,10 @@ def merge_aggregation_counter_dicts(
 
 
 class RecordCountingContext:
+    """
+    Handles counting at record (~ chromosome) level.
+    """
+
     def __init__(
         self,
         feature_writer: FeatureFileWriter,
@@ -67,35 +71,57 @@ class RecordCountingContext:
         filter: SiteFilter,
         use_progress_bar: bool,
     ):
-        # super().__init__(aggregate_writer, filter)
         self.aggregate_writer: AggregateFileWriter = aggregate_writer
+        """Aggregate counting output is written to a temporary file through this object"""
+
+        self.feature_writer: FeatureFileWriter = feature_writer
+        """Feature counting output is written to a temporary file through this object"""
+
         self.filter: SiteFilter = filter
+        """Filter applied to the reads. Filters contain a mutable state, so they should not be shared between concurrent RecordCountingContext instances"""
+
         self.longest_isoform_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
             DefaultMultiCounterFactory(self.filter)
         )
+        """Dictionary of counters for the record-level longest isoform aggregates. Keys correspond to aggregate feature types"""
+
         self.chimaera_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
             DefaultMultiCounterFactory(self.filter)
         )
+        """Dictionary of counters for the record-level chimaeric aggregates. Keys correspond to aggregate feature types"""
+
         self.all_isoforms_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
             DefaultMultiCounterFactory(self.filter)
         )
+        """Dictionary of counters for the record-level all isoforms aggregates. Keys correspond to aggregate feature types"""
+
         self.total_counter: MultiCounter = MultiCounter(self.filter)
+        """The counter that keeps tallies of editions on all the sites of the record, regardless of feature"""
 
         self.active_features: dict[str, SeqFeature] = dict()
-        self.feature_writer: FeatureFileWriter = feature_writer
+        """This dictonary holds all the features whose counters are must be updated at the current genomic position. Keys are feature IDs"""
+
         self.counters: defaultdict[str, MultiCounter] = defaultdict(
             DefaultMultiCounterFactory(self.filter)
         )
+        """This dictionary contains the feature-level counters. New counters are created on the fly as needed by the use of a default dictionary. Keys are feature IDs and entries can be deleted after checkout to save memory"""
+
         self.use_progress_bar: bool = use_progress_bar
+        """Toggle for progress bar. This is more useful during development"""
+
         self.action_queue: deque[tuple[int, QueueActionList]] = deque()
+        """This queue (implemented with a deque) holds a list of all the activating or deactivating actions to execute at the genomic positions downstream of the current position"""
+
         self.svdata: Optional[RNASiteVariantData] = None
-        self.deactivation_list: list[SeqFeature] = []
+        """The site variant data object holding the information about variants mapped to the current genomic position"""
+
 
         self.progbar_increment: Callable = (
             self._active_progbar_increment
             if self.use_progress_bar
             else self._inactive_progbar_increment
         )
+        """The method to be used to update the progress bar. When no progress bar is used, a dummy method is called"""
 
         return None
 
@@ -211,8 +237,10 @@ class RecordCountingContext:
         for part in root_feature.location.parts:
             if old_part:
                 if old_part.contains(part.start) or old_part.contains(part.stop):
-                    raise Exception(f"feature {root_feature.id} has a compound location containing overlapping parts. There must be no overlapping.")
-                
+                    raise Exception(
+                        f"feature {root_feature.id} has a compound location containing overlapping parts. There must be no overlapping."
+                    )
+
             actions: QueueActionList = location_actions[int(part.start)]
             actions.activate.append(root_feature)
 
@@ -317,25 +345,31 @@ class RecordCountingContext:
                 self.all_isoforms_aggregate_counters, level1_all_isoforms_aggregation_counters
             )
 
-            for aggregate_type, aggregate_counter in level1_longest_isoform_aggregation_counters.items():
+            for (
+                aggregate_type,
+                aggregate_counter,
+            ) in level1_longest_isoform_aggregation_counters.items():
                 self.aggregate_writer.write_metadata_direct(
                     seq_id=self.record.id,
                     parent_ids=".," + feature.id,
                     aggregate_id=feature.longest_isoform + "-longest_isoform",
                     parent_type=feature.type,
                     aggregate_type=aggregate_type,
-                    aggregation_mode="longest_isoform"
+                    aggregation_mode="longest_isoform",
                 )
                 self.aggregate_writer.write_counter_data(aggregate_counter)
-                
-            for aggregate_type, aggregate_counter in level1_all_isoforms_aggregation_counters.items():
+
+            for (
+                aggregate_type,
+                aggregate_counter,
+            ) in level1_all_isoforms_aggregation_counters.items():
                 self.aggregate_writer.write_metadata_direct(
                     seq_id=self.record.id,
                     parent_ids=".," + feature.id,
                     aggregate_id=feature.id + "-all_isoforms",
                     parent_type=feature.type,
                     aggregate_type=aggregate_type,
-                    aggregation_mode="all_isoforms"
+                    aggregation_mode="all_isoforms",
                 )
                 self.aggregate_writer.write_counter_data(aggregate_counter)
         else:
@@ -343,11 +377,11 @@ class RecordCountingContext:
             for aggregate_type, aggregate_counter in feature_aggregation_counters.items():
                 self.aggregate_writer.write_metadata_direct(
                     seq_id=self.record.id,
-                    parent_ids=','.join(feature.parent_list),
+                    parent_ids=",".join(feature.parent_list),
                     aggregate_id=feature.id,
                     parent_type=parent_feature.type,
                     aggregate_type=aggregate_type,
-                    aggregation_mode="feature"
+                    aggregation_mode="feature",
                 )
                 self.aggregate_writer.write_counter_data(aggregate_counter)
 
@@ -753,8 +787,12 @@ if __name__ == "__main__":
                 ]
                 genome_aggregate_counter.merge(record_aggregate_counter)
 
-            for record_aggregate_type, record_aggregate_counter in record_data["chimaera_aggregate_counters"].items():
-                genome_aggregate_counter: MultiCounter = genome_chimaera_aggregate_counters[record_aggregate_type]
+            for record_aggregate_type, record_aggregate_counter in record_data[
+                "chimaera_aggregate_counters"
+            ].items():
+                genome_aggregate_counter: MultiCounter = genome_chimaera_aggregate_counters[
+                    record_aggregate_type
+                ]
                 genome_aggregate_counter.merge(record_aggregate_counter)
 
             merge_aggregation_counter_dicts(
