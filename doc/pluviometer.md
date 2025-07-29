@@ -120,6 +120,15 @@ $$
 AG\ editing\ level = \sum_{i=0}^{n} \dfrac{AG_i}{AA_i + AC_i + AG_i + AT_i}
 $$
 
+````
+SeqID	 ParentIDs             	 FeatureID                                 	 ParentType	 AggregateType	 AggregationMode	 CoveredSites	 GenomeBases                	 SiteBasePairings                                                                       	 ReadBasePairings
+21   	 .,gene:ENSG00000237735	 transcript:ENST00000444868-longest_isoform	 ncRNA_gene	 exon         	 longest_isoform	          438	 147,88,91,112              	 147,1,0,0,0,88,1,0,0,2,91,0,0,1,0,112                                                  	 1319,4,0,0,0,748,5,0,0,12,825,0,0,1,0,933
+21   	 .,gene:ENSG00000237735	 gene:ENSG00000237735-all_isoforms         	 ncRNA_gene	 exon         	 all_isoforms   	          688	 205,145,145,193            	 205,2,0,0,0,145,3,0,0,3,145,0,0,2,0,193                                                	 1731,8,0,0,0,1151,12,0,0,16,1206,0,0,5,0,1545
+21   	 .,gene:ENSG00000237735	 transcript:ENST00000753406                	 ncRNA_gene	 exon         	 feature        	          250	 58,57,54,81                	 58,1,0,0,0,57,2,0,0,1,54,0,0,1,0,81                                                    	 412,4,0,0,0,403,7,0,0,4,381,0,0,4,0,612
+21   	 .,gene:ENSG00000237735	 transcript:ENST00000444868                	 ncRNA_gene	 exon         	 feature        	          438	 147,88,91,112              	 147,1,0,0,0,88,1,0,0,2,91,0,0,1,0,112                                                  	 1319,4,0,0,0,748,5,0,0,12,825,0,0,1,0,933
+21   	 .,gene:ENSG00000237735	 gene:ENSG00000237735-exon-chimaera        	 ncRNA_gene	 exon-chimaera	 chimaera       	          569	 185,108,116,160            	 185,1,0,0,0,108,3,0,0,2,116,0,0,2,0,160                                                	 1599,4,0,0,0,882,12,0,0,12,990,0,0,5,0,1293
+````
+
 ## Internals
 
 ### `RNASiteVariantReader`
