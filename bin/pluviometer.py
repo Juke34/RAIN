@@ -349,7 +349,7 @@ class RecordCountingContext:
                 aggregate_type,
                 aggregate_counter,
             ) in level1_longest_isoform_aggregation_counters.items():
-                self.aggregate_writer.write_metadata_direct(
+                self.aggregate_writer.write_metadata(
                     seq_id=self.record.id,
                     parent_ids=".," + feature.id,
                     aggregate_id=feature.longest_isoform + "-longest_isoform",
@@ -363,7 +363,7 @@ class RecordCountingContext:
                 aggregate_type,
                 aggregate_counter,
             ) in level1_all_isoforms_aggregation_counters.items():
-                self.aggregate_writer.write_metadata_direct(
+                self.aggregate_writer.write_metadata(
                     seq_id=self.record.id,
                     parent_ids=".," + feature.id,
                     aggregate_id=feature.id + "-all_isoforms",
@@ -375,7 +375,7 @@ class RecordCountingContext:
         else:
             feature_aggregation_counters = self.aggregate_children(feature)
             for aggregate_type, aggregate_counter in feature_aggregation_counters.items():
-                self.aggregate_writer.write_metadata_direct(
+                self.aggregate_writer.write_metadata(
                     seq_id=self.record.id,
                     parent_ids=",".join(feature.parent_list),
                     aggregate_id=feature.id,

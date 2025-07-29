@@ -174,7 +174,7 @@ class AggregateFileWriter(RainFileWriter):
 
         return None
     
-    def write_metadata_direct(
+    def write_metadata(
             self,
             seq_id: str,
             parent_ids: str,
@@ -183,6 +183,7 @@ class AggregateFileWriter(RainFileWriter):
             aggregate_type: str,
             aggregation_mode: str
     ) -> int:
+        """Write metadata fields of an aggregate"""
         b: int = self.handle.write(seq_id)
         b += self.handle.write('\t')
         b += self.handle.write(parent_ids)
@@ -198,38 +199,6 @@ class AggregateFileWriter(RainFileWriter):
 
         return b
     
-    def write_metadata(
-        self, seq_id: str, feature: SeqFeature, aggregate_type: str, aggregation_mode: str
-    ) -> int:
-        return super().write_metadata(
-            seq_id,
-            make_parent_path(feature.parent_list),
-            feature.id,
-            feature.type,
-            aggregate_type,
-            aggregation_mode,
-        )
-
-    def write_rows_with_feature_and_data(
-        self,
-        record_id: str,
-        feature: SeqFeature,
-        aggregation_mode: str,
-        counter_dict: defaultdict[str, MultiCounter],
-    ) -> int:
-        b: int = 0
-
-        for aggregate_type, aggregate_counter in counter_dict.items():
-            b += self.write_metadata(record_id, feature, aggregate_type, aggregation_mode)
-            b += self.write_data(
-                str(aggregate_counter.genome_base_freqs.sum()),
-                ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),
-                ",".join(map(str, aggregate_counter.edit_site_freqs[0:4, 0:4].flat)),
-                ",".join(map(str, aggregate_counter.edit_read_freqs[0:4, 0:4].flat)),
-            )
-
-        return b
-
     def write_rows_with_data(
         self,
         record_id: str,
@@ -239,6 +208,7 @@ class AggregateFileWriter(RainFileWriter):
         aggregation_mode: str,
         counter_dict: defaultdict[str, MultiCounter],
     ) -> int:
+        """Write metadata and data fields of multiple counters of the same aggregate feature"""
         b: int = 0
 
         for aggregate_type, aggregate_counter in counter_dict.items():
@@ -262,6 +232,7 @@ class AggregateFileWriter(RainFileWriter):
     def write_row_chimaera_with_data(
         self, record_id: str, feature: SeqFeature, parent_feature: SeqFeature, counter: MultiCounter
     ) -> int:
+        """Write matadata and data of a chimaeric aggregate"""
         b: int = super().write_metadata(
             record_id,
             make_parent_path(feature.parent_list),
@@ -282,6 +253,7 @@ class AggregateFileWriter(RainFileWriter):
     def write_row_chimaera_without_data(
         self, record_id: str, feature: SeqFeature, parent_feature: SeqFeature
     ) -> int:
+        """Write matadata and data of a chimaeric aggregate without observations"""
         b: int = super().write_metadata(
             record_id,
             make_parent_path(feature.parent_list),
