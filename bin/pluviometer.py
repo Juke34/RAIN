@@ -774,7 +774,7 @@ if __name__ == "__main__":
             # Run the jobs and save the result of each record in a dict stored in the `record_data` list
             record_data_list: list[dict[str, Any]] = pool.map(run_job, records)
 
-        # Sort record results in lexicographical order
+        # Sort record results in "natural" order
         record_data_list = natsorted(record_data_list, key=lambda x: x["record_id"])
 
     with (
