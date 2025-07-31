@@ -156,7 +156,7 @@ class AggregateFileWriter(RainFileWriter):
     metadata_fields: list[str] = [
     "SeqID",
     "ParentIDs",
-    "FeatureID",
+    "AggregateID",
     "ParentType",
     "AggregateType",
     "AggregationMode",
@@ -203,7 +203,7 @@ class AggregateFileWriter(RainFileWriter):
         self,
         record_id: str,
         parent_list: list[str],
-        feature_id: str,
+        aggregate_id: str,
         feature_type: str,
         aggregation_mode: str,
         counter_dict: defaultdict[str, MultiCounter],
@@ -215,7 +215,7 @@ class AggregateFileWriter(RainFileWriter):
             b += super().write_metadata(
                 record_id,
                 make_parent_path(parent_list),
-                feature_id,
+                aggregate_id,
                 feature_type,
                 aggregate_type,
                 aggregation_mode,
