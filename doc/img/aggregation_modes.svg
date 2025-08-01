@@ -1,0 +1,234 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg width="100%" height="100%" viewBox="0 0 520 340" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xml:space="preserve" xmlns:serif="http://www.serif.com/" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:1.5;">
+    <rect id="Artboard1" x="0" y="0" width="520" height="340" style="fill:none;"/>
+    <g id="Artboard11" serif:id="Artboard1">
+        <g transform="matrix(0.8,0,0,0.983333,80,152.167)">
+            <rect x="100" y="130" width="100" height="20" style="fill:rgb(235,235,235);stroke:black;stroke-width:1.12px;"/>
+        </g>
+        <g transform="matrix(1,0,0,1,60,100.08)">
+            <rect x="220" y="180" width="120" height="20" style="fill:rgb(235,235,235);stroke:black;stroke-width:1px;"/>
+        </g>
+        <g transform="matrix(2.5,0,0,1,-600,100)">
+            <rect x="420" y="180" width="20" height="20" style="fill:rgb(235,235,235);stroke:black;stroke-width:0.53px;"/>
+        </g>
+        <g transform="matrix(1,0,0,0.333333,60,220)">
+            <rect x="420" y="180" width="20" height="20" style="fill:white;stroke:black;stroke-width:1.34px;"/>
+        </g>
+        <g transform="matrix(1,0,0,0.333333,60,226.5)">
+            <rect x="420" y="180" width="20" height="20" style="stroke:black;stroke-width:1.34px;"/>
+        </g>
+        <g transform="matrix(2.5,0,0,0.333333,-600,233.167)">
+            <rect x="420" y="180" width="20" height="20" style="fill:rgb(128,128,128);stroke:black;stroke-width:0.56px;"/>
+        </g>
+        <g transform="matrix(0.6,0,0,1,100,-90)">
+            <rect x="100" y="130" width="100" height="20" style="fill:white;stroke:black;stroke-width:1.21px;"/>
+        </g>
+        <g transform="matrix(0.6,0,0,0.333511,100,236.644)">
+            <rect x="100" y="130" width="100" height="20" style="fill:white;stroke:black;stroke-width:2.06px;"/>
+        </g>
+        <g transform="matrix(0.4,0,0,1,160,-9.75938)">
+            <rect x="100" y="130" width="100" height="20" style="stroke:black;stroke-width:1.31px;"/>
+        </g>
+        <g transform="matrix(0.4,0,0,0.316489,160,245.527)">
+            <rect x="100" y="130" width="100" height="20" style="stroke:black;stroke-width:2.77px;"/>
+        </g>
+        <g transform="matrix(0.6,0,0,1,100,69.7436)">
+            <rect x="100" y="130" width="100" height="20" style="fill:rgb(128,128,128);stroke:black;stroke-width:1.21px;"/>
+        </g>
+        <g transform="matrix(0.6,0,0,0.333511,100,249.644)">
+            <rect x="100" y="130" width="100" height="20" style="fill:rgb(128,128,128);stroke:black;stroke-width:2.06px;"/>
+        </g>
+        <g transform="matrix(1,0,0,1,60,-140)">
+            <rect x="220" y="180" width="120" height="20" style="fill:white;stroke:black;stroke-width:1px;"/>
+        </g>
+        <g transform="matrix(1,0,0,0.333333,60,220.08)">
+            <rect x="220" y="180" width="120" height="20" style="fill:white;stroke:black;stroke-width:1.34px;"/>
+        </g>
+        <g transform="matrix(0.666667,0,0,1,153.333,-59.7594)">
+            <rect x="220" y="180" width="120" height="20" style="stroke:black;stroke-width:1.18px;"/>
+        </g>
+        <g transform="matrix(0.666667,0,0,0.337744,153.833,225.953)">
+            <rect x="220" y="180" width="120" height="20" style="stroke:black;stroke-width:1.89px;"/>
+        </g>
+        <g transform="matrix(0.25,0,0,1,255,19.7436)">
+            <rect x="220" y="180" width="120" height="20" style="fill:rgb(128,128,128);stroke:black;stroke-width:1.37px;"/>
+        </g>
+        <g transform="matrix(0.25,0,0,0.32052,255,235.896)">
+            <rect x="220" y="180" width="120" height="20" style="fill:rgb(128,128,128);stroke:black;stroke-width:3.48px;"/>
+        </g>
+        <g transform="matrix(1,0,0,1,60,-140)">
+            <rect x="420" y="180" width="20" height="20" style="fill:white;stroke:black;stroke-width:1px;"/>
+        </g>
+        <g transform="matrix(1,0,0,1,60,-59.5206)">
+            <rect x="420" y="180" width="20" height="20" style="stroke:black;stroke-width:1px;"/>
+        </g>
+        <g transform="matrix(2.5,0,0,1,-600,19.7436)">
+            <rect x="420" y="180" width="20" height="20" style="fill:rgb(128,128,128);stroke:black;stroke-width:0.53px;"/>
+        </g>
+        <g transform="matrix(1,0,0,1,60,-140)">
+            <path d="M160,180L190,160L220,180" style="fill:none;stroke:black;stroke-width:1px;"/>
+        </g>
+        <g transform="matrix(1,0,0,1,80,-59.7594)">
+            <path d="M160,180L190,160L220,180" style="fill:none;stroke:black;stroke-width:1px;"/>
+        </g>
+        <g transform="matrix(1.5,0,0,1,-20,19.7436)">
+            <path d="M160,180L190,160L220,180" style="fill:none;stroke:black;stroke-width:0.78px;"/>
+        </g>
+        <g transform="matrix(0.666667,0,0,1,133.333,99.549)">
+            <path d="M160,180L190,160L220,180" style="fill:none;stroke:black;stroke-width:1.18px;"/>
+        </g>
+        <g transform="matrix(1,0,0,1,60,-140)">
+            <path d="M340,180L380,160L420,180" style="fill:none;stroke:black;stroke-width:1px;"/>
+        </g>
+        <g transform="matrix(1.25,0,0,1,-45,-59.7594)">
+            <path d="M340,180L380,160L420,180" style="fill:none;stroke:black;stroke-width:0.88px;"/>
+        </g>
+        <g transform="matrix(1.375,0,0,1,-127.5,19.7436)">
+            <path d="M340,180L380,160L420,180" style="fill:none;stroke:black;stroke-width:0.83px;"/>
+        </g>
+        <g transform="matrix(0.625,0,0,1,187.5,100.08)">
+            <path d="M340,180L380,160L420,180" style="fill:none;stroke:black;stroke-width:1.2px;"/>
+        </g>
+        <g transform="matrix(1,0,0,1,60,-160)">
+            <g transform="matrix(12,0,0,12,137.201,234.2)">
+            </g>
+            <text x="122.799px" y="234.2px" style="font-family:'CourierNewPSMT', 'Courier New', monospace;font-size:12px;">30</text>
+        </g>
+        <g transform="matrix(1,0,0,1,60,-199.152)">
+            <g transform="matrix(12,0,0,12,133.601,234.2)">
+            </g>
+            <text x="126.399px" y="234.2px" style="font-family:'CourierNewPS-BoldMT', 'Courier New', monospace;font-weight:700;font-size:12px;">A</text>
+        </g>
+        <g transform="matrix(1,0,0,1,90,-79.5206)">
+            <g transform="matrix(12,0,0,12,137.201,234.2)">
+            </g>
+            <text x="122.799px" y="234.2px" style="font-family:'CourierNewPSMT', 'Courier New', monospace;font-size:12px;">20</text>
+        </g>
+        <g transform="matrix(1,0,0,1,90,-120)">
+            <g transform="matrix(12,0,0,12,133.601,234.2)">
+            </g>
+            <text x="126.399px" y="234.2px" style="font-family:'CourierNewPS-BoldMT', 'Courier New', monospace;font-weight:700;font-size:12px;">D</text>
+        </g>
+        <g transform="matrix(1,0,0,1,60,-5.68434e-14)">
+            <g transform="matrix(12,0,0,12,137.201,234.2)">
+            </g>
+            <text x="122.799px" y="234.2px" style="font-family:'CourierNewPSMT', 'Courier New', monospace;font-size:12px;">30</text>
+        </g>
+        <g transform="matrix(1,0,0,1,60,-40.4794)">
+            <g transform="matrix(12,0,0,12,133.601,234.2)">
+            </g>
+            <text x="126.399px" y="234.2px" style="font-family:'CourierNewPS-BoldMT', 'Courier New', monospace;font-weight:700;font-size:12px;">G</text>
+        </g>
+        <g transform="matrix(1,0,0,1,70,80)">
+            <g transform="matrix(12,0,0,12,137.201,234.2)">
+            </g>
+            <text x="122.799px" y="234.2px" style="font-family:'CourierNewPSMT', 'Courier New', monospace;font-size:12px;">40</text>
+        </g>
+        <g transform="matrix(1,0,0,1,70,39.5205)">
+            <g transform="matrix(12,0,0,12,133.601,234.2)">
+            </g>
+            <text x="126.399px" y="234.2px" style="font-family:'CourierNewPS-BoldMT', 'Courier New', monospace;font-weight:700;font-size:12px;">J</text>
+        </g>
+        <g transform="matrix(1,0,0,1,195.264,-5.68434e-14)">
+            <g transform="matrix(12,0,0,12,137.201,234.2)">
+            </g>
+            <text x="122.799px" y="234.2px" style="font-family:'CourierNewPSMT', 'Courier New', monospace;font-size:12px;">15</text>
+        </g>
+        <g transform="matrix(1,0,0,1,195.264,-40.4794)">
+            <g transform="matrix(12,0,0,12,133.601,234.2)">
+            </g>
+            <text x="126.399px" y="234.2px" style="font-family:'CourierNewPS-BoldMT', 'Courier New', monospace;font-weight:700;font-size:12px;">H</text>
+        </g>
+        <g transform="matrix(1,0,0,1,210,80)">
+            <g transform="matrix(12,0,0,12,137.201,234.2)">
+            </g>
+            <text x="122.799px" y="234.2px" style="font-family:'CourierNewPSMT', 'Courier New', monospace;font-size:12px;">60</text>
+        </g>
+        <g transform="matrix(1,0,0,1,210,39.5205)">
+            <g transform="matrix(12,0,0,12,133.601,234.2)">
+            </g>
+            <text x="126.399px" y="234.2px" style="font-family:'CourierNewPS-BoldMT', 'Courier New', monospace;font-weight:700;font-size:12px;">K</text>
+        </g>
+        <g transform="matrix(1,0,0,1,210,-160)">
+            <g transform="matrix(12,0,0,12,137.201,234.2)">
+            </g>
+            <text x="122.799px" y="234.2px" style="font-family:'CourierNewPSMT', 'Courier New', monospace;font-size:12px;">60</text>
+        </g>
+        <g transform="matrix(1,0,0,1,210,-199.152)">
+            <g transform="matrix(12,0,0,12,133.601,234.2)">
+            </g>
+            <text x="126.399px" y="234.2px" style="font-family:'CourierNewPS-BoldMT', 'Courier New', monospace;font-weight:700;font-size:12px;">B</text>
+        </g>
+        <g transform="matrix(1,0,0,1,210,-79.5206)">
+            <g transform="matrix(12,0,0,12,137.201,234.2)">
+            </g>
+            <text x="122.799px" y="234.2px" style="font-family:'CourierNewPSMT', 'Courier New', monospace;font-size:12px;">40</text>
+        </g>
+        <g transform="matrix(1,0,0,1,210,-120)">
+            <g transform="matrix(12,0,0,12,133.601,234.2)">
+            </g>
+            <text x="126.399px" y="234.2px" style="font-family:'CourierNewPS-BoldMT', 'Courier New', monospace;font-weight:700;font-size:12px;">E</text>
+        </g>
+        <g transform="matrix(1,0,0,1,360,-160)">
+            <g transform="matrix(12,0,0,12,137.201,234.2)">
+            </g>
+            <text x="122.799px" y="234.2px" style="font-family:'CourierNewPSMT', 'Courier New', monospace;font-size:12px;">10</text>
+        </g>
+        <g transform="matrix(1,0,0,1,360,-199.152)">
+            <g transform="matrix(12,0,0,12,133.601,234.2)">
+            </g>
+            <text x="126.399px" y="234.2px" style="font-family:'CourierNewPS-BoldMT', 'Courier New', monospace;font-weight:700;font-size:12px;">C</text>
+        </g>
+        <g transform="matrix(1,0,0,1,360,-79.5206)">
+            <g transform="matrix(12,0,0,12,137.201,234.2)">
+            </g>
+            <text x="122.799px" y="234.2px" style="font-family:'CourierNewPSMT', 'Courier New', monospace;font-size:12px;">10</text>
+        </g>
+        <g transform="matrix(1,0,0,1,360,-120)">
+            <g transform="matrix(12,0,0,12,133.601,234.2)">
+            </g>
+            <text x="126.399px" y="234.2px" style="font-family:'CourierNewPS-BoldMT', 'Courier New', monospace;font-weight:700;font-size:12px;">F</text>
+        </g>
+        <g transform="matrix(1,0,0,1,340,-5.68434e-14)">
+            <g transform="matrix(12,0,0,12,142.201,234.2)">
+            </g>
+            <text x="127.799px" y="234.2px" style="font-family:'CourierNewPSMT', 'Courier New', monospace;font-size:12px;">30</text>
+        </g>
+        <g transform="matrix(1,0,0,1,340,-40.4794)">
+            <g transform="matrix(12,0,0,12,138.601,234.2)">
+            </g>
+            <text x="131.399px" y="234.2px" style="font-family:'CourierNewPS-BoldMT', 'Courier New', monospace;font-weight:700;font-size:12px;">I</text>
+        </g>
+        <g transform="matrix(1,0,0,1,340,80)">
+            <g transform="matrix(12,0,0,12,142.201,234.2)">
+            </g>
+            <text x="127.799px" y="234.2px" style="font-family:'CourierNewPSMT', 'Courier New', monospace;font-size:12px;">30</text>
+        </g>
+        <g transform="matrix(1,0,0,1,340,39.5205)">
+            <g transform="matrix(12,0,0,12,138.601,234.2)">
+            </g>
+            <text x="131.399px" y="234.2px" style="font-family:'CourierNewPS-BoldMT', 'Courier New', monospace;font-weight:700;font-size:12px;">L</text>
+        </g>
+        <g transform="matrix(1,0,0,1,-60,-180)">
+            <g transform="matrix(12,0,0,12,166.414,394.2)">
+            </g>
+            <text x="80px" y="394.2px" style="font-family:'CourierNewPS-BoldMT', 'Courier New', monospace;font-weight:700;font-size:12px;">Transcript 3</text>
+        </g>
+        <g transform="matrix(1,0,0,1,-60,-99.7692)">
+            <g transform="matrix(12,0,0,12,137.609,394.2)">
+            </g>
+            <text x="80px" y="394.2px" style="font-family:'CourierNewPS-BoldMT', 'Courier New', monospace;font-weight:700;font-size:12px;">Chimaera</text>
+        </g>
+        <g transform="matrix(1,0,0,1,-60,-259.751)">
+            <g transform="matrix(12,0,0,12,166.414,394.2)">
+            </g>
+            <text x="80px" y="394.2px" style="font-family:'CourierNewPS-BoldMT', 'Courier New', monospace;font-weight:700;font-size:12px;">Transcript 2</text>
+        </g>
+        <g transform="matrix(1,0,0,1,-60,-339.425)">
+            <g transform="matrix(12,0,0,12,166.414,394.2)">
+            </g>
+            <text x="80px" y="394.2px" style="font-family:'CourierNewPS-BoldMT', 'Courier New', monospace;font-weight:700;font-size:12px;">Transcript 1</text>
+        </g>
+    </g>
+</svg>
