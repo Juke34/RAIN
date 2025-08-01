@@ -1,7 +1,7 @@
 import numpy as np
 from numpy.typing import NDArray
 from typing import TextIO, Optional
-from utils import SiteVariantData, NUC_STR_TO_IND, EDIT_TYPES, NONEDIT_TYPES
+from utils import RNASiteVariantData, NUC_STR_TO_IND, OUTPUT_PAIRING_TYPES, NONEDIT_TYPES
 from abc import ABC, abstractmethod
 import logging
 import sys
@@ -25,23 +25,29 @@ def skip_comments(handle: TextIO, s: str) -> Optional[str]:
     return line
 
 
-class RNAVariantReader(ABC):
-    """Abstract class defining the API for readers"""
+class RNASiteVariantReader(ABC):
+    """
+    Abstract class defining the API for readers
+
+    Readers parse the input from a site-wise RNA variant file (e.g. from Reditools or Jacusa2) and return RNASiteVariantData objects.
+
+    The methods are modelled after the generic Python interface for reading files
+    """
 
     @abstractmethod
     def __init__(self, file_handle: TextIO) -> None:
         pass
 
     @abstractmethod
-    def read(self) -> Optional[SiteVariantData]:
+    def read(self) -> Optional[RNASiteVariantData]:
         """Return the next site variant data entry"""
         pass
 
     @abstractmethod
-    def seek_record(self, record_id: str) -> Optional[SiteVariantData]:
+    def seek_record(self, record_id: str) -> Optional[RNASiteVariantData]:
         """Return the next site variant data entry that matches a given record ID."""
         # Slow fallback method.
-        svdata: Optional[SiteVariantData] = self.read()
+        svdata: Optional[RNASiteVariantData] = self.read()
         while svdata and svdata.seqid != record_id:
             svdata = self.read()
 
@@ -56,8 +62,14 @@ class RNAVariantReader(ABC):
         pass
 
 
-class TestReader(RNAVariantReader):
-    def __init__(self, strand: int, edit: str) -> None:
+class TestRNASiteVariantReader(RNASiteVariantReader):
+    """
+    Special reader that can be used for testing. At every genomic position, it returns an RNASiteVariantData with only one read of one type of base pairing, always on the same strand.
+
+    It is still unused in the current implementation of pluviometer.
+    """
+
+    def __init__(self, strand: int, pairing: str) -> None:
         """Create a TestReader that returns SiteVariantData objects with only one read for one type of edition.
         Arguments:
         - strand: Strand of the simulated features
@@ -65,16 +77,16 @@ class TestReader(RNAVariantReader):
         """
         self.position: int = 0
         self.strand:int = strand
-        assert edit in EDIT_TYPES + NONEDIT_TYPES
-        self.reference: int = NUC_STR_TO_IND.get(edit[0], 4)
-        self.edited: str = edit[1]
-        self.frequencies: NDArray[np.int32] = np.zeros(5, dtype=np.int32)
+        assert pairing in OUTPUT_PAIRING_TYPES + NONEDIT_TYPES
+        self.reference: int = NUC_STR_TO_IND.get(pairing[0], 4)
+        self.edited: str = pairing[1]
+        self.frequencies: NDArray[np.int64] = np.zeros(5, dtype=np.int64)
         self.frequencies[NUC_STR_TO_IND.get(self.edited, 4)] = 1
 
         return None
 
-    def read(self) -> Optional[SiteVariantData]:
-        data = SiteVariantData(
+    def read(self) -> Optional[RNASiteVariantData]:
+        data = RNASiteVariantData(
             seqid="test",
             position=self.position,
             reference=self.reference,
@@ -92,7 +104,9 @@ class TestReader(RNAVariantReader):
         pass
 
 
-class ReditoolsXReader(RNAVariantReader):
+class ReditoolsXReader(RNASiteVariantReader):
+    """Abstract base class defining common methods for the readers for the Reditools2 and Reditools3 formats"""
+
     header_strings = (
         "Region",
         "Position",
@@ -126,6 +140,7 @@ class ReditoolsXReader(RNAVariantReader):
         return None
 
     def _get_parts(self, line: str) -> None:
+        """Divide the input line into string parts"""
         self.parts: list[str] = [s.strip() for s in line.split("\t")]
 
         return None
@@ -148,14 +163,16 @@ class ReditoolsXReader(RNAVariantReader):
         return None
     
     def parse_strand(self):
+        """The strand character differs between Reditools2 and Reditools3 formats. This method has to be implemented in the specialized readers for each format"""
         pass
 
-    def _parse_parts(self) -> SiteVariantData:
+    def _parse_parts(self) -> RNASiteVariantData:
+        """Create RNASiteVariantData object from the pre-processed part strings from the input line"""
         strand = self.parse_strand()
             
         reference_nuc_str: str = self.parts[REDITOOLS_FIELD_INDEX["Reference"]]
         
-        return SiteVariantData(
+        return RNASiteVariantData(
             seqid=self.parts[REDITOOLS_FIELD_INDEX["Seqid"]],
             position=int(self.parts[REDITOOLS_FIELD_INDEX["Position"]]) - 1,    # Convert Reditools 1-based index to Python's 0-based index
             reference=NUC_STR_TO_IND.get(reference_nuc_str, 4),
@@ -166,8 +183,10 @@ class ReditoolsXReader(RNAVariantReader):
             score=0.0
         )
     
-    def seek_record(self, record_id: str) -> Optional[SiteVariantData]:
-        # Similar to reading in a while loop, but skipping the parsing
+    def seek_record(self, record_id: str) -> Optional[RNASiteVariantData]:
+        """Skip lines until the Seqid in the input file matches the record_id string, then return the RNASiteVariantData from that first matching line"""
+        
+        # Similar to just doing self.read() in a while loop, but faster by skipping the parsing
 
         line = self.file_handle.readline()
         
@@ -191,7 +210,7 @@ class ReditoolsXReader(RNAVariantReader):
         return self._parse_parts()
 
 
-    def read(self) -> Optional[SiteVariantData]:
+    def read(self) -> Optional[RNASiteVariantData]:
         """Read the data of the next variant site"""
         line = self.file_handle.readline()
 
@@ -233,18 +252,19 @@ class Reditools3Reader(ReditoolsXReader):
             case _:
                 raise Exception(f"Invalid strand value: {strand_str}")
 
-class Jacusa2Reader(RNAVariantReader):
+class Jacusa2Reader(RNASiteVariantReader):
     def __init__(self, file_handle: TextIO) -> None:
         self.file_handle: TextIO = file_handle
 
         line = skip_comments(self.file_handle, "##")
 
         # Check the Jacusa header
+        assert line
         assert line.strip().lstrip('#').split('\t') == JACUSA_FIELDS
         
         return None
     
-    def _read(self, parts: list[str]) -> Optional[SiteVariantData]:
+    def _read(self, parts: list[str]) -> Optional[RNASiteVariantData]:
         reference_nuc_str: str = parts[JACUSA_FIELDS_INDEX["ref"]]
 
         strand_str: str = parts[JACUSA_FIELDS_INDEX["strand"]]
@@ -257,9 +277,10 @@ class Jacusa2Reader(RNAVariantReader):
             case '-':
                 strand = -1
 
-        frequencies=np.int32(parts[JACUSA_FIELDS_INDEX["bases11"]].split(',') + [0])
+        # The following seems to be the fastest way to generate an np.int64 array, but Pylance doesn't like it
+        frequencies: NDArray = np.int64(parts[JACUSA_FIELDS_INDEX["bases11"]].split(',') + [0])
         
-        return SiteVariantData(
+        return RNASiteVariantData(
             seqid=parts[JACUSA_FIELDS_INDEX["contig"]],
             position=int(parts[JACUSA_FIELDS_INDEX["start"]]),  # Jacusa2 position is 0-based
             reference=NUC_STR_TO_IND[reference_nuc_str],
@@ -270,7 +291,7 @@ class Jacusa2Reader(RNAVariantReader):
             score=float(parts[JACUSA_FIELDS_INDEX["score"]])
         )
     
-    def read(self) -> Optional[SiteVariantData]:
+    def read(self) -> Optional[RNASiteVariantData]:
         line: str = self.file_handle.readline().strip()
 
         if line == "":
@@ -280,7 +301,7 @@ class Jacusa2Reader(RNAVariantReader):
         
         return self._read(parts)
     
-    def seek_record(self, record_id) -> Optional[SiteVariantData]:
+    def seek_record(self, record_id) -> Optional[RNASiteVariantData]:
         line: str = self.file_handle.readline().strip()
 
         if line == "":

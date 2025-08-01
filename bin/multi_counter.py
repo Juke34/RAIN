@@ -1,7 +1,7 @@
-from utils import SiteVariantData
+from utils import RNASiteVariantData
 import numpy as np
 from numpy.typing import NDArray
-from SiteFilter import SiteFilter
+from site_filter import SiteFilter
 from typing import TextIO
 
 class MultiCounter:
@@ -12,7 +12,7 @@ class MultiCounter:
         Tallies of the numbers of reads per edit type
         This is a numpy matrix where the rows represent the reference base and the columns the edited base
         Rows and column indices correspond to bases in alphabetic order (ACGT)
-        Row-columns corresponding to the same base (e.g. (0,0) -> (A,A)) do not represent edits, and should remain 0
+        Row-columns corresponding to the same base (e.g. (0,0) -> (A,A)) represent reads where the base is unchanged
         """
         self.edit_read_freqs: NDArray[np.int64] = np.zeros((5, 5), dtype=np.int64)
         self.edit_site_freqs: NDArray[np.int64] = np.zeros((5, 5), dtype=np.int64)
@@ -23,7 +23,7 @@ class MultiCounter:
 
         return None
 
-    def update(self, variant_data: SiteVariantData) -> None:
+    def update(self, variant_data: RNASiteVariantData) -> None:
         """Increment the counters from the data in a SiteVariantData object."""
         i: int = variant_data.reference
 

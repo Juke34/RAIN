@@ -1,5 +1,11 @@
 #!/usr/bin/env sh
 
+# Get counts of A->G and C->T edits per contig/chromosome in a Reditools or Jacusa2 (extended BED format) output file
+# This is a useful way to make quick checks of the more complex output of pluviometer.py
+# Usage:
+# sh quickstats.sh -i <INPUT FILE> -f <FORMAT>
+# FORMAT can be either "jacusa2" or "reditools" (works for Reditools2 and Reditools3)
+
 input=""
 format=""
 

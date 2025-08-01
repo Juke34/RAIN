@@ -1,211 +1,34 @@
-![GitHub CI](https://github.com/Juke34/RAIN/actions/workflows/main.yml/badge.svg)
+# Pluviometer documentation
 
-# RAIN - RNA Alterations Investigation using Nextflow
-
-RAIN is a Nextflow workflow designed for epitranscriptomic analyses, enabling the detection of RNA modifications in comparison to a reference genome.
-Its primary goal is to distinguish true RNA editing events from genomic variants such as SNPs, with a particular emphasis on identifying A-to-I (Adenosine-to-Inosine) editing.
-
-<img src="doc/img/IRD.png" width="300" height="100" /> <img src="doc/img/MIVEGEC.png" width="150" height="100" />
-
-## Table of Contents
-
-- [RAIN - RNA Alterations Investigation using Nextflow](#rain---rna-alterations-investigation-using-nextflow)
-  - [Table of Contents](#table-of-contents)
-  - [Foreword](#foreword)
-  - [Flowchart](#flowchart)
-  - [Installation](#installation)
-    - [Nextflow](#nextflow)
-    - [Container platform](#container-platform)
-    - [Docker](#docker)
-    - [Singularity](#singularity)
-  - [Usage](#usage)
-    - [Help](#help)
-    - [Profile](#profile)
-    - [Test](#test)
-  - [Parameters](#parameters)
-  - [Output](#output)
-    - [Feature file](#feature-file)
-  - [Aggregate file](#aggregate-file)
-    - [Aggregation modes](#aggregation-modes)
-    - [Genome and chromosome/contig aggregates](#genome-and-chromosomecontig-aggregates)
-  - [Computing editing levels from the base pairing lists](#computing-editing-levels-from-the-base-pairing-lists)
-  - [Author and contributors](#author-and-contributors)
-  - [Contributing](#contributing)
-
-
-## Foreword
-
-...
-
-## Flowchart
-
-...
-
-## Installation
-
-The prerequisites to run the pipeline are:  
-
-  * [Nextflow](https://www.nextflow.io/)  >= 22.04.0
-  * [Docker](https://www.docker.com) or [Singularity](https://sylabs.io/singularity/)  
-
-### Nextflow 
-
-  * Via conda 
-
-    <details>
-      <summary>See here</summary>
-      
-      ```bash
-      conda create -n nextflow
-      conda activate nextflow
-      conda install bioconda::nextflow
-      ```  
-    </details>
-
-  * Manually
-    <details>
-      <summary>See here</summary>
-      Nextflow runs on most POSIX systems (Linux, macOS, etc) and can typically be installed by running these commands:
-
-      ```bash
-      # Make sure 11 or later is installed on your computer by using the command:
-      java -version
-      
-      # Install Nextflow by entering this command in your terminal(it creates a file nextflow in the current dir):
-      curl -s https://get.nextflow.io | bash 
-      
-      # Add Nextflow binary to your user's PATH:
-      mv nextflow ~/bin/
-      # OR system-wide installation:
-      # sudo mv nextflow /usr/local/bin
-      ```
-    </details>
-
-### Container platform
-
-To run the workflow you will need a container platform: docker or singularity.
-
-### Docker
-
-Please follow the instructions at the [Docker website](https://docs.docker.com/desktop/)
-
-### Singularity
-
-Please follow the instructions at the [Singularity website](https://docs.sylabs.io/guides/latest/admin-guide/installation.html)
+Pluviometer is the Python script that quantifies the absolute editing activity at different levels of genome sequence organization. It takes RNA variant calling output files from programs such as Jacusa2 and Reditools, and a GFF3 file with descriptions of genome features.
 
 ## Usage
 
-### Help
+```txt
+usage: pluviometer.py [-h] --sites SITES --gff GFF [--output OUTPUT] [--format {reditools2,reditools3,jacusa2,sapin}] [--cov COV]
+                      [--edit_threshold EDIT_THRESHOLD] [--aggregation_mode {all,cds_longest}] [-t THREADS] [--progress]
 
-You can first check the available options and parameters by running:
+Rain counter
 
-```bash
-nextflow run Juke34/RAIN -r v1.5.0 --help
-```
-
-### Profile
-
-To run the workflow you must select a profile according to the container platform you want to use:   
-- `singularity`, a profile using Singularity to run the containers
-- `docker`, a profile using Docker to run the containers
-
-The command will look like that: 
-
-```bash
-nextflow run Juke34/RAIN -r vX.X.X -profile docker <rest of paramaters>
-```
-
-Another profile is available (/!\\ actually not yet implemented):
-
-- `slurm`, to add if your system has a slurm executor (local by default) 
-
-The use of the `slurm` profile  will give a command like this one:
-
-```bash
-nextflow run Juke34/RAIN -r vX.X.X -profile singularity,slurm <rest of paramaters>
-```
-
-### Test
-
-With nextflow and docker available you can run (where vX.X.X is the release version you wish to use):
-
-```bash
-nextflow run -profile docker,test Juke34/RAIN -r vX.X.X
-```
-
-Or via a clone of the repository: 
-
-```
-git clone https://github.com/Juke34/rain.git
-cd rain
-nextflow run -profile docker,test rain.nf
-```
-
-## Parameters
-
-```
-RAIN - RNA Alterations Investigation using Nextflow - v0.1
-
-        Usage example:
-    nextflow run rain.nf -profile docker --genome /path/to/genome.fa --annotation /path/to/annotation.gff3 --reads /path/to/reads_folder --output /path/to/output --aligner hisat2
-
-        Parameters:
-    --help                      Prints the help section
-
-        Input sequences:
-    --annotation                Path to the annotation file (GFF or GTF)
-    --reads                     path to the reads file, folder or csv. If a folder is provided, all the files with proper extension in the folder will be used. You can provide remote files (commma separated list).
-                                    file extension expected : <.fastq.gz>, <.fq.gz>, <.fastq>, <.fq> or <.bam>. 
-                                                              for paired reads extra <_R1_001> or <_R2_001> is expected where <R> and <_001> are optional. e.g. <sample_id_1.fastq.gz>, <sample_id_R1.fastq.gz>, <sample_id_R1_001.fastq.gz>)
-                                    csv input expects 6 columns: sample, fastq_1, fastq_2, strandedness and read_type. 
-                                    fastq_2 is optional and can be empty. Strandedness, read_type expects same values as corresponding RAIN parameter; If a value is provided via RAIN paramter, it will override the value in the csv file.
-                                    Example of csv file:
-                                        sample,fastq_1,fastq_2,strandedness,read_type
-                                        control1,path/to/data1.fastq.bam,,auto,short_single
-                                        control2,path/to/data2_R1.fastq.gz,path/to/data2_R2.fastq.gz,auto,short_paired
-    --genome                    Path to the reference genome in FASTA format.
-    --read_type                 Type of reads among this list [short_paired, short_single, pacbio, ont] (no default)
-
-        Output:
-    --output                    Path to the output directory (default: result)
-
-       Optional input:
-    --aligner                   Aligner to use [default: hisat2]
-    --edit_site_tool            Tool used for detecting edited sites. Default: reditools3
-    --strandedness              Set the strandedness for all your input reads (default: null). In auto mode salmon will guess the library type for each fastq sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
-    --edit_threshold            Minimal number of edited reads to count a site as edited (default: 1)
-    --aggregation_mode          Mode for aggregating edition counts mapped on genomic features. See documentation for details. Options are: "all" (default) or "cds_longest"
-    --clipoverlap               Clip overlapping sequences in read pairs to avoid double counting. (default: false)
-
-        Nextflow options:
-    -profile                    Change the profile of nextflow both the engine and executor more details on github README [debug, test, itrop, singularity, local, docker]
+options:
+  -h, --help            show this help message and exit
+  --sites SITES, -s SITES
+                        File containing per-site base alteration data
+  --gff GFF, -g GFF     Reference genome annotations (GFF3 file)
+  --output OUTPUT, -o OUTPUT
+                        Prefix for the names of the output files
+  --format {reditools2,reditools3,jacusa2,sapin}, -f {reditools2,reditools3,jacusa2,sapin}
+                        Sites file format
+  --cov COV, -c COV     Site coverage threshold for counting editions
+  --edit_threshold EDIT_THRESHOLD, -T EDIT_THRESHOLD
+                        Minimum number of edited reads for counting a site as edited
+  -t THREADS, --threads THREADS
+                        Number of threads (actually, processes) to use for parallel computing
+  --progress            Display progress bar
 ```
 
 ## Output
 
-Here the description of typical ouput you will get from RAIN:  
-
-```
-└── rain_results                                         # Output folder set using --outdir. Default: <alignment_results>
-    │
-    ├── AliNe                                            # Folder containing AliNe alignment pipeline result (see https://github.com/Juke34/AliNe)
-    │   ├── alignment                                    # bam alignment used by RAIN
-    │   ├── salmon_strandedness                          # strandedness collected by AliNe in case auto mode was in used for fastq files
-    │   └── ...      
-    │
-    ├── bam_indicies                                     # bam and indices bam.bai
-    │
-    ├── FastQC                                           # bam and indices bam.bai
-    │
-    ├── gatk_markduplicates                              # metrics and bam after markduplicates
-    │
-    └── Reditools2/Reditools3/Jacusa/sapin/              # Editing output from corresponding tool
-    │
-    └── feature_edits                                    # Editing computed at different level (genomic features, chromosome, global)
-```
-
-<details>
-<summary>More details about the output format</summary>
 Pluviometer produces an output file for features (features.tsv) and another for aggregates (aggregates.tsv), plus a log file called pluviometer.log. The `--output` option can be used to add prefixes to the file names.
 
 The two output formats are tables of comma-separated values with a header.
@@ -229,7 +52,7 @@ The two output formats are tables of comma-separated values with a header.
 > [!note]
 > The number of **CoveredSites** can be higher than the sum of **SiteBasePairings** because of the presence of ambiguous bases (e.g. N)
 
-An example of the feature output format is shown below, with some alterations to make the text line up in columns.
+An example of the feature output format is shown below (with some alterations to make the text line up in columns).
 
 ```txt
 SeqID  ParentIDs                                         FeatureID                   Type                    Start   End     Strand  CoveredSites  GenomeBases              SiteBasePairings                                                         ReadBasePairings
@@ -243,9 +66,6 @@ SeqID  ParentIDs                                         FeatureID              
 21  .,gene:ENSG00000237735,transcript:ENST00000444868  ENSE00001602968             exon                    815622  815688  -1                67  31,10,17,9               31,0,0,0,0,10,0,0,0,1,17,0,0,0,0,9                                       357,0,0,0,0,122,0,0,0,8,199,0,0,0,0,108
 
 ```
-
-> [!warning]
-> The numbers in the output format examples shown here are just for demonstration. They do not come from empirical data.
 
 The hierarchical relationships between features can be recovered from the fields in the **ParentIDs** column. The output snippet above matches the following hierarchy (recall that `.` represents the "root", i.e. the chromosome or contig).
 
@@ -303,35 +123,35 @@ The existence of alternative transcripts of a same gene causes some complication
 
 3. **Chimaera** (*Chimaera* in the figure): Report the counts from the union of feature ranges over all the isoforms. Its ID is composed of the ID of the gene plus "-chimaera". The aggregation types of chimaeras are postfixed with "-chimaera" as well.
 
-In the example below, a gene has three transcripts. For the **longest isoform** aggregation, Transcript 1 would be selected, because it has the greatest sum of exon lengths (numbers under the exon boxes). For the **all isoforms** aggregation, all the transcripts (1, 2, and 3) would be used. For **chimaera** aggregation, the aggregation ranges are the union of the ranges of the exons of all the transcripts. Therefore, the total length of the chimaeric features is always equal ot greater than the longest transcript.
+In the example below, a gene has three transcripts. For the **longest isoform** aggregation, Transcript 1 would be selected, because it has the greatest sum of exon lengths (numbers under the exon boxes). For the **all isoforms** aggregation, all the transcripts would be used. For **chimaera** aggregation, the aggregation ranges are the union of the ranges of the exons of all the transcripts. Therefore, the total length of the chimaeric features is always equal ot greater than the longest transcript.
 
-![alt text](doc/img/aggregation_modes.png)
+![alt text](img/aggregation_modes.png)
 
 
 Chromosomes and genomes also have an **all sites** aggregation mode that simply counts variants over all the sites ignoring all the other features.
 
+
+### Base lists and base pairing lists
+
+The fields **GenomeBases**, **SiteBasePairings**, and **ReadBasePairings** are common to the feature file and the aggregate file. They contain frequencies of bases (**GenomeBases**) or pairings of genome bases and mapped bases of RNA variants (**SiteBasePairings** and **ReadBasePairings**), encoded as lists of comma-separated integers.
+
+In **GenomeBases**, the base frequencies in the list are reported in the order A, C, G, T. The lists **SiteBasePairings** and **ReadBasePairings** contain 16 values, representing all the possible pairings between a base in the genome and a mapped base in an RNA variant. The pairings are in the following order:
+
+| 1   | 2   | 3   | 4   | 5   | 6   | 7   | 8   | 9   | 10  | 11  | 12  | 13  | 14  | 15  | 16  |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| AA  | AC  | AG  | AT  | CA  | CC  | CG  | CT  | GA  | GC  | GG  | GT  | TA  | TC  | TG  | TT  |
+
+> [!note]
+> When writing scripts for post-processing the output of Pluviometer, it can be useful to bear in mind that the indices of the pairings in the list are derived from a matrix where each row represents a base in the genome and each column represents the mapped base of an RNA variant.
+>
+> |   | A  | C  | G  | T  |
+> |---|----|----|----|----|
+> | **A** |  1 |  2 |  3 |  4 |
+> | **C** |  5 |  6 |  7 |  8 |
+> | **G** |  9 | 10 | 11 | 12 |
+> | **T** | 13 | 14 | 15 | 16 |
+
 ### Genome and chromosome/contig aggregates
-
-Aggregatation follows the same logic for chromosomes/contigs and the entire genome. The main difference is that the aggregates of a chromsosome/contig have a SeqID, but no parent IDs (represented with just a `.`) and no feature IDs (represented with just a `.`). See the example below with aggregates of chromosome 21:
-
-````txt
-SeqID	 ParentIDs             	 FeatureID                                 	 ParentType	 AggregateType	 AggregationMode	 CoveredSites	 GenomeBases                	 SiteBasePairings                                                                       	 ReadBasePairings
-
-21   	 .                     	 .                                         	 .         	 exon         	 longest_isoform	         8884	 2874,1621,1613,2776        	 2868,11,20,18,9,1619,8,10,9,10,1608,11,17,52,18,2763                                   	 19234,43,72,58,22,11322,31,40,30,56,11248,49,60,113,108,18070
-21   	 .                     	 .                                         	 .         	 exon         	 all_isoforms   	        19064	 5995,3466,3520,6083        	 5980,23,45,39,12,3462,23,16,18,20,3507,28,40,110,37,6055                               	 41820,74,210,146,28,24433,70,50,81,108,25400,147,145,238,207,41714
-21   	 .                     	 .                                         	 .         	 exon-chimaera	 chimaera       	        11853	 3742,2228,2188,3695        	 3733,15,26,24,10,2225,14,12,11,11,2181,15,24,65,23,3680                                	 25416,54,108,76,24,15487,48,42,41,62,15398,73,85,136,133,24713
-21   	 .                     	 .                                         	 .         	 .            	 all_sites      	       999437	 330327,177650,176540,314920	 329214,1950,1986,1989,1170,177038,1036,1054,1006,1030,175968,1142,1868,6373,1848,313853	 2409166,7937,7754,7884,4656,1297210,4261,4149,4087,4215,1287279,4302,7457,15760,7686,2293932
-````
-
-The genome-level aggregates are marked the same way, but because they represent the total of all chromosomes/contigs, the **SeqID** field is just a `.`. Like so:
-
-````txt
-SeqID	 ParentIDs             	 FeatureID                                 	 ParentType	 AggregateType	 AggregationMode	 CoveredSites	 GenomeBases                	 SiteBasePairings                                                                       	 ReadBasePairings
-.    	 .                     	 .                                         	 .         	 exon         	 longest_isoform	         8884	 2874,1621,1613,2776        	 2868,11,20,18,9,1619,8,10,9,10,1608,11,17,52,18,2763                                   	 19234,43,72,58,22,11322,31,40,30,56,11248,49,60,113,108,18070
-.    	 .                     	 .                                         	 .         	 exon         	 all_isoforms   	        19064	 5995,3466,3520,6083        	 5980,23,45,39,12,3462,23,16,18,20,3507,28,40,110,37,6055                               	 41820,74,210,146,28,24433,70,50,81,108,25400,147,145,238,207,41714
-.    	 .                     	 .                                         	 .         	 exon-chimaera	 chimaera       	        11853	 3742,2228,2188,3695        	 3733,15,26,24,10,2225,14,12,11,11,2181,15,24,65,23,3680                                	 25416,54,108,76,24,15487,48,42,41,62,15398,73,85,136,133,24713
-.    	 .                     	 .                                         	 .         	 .            	 all_sites      	       999437	 330327,177650,176540,314920	 329214,1950,1986,1989,1170,177038,1036,1054,1006,1030,175968,1142,1868,6373,1848,313853	 2409166,7937,7754,7884,4656,1297210,4261,4149,4087,4215,1287279,4302,7457,15760,7686,2293932
-````
 
 ## Computing editing levels from the base pairing lists
 
@@ -340,15 +160,3 @@ The editing level (Bazak et al. 2014) of a feature or feature aggregate can be e
 $$
 AG\ editing\ level = \sum_{i=0}^{n} \dfrac{AG_i}{AA_i + AC_i + AG_i + AT_i}
 $$
-
-</details>
-
-
-## Author and contributors
-
-Eduardo Ascarrunz (@eascarrunz)  
-Jacques Dainat  (@Juke34)
-
-## Contributing
-
-Contributions from the community are welcome ! See the [Contributing guidelines](https://github.com/Juke34/rain/blob/main/CONTRIBUTING.md)

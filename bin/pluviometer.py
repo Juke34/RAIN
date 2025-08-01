@@ -1,20 +1,20 @@
 #!/usr/bin/env python
-from RainFileWriters import FeatureFileWriter, AggregateFileWriter
+from rain_file_writers import FeatureFileWriter, AggregateFileWriter
 from typing import Any, Optional, Generator, Callable, TextIO
 from Bio.SeqFeature import SimpleLocation, CompoundLocation
 from SeqFeature_extensions import SeqFeature
 from collections import deque, defaultdict
 from dataclasses import dataclass, field
-from MultiCounter import MultiCounter
+from multi_counter import MultiCounter
 from Bio.SeqRecord import SeqRecord
-from SiteFilter import SiteFilter
-from site_variant_readers import (
-    RNAVariantReader,
+from site_filter import SiteFilter
+from rna_site_variant_readers import (
+    RNASiteVariantReader,
     Reditools2Reader,
     Reditools3Reader,
     Jacusa2Reader,
 )
-from utils import SiteVariantData
+from utils import RNASiteVariantData
 from natsort import natsorted
 import multiprocessing
 from BCBio import GFF
@@ -37,43 +37,6 @@ class QueueActionList:
     activate: list[SeqFeature] = field(default_factory=list)
     deactivate: list[SeqFeature] = field(default_factory=list)
 
-
-def has_children_of_type(self: SeqFeature, target_type: str) -> bool:
-    """
-    Return `True` if the feature contains sub-features of a specific target type
-    """
-    for child in self.sub_features:
-        if child.type == target_type:
-            return True
-
-    return False
-
-
-class CountingContext:
-    def __init__(self, aggregate_writer: AggregateFileWriter, filter: SiteFilter):
-        self.aggregate_writer: AggregateFileWriter = aggregate_writer
-        self.filter: SiteFilter = filter
-        self.longest_isoform_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
-            DefaultMultiCounterFactory(self.filter)
-        )
-        self.chimaera_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
-            DefaultMultiCounterFactory(self.filter)
-        )
-        self.all_isoforms_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
-            DefaultMultiCounterFactory(self.filter)
-        )
-        self.total_counter: MultiCounter = MultiCounter(self.filter)
-
-        return None
-
-    def update_aggregate_counters(self, new_counters: defaultdict[str, MultiCounter]) -> None:
-        for counter_type, new_counter in new_counters.items():
-            target_counter: MultiCounter = self.longest_isoform_aggregate_counters[counter_type]
-            target_counter.merge(new_counter)
-
-        return None
-
-
 def merge_aggregation_counter_dicts(
     dst: defaultdict[str, MultiCounter], src: defaultdict[str, MultiCounter]
 ) -> None:
@@ -85,6 +48,10 @@ def merge_aggregation_counter_dicts(
 
 
 class RecordCountingContext:
+    """
+    Handles counting at record (~ chromosome) level.
+    """
+
     def __init__(
         self,
         feature_writer: FeatureFileWriter,
@@ -92,35 +59,57 @@ class RecordCountingContext:
         filter: SiteFilter,
         use_progress_bar: bool,
     ):
-        # super().__init__(aggregate_writer, filter)
         self.aggregate_writer: AggregateFileWriter = aggregate_writer
+        """Aggregate counting output is written to a temporary file through this object"""
+
+        self.feature_writer: FeatureFileWriter = feature_writer
+        """Feature counting output is written to a temporary file through this object"""
+
         self.filter: SiteFilter = filter
+        """Filter applied to the reads. Filters contain a mutable state, so they should not be shared between concurrent RecordCountingContext instances"""
+
         self.longest_isoform_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
             DefaultMultiCounterFactory(self.filter)
         )
+        """Dictionary of counters for the record-level longest isoform aggregates. Keys correspond to aggregate feature types"""
+
         self.chimaera_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
             DefaultMultiCounterFactory(self.filter)
         )
+        """Dictionary of counters for the record-level chimaeric aggregates. Keys correspond to aggregate feature types"""
+
         self.all_isoforms_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
             DefaultMultiCounterFactory(self.filter)
         )
+        """Dictionary of counters for the record-level all isoforms aggregates. Keys correspond to aggregate feature types"""
+
         self.total_counter: MultiCounter = MultiCounter(self.filter)
+        """The counter that keeps tallies of editions on all the sites of the record, regardless of feature"""
 
         self.active_features: dict[str, SeqFeature] = dict()
-        self.feature_writer: FeatureFileWriter = feature_writer
+        """This dictonary holds all the features whose counters are must be updated at the current genomic position. Keys are feature IDs"""
+
         self.counters: defaultdict[str, MultiCounter] = defaultdict(
             DefaultMultiCounterFactory(self.filter)
         )
+        """This dictionary contains the feature-level counters. New counters are created on the fly as needed by the use of a default dictionary. Keys are feature IDs and entries can be deleted after checkout to save memory"""
+
         self.use_progress_bar: bool = use_progress_bar
+        """Toggle for progress bar. This is more useful during development"""
+
         self.action_queue: deque[tuple[int, QueueActionList]] = deque()
-        self.svdata: Optional[SiteVariantData] = None
-        self.deactivation_list: list[SeqFeature] = []
+        """This queue (implemented with a deque) holds a list of all the activating or deactivating actions to execute at the genomic positions downstream of the current position"""
+
+        self.svdata: Optional[RNASiteVariantData] = None
+        """The site variant data object holding the information about variants mapped to the current genomic position"""
+
 
         self.progbar_increment: Callable = (
             self._active_progbar_increment
             if self.use_progress_bar
             else self._inactive_progbar_increment
         )
+        """The method to be used to update the progress bar. When no progress bar is used, a dummy method is called"""
 
         return None
 
@@ -130,6 +119,10 @@ class RecordCountingContext:
         """
         Update a dict of aggregate counters by merging them with matching items in another dict of counters.
         The tag refers to the different kinds of aggregate counters: "all_isoforms", "chimaera", and "longest_isoform"
+
+        Arguments:
+            aggregate_counter_tag: str  Prefix for selecting one of the aggregate counter dictionaries of the different aggregation modes: "all_isoforms", "longest_isoform", and "chimaera"
+            new_counters: defaultdict[str, MultiCounter]    Defaultdict of counters to merge with the counters selected by the aggregate counter tag.
         """
         aggregate_counters: defaultdict[str, MultiCounter] = getattr(
             self, aggregate_counter_tag + "_aggregate_counters"
@@ -141,6 +134,13 @@ class RecordCountingContext:
         return None
 
     def set_record(self, record: SeqRecord) -> None:
+        """
+        Assign a specific record to the RecordCountingContext.
+        If the context was already assigned to another record, the queues and counters are cleared before proceeding (this was used in a previous version that recycled the record counting context, but it isn't used since parallelization was implemented).
+        Makes the reader seek the first entry matching the record ID, and initiates the pre-processing of the features.
+        1. Parse all the features in the record and load the resulting actions into the action queue
+        2. 
+        """
         logging.info(f"Switching to record {record.id}")
         if len(self.active_features) != 0:
             logging.info(
@@ -158,12 +158,18 @@ class RecordCountingContext:
 
         # Map positions to activation feature and deactivation actions
         logging.info("Pre-processing features")
-        position_actions: defaultdict[int, QueueActionList] = defaultdict(QueueActionList)
+        location_actions: defaultdict[int, QueueActionList] = defaultdict(QueueActionList)
         for feature in record.features:
-            self.load_action_queue(position_actions, feature, 1, ["."])
+            # Loading is recursive
+            self.load_location_actions_dict(
+                location_actions=location_actions,
+                root_feature=feature, 
+                level=1,
+                parent_list=["."]   # "." represents the record root, i.e. the parent of a level-1 position
+                )
 
         # Create a queue of actions sorted by positions
-        self.action_queue.extend(sorted(position_actions.items()))
+        self.action_queue.extend(sorted(location_actions.items()))
         logging.info(
             f"Pre-processing complete. Action positions detected: {len(self.action_queue)}"
         )
@@ -202,7 +208,7 @@ class RecordCountingContext:
         """Dummy method that does nothing when the progress bar is deactivated"""
         pass
 
-    def load_action_queue(
+    def load_location_actions_dict(
         self,
         location_actions: dict[int, QueueActionList],
         root_feature: SeqFeature,
@@ -223,7 +229,7 @@ class RecordCountingContext:
         root_feature.parent_list = parent_list
 
         if level == 1:
-            root_feature.make_chimaeras2(self.record.id)
+            root_feature.make_chimaeras(self.record.id)
 
         for part in root_feature.location.parts:
             if feature_strand != part.strand:
@@ -236,8 +242,10 @@ class RecordCountingContext:
         for part in root_feature.location.parts:
             if old_part:
                 if old_part.contains(part.start) or old_part.contains(part.stop):
-                    raise Exception(f"feature {root_feature.id} has a compound location containing overlapping parts. There must be no overlapping.")
-                
+                    raise Exception(
+                        f"feature {root_feature.id} has a compound location containing overlapping parts. There must be no overlapping."
+                    )
+
             actions: QueueActionList = location_actions[int(part.start)]
             actions.activate.append(root_feature)
 
@@ -247,7 +255,7 @@ class RecordCountingContext:
         # Visit children
         if hasattr(root_feature, "sub_features"):
             for child in root_feature.sub_features:
-                self.load_action_queue(
+                self.load_location_actions_dict(
                     location_actions, child, level + 1, parent_list + [root_feature.id]
                 )
 
@@ -280,6 +288,10 @@ class RecordCountingContext:
         return None
 
     def flush_queues(self) -> None:
+        """
+        Finish processing all the queues without checking for more data from the RNA variant input file
+        """
+
         logging.info(
             f"Actions remaining in action queue: {len(self.action_queue)}. Flushing action queue"
         )
@@ -301,11 +313,17 @@ class RecordCountingContext:
         return None
 
     def checkout(self, feature: SeqFeature, parent_feature: Optional[SeqFeature]) -> None:
+        """
+        Deactivate and post-process a feature (and its sub-features, recursively) and write to output the associated counting data.
+        
+        Checkout should be triggered after a level-1 feature is completely cleared. Aggregation of the level-1 feature and all its descentants proceeds.
+        """
+
+        # Deactivate the feature
         self.active_features.pop(feature.id, None)
 
         # Counter for the feature itself
         feature_counter: Optional[MultiCounter] = self.counters.get(feature.id, None)
-        # aggregate_counter: Optional[MultiCounter] = self.counters.get(feature.id, None)
 
         assert self.record.id
 
@@ -328,7 +346,7 @@ class RecordCountingContext:
             else:
                 self.feature_writer.write_row_without_data(self.record.id, feature)
 
-        all_isoforms_aggregation_counters: Optional[defaultdict[str, MultiCounter]] = None
+        # all_isoforms_aggregation_counters: Optional[defaultdict[str, MultiCounter]] = None
 
         assert self.record.id  # Placate Pylance
 
@@ -342,37 +360,43 @@ class RecordCountingContext:
                 self.all_isoforms_aggregate_counters, level1_all_isoforms_aggregation_counters
             )
 
-            for aggregate_type, aggregate_counter in level1_longest_isoform_aggregation_counters.items():
-                self.aggregate_writer.write_metadata_direct(
+            for (
+                aggregate_type,
+                aggregate_counter,
+            ) in level1_longest_isoform_aggregation_counters.items():
+                self.aggregate_writer.write_metadata(
                     seq_id=self.record.id,
                     parent_ids=".," + feature.id,
                     aggregate_id=feature.longest_isoform + "-longest_isoform",
                     parent_type=feature.type,
                     aggregate_type=aggregate_type,
-                    aggregation_mode="longest_isoform"
+                    aggregation_mode="longest_isoform",
                 )
                 self.aggregate_writer.write_counter_data(aggregate_counter)
-                
-            for aggregate_type, aggregate_counter in level1_all_isoforms_aggregation_counters.items():
-                self.aggregate_writer.write_metadata_direct(
+
+            for (
+                aggregate_type,
+                aggregate_counter,
+            ) in level1_all_isoforms_aggregation_counters.items():
+                self.aggregate_writer.write_metadata(
                     seq_id=self.record.id,
                     parent_ids=".," + feature.id,
                     aggregate_id=feature.id + "-all_isoforms",
                     parent_type=feature.type,
                     aggregate_type=aggregate_type,
-                    aggregation_mode="all_isoforms"
+                    aggregation_mode="all_isoforms",
                 )
                 self.aggregate_writer.write_counter_data(aggregate_counter)
         else:
             feature_aggregation_counters = self.aggregate_children(feature)
             for aggregate_type, aggregate_counter in feature_aggregation_counters.items():
-                self.aggregate_writer.write_metadata_direct(
+                self.aggregate_writer.write_metadata(
                     seq_id=self.record.id,
-                    parent_ids=','.join(feature.parent_list),
+                    parent_ids=",".join(feature.parent_list),
                     aggregate_id=feature.id,
                     parent_type=parent_feature.type,
                     aggregate_type=aggregate_type,
-                    aggregation_mode="feature"
+                    aggregation_mode="feature",
                 )
                 self.aggregate_writer.write_counter_data(aggregate_counter)
 
@@ -385,6 +409,13 @@ class RecordCountingContext:
     def aggregate_level1(
         self, feature: SeqFeature
     ) -> tuple[defaultdict[str, MultiCounter], defaultdict[str, MultiCounter]]:
+        """
+        Perform aggregation for level-1 feature.
+        
+        It handles the special cases caused by the different modes of aggregation (all_isoforms, longest_isoform, and chimaera).
+        Triggers the recursive aggregation of the feature descendants (features of higher levels)
+        """
+
         level1_longest_isoform_aggregation_counters: defaultdict[str, MultiCounter] = defaultdict(
             DefaultMultiCounterFactory(self.filter)
         )
@@ -446,14 +477,6 @@ class RecordCountingContext:
                     level1_longest_isoform_aggregation_counters, aggregation_counters_from_child
                 )
 
-        # assert self.record.id
-        # self.aggregate_writer.write_rows_with_feature_and_data(
-        #     self.record.id, feature, "longest_isoform", level1_longest_isoform_aggregation_counters
-        # )
-        # self.aggregate_writer.write_rows_with_feature_and_data(
-        #     self.record.id, feature, "all_isoforms", level1_all_isoforms_aggregation_counters
-        # )
-
         # Merge the feature-level aggregation counters into the record-level aggregation counters
         self.update_aggregate_counters(
             "longest_isoform", level1_longest_isoform_aggregation_counters
@@ -465,6 +488,10 @@ class RecordCountingContext:
         )
 
     def aggregate_children(self, feature: SeqFeature) -> defaultdict[str, MultiCounter]:
+        """
+        Perform aggregation of features. Not intended to handle level-1 features (see `aggregate_level1`)
+        """
+
         aggregation_counters: defaultdict[str, MultiCounter] = defaultdict(
             DefaultMultiCounterFactory(self.filter)
         )
@@ -487,13 +514,9 @@ class RecordCountingContext:
             if feature_counter:
                 aggregation_counter.merge(feature_counter)
 
-        # self.aggregate_writer.write_rows_with_feature_and_data(
-        #     self.record.id, feature, "feature", aggregation_counters
-        # )
-
         return aggregation_counters
 
-    def update_active_counters(self, site_data: SiteVariantData) -> None:
+    def update_active_counters(self, site_data: RNASiteVariantData) -> None:
         """
         Update the multicounters matching the ID of features in the `active_features` set.
         A new multicounter is created if no matching ID is found.
@@ -508,8 +531,8 @@ class RecordCountingContext:
     def is_finished(self) -> bool:
         return len(self.action_queue) > 0 or len(self.active_features) > 0
 
-    def launch_counting(self, reader: RNAVariantReader) -> None:
-        next_svdata: Optional[SiteVariantData] = reader.seek_record(self.record.id)
+    def launch_counting(self, reader: RNASiteVariantReader) -> None:
+        next_svdata: Optional[RNASiteVariantData] = reader.seek_record(self.record.id)
         if next_svdata:
             logging.info(f"Record {self.record.id} · Found site variant data matching the record")
 
@@ -518,7 +541,7 @@ class RecordCountingContext:
             self.state_update_cycle(self.svdata.position)
             self.update_active_counters(self.svdata)
             self.total_counter.update(self.svdata)
-            next_svdata: Optional[SiteVariantData] = reader.read()
+            next_svdata: Optional[RNASiteVariantData] = reader.read()
 
         if self.svdata:
             logging.info(
@@ -643,7 +666,7 @@ def run_job(record: SeqRecord) -> dict[str, Any]:
         )
 
         # Count
-        reader: RNAVariantReader = reader_factory(sv_handle)
+        reader: RNASiteVariantReader = reader_factory(sv_handle)
         record_ctx.set_record(record)
         record_ctx.launch_counting(reader)
 
@@ -751,7 +774,7 @@ if __name__ == "__main__":
             # Run the jobs and save the result of each record in a dict stored in the `record_data` list
             record_data_list: list[dict[str, Any]] = pool.map(run_job, records)
 
-        # Sort record results in lexicographical order
+        # Sort record results in "natural" order
         record_data_list = natsorted(record_data_list, key=lambda x: x["record_id"])
 
     with (
@@ -778,8 +801,12 @@ if __name__ == "__main__":
                 ]
                 genome_aggregate_counter.merge(record_aggregate_counter)
 
-            for record_aggregate_type, record_aggregate_counter in record_data["chimaera_aggregate_counters"].items():
-                genome_aggregate_counter: MultiCounter = genome_chimaera_aggregate_counters[record_aggregate_type]
+            for record_aggregate_type, record_aggregate_counter in record_data[
+                "chimaera_aggregate_counters"
+            ].items():
+                genome_aggregate_counter: MultiCounter = genome_chimaera_aggregate_counters[
+                    record_aggregate_type
+                ]
                 genome_aggregate_counter.merge(record_aggregate_counter)
 
             merge_aggregation_counter_dicts(
