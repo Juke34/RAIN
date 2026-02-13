@@ -6,7 +6,7 @@
 #   ./build_containers.sh --docker           # Build only Docker images
 #   ./build_containers.sh --singularity      # Build only Singularity images
 #   ./build_containers.sh --all              # Build both (explicit)
-#   ./build_containers.sh github_action      # Build both for GitHub Actions
+#   ./build_containers.sh --github_action      # Build both for GitHub Actions
 #   ./build_containers.sh --docker github_action    # Build Docker for GitHub Actions
 #   ./build_containers.sh --singularity github_action # Build Singularity for GitHub Actions
 
@@ -38,6 +38,10 @@ while [ $# -gt 0 ]; do
             ;;
         --github_action)
             github_action_mode="github_action"
+            # If --github_action is used without --docker or --singularity, enable auto-detect
+            if [ "$build_docker" = false ] && [ "$build_singularity" = false ]; then
+                auto_detect=true
+            fi
             ;;
         -h|--help)
             echo "Usage: $0 [OPTIONS] [github_action]"
