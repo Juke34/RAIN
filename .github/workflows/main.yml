@@ -40,7 +40,7 @@ jobs:
           key: ${{ runner.os }}-openjdk-11
           restore-keys: |
             ${{ runner.os }}-openjdk-11
-            
+
       - name: Install OpenJDK
         if: steps.cache-openjdk.outputs.cache-hit != 'true'
         run: sudo apt-get update && sudo apt-get install -y openjdk-11-jdk
@@ -53,7 +53,7 @@ jobs:
           path: /usr/local/bin/nextflow
           key: ${{ runner.os }}-nextflow-24.10.6
           restore-keys: |
-            ${{ runner.os }}-nextflow
+            ${{ runner.os }}-nextflow-24.10.6
 
       - name: Install Nextflow
         if: steps.cache-nextflow.outputs.cache-hit != 'true'
