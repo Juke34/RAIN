@@ -472,7 +472,7 @@ workflow {
         if (aline_data_in){
 
             ALIGNMENT (
-                'Juke34/AliNe -r v1.5.2', // Select pipeline
+                'Juke34/AliNe -r v1.6.0', // Select pipeline
                 "${workflow.resume?'-resume':''} -profile ${aline_profile}", // workflow opts supplied as params for flexibility
                 "-config ${params.aline_profiles}",
                 "--reads ${aline_data_in}",
