@@ -14,8 +14,8 @@ jobs:
 
   test_rain:
 
-    # Avoid running twice for a push + PR
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+    # Avoid running twice: skip push events if there's an open PR for this branch
+    if: github.event_name != 'push' || github.event.pull_request == null
     
     runs-on: ubuntu-24.04
     
