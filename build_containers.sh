@@ -36,7 +36,7 @@ while [ $# -gt 0 ]; do
             build_docker=true
             build_singularity=true
             ;;
-        github_action)
+        --github_action)
             github_action_mode="github_action"
             ;;
         -h|--help)
