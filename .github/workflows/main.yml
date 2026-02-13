@@ -14,8 +14,8 @@ jobs:
 
   test_rain:
 
-    # Avoid running twice for a push + PR
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+    # Avoid running twice: skip push events if there's an open PR for this branch
+    if: github.event_name != 'push' || github.event.pull_request == null
     
     runs-on: ubuntu-24.04
     
@@ -40,9 +40,10 @@ jobs:
           key: ${{ runner.os }}-openjdk-11
           restore-keys: |
             ${{ runner.os }}-openjdk-11
+
       - name: Install OpenJDK
-        if: ${{ steps.cache-openjdk.outputs.cache-hit != 'true' }}
-        run: sudo apt-get install openjdk-11-jdk
+        if: steps.cache-openjdk.outputs.cache-hit != 'true'
+        run: sudo apt-get update && sudo apt-get install -y openjdk-11-jdk
 
       # Install/cache Nextflow
       - name: Cache Nextflow
@@ -50,38 +51,33 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /usr/local/bin/nextflow
-          key: ${{ runner.os }}-nextflow
+          key: ${{ runner.os }}-nextflow-24.10.6
           restore-keys: |
-            ${{ runner.os }}-nextflow
-      - name: Install Nextflow
-        if: ${{ steps.cache-nextflow.outputs.cache-hit != 'true' }}
-        run: cat .github/workflows/install_nextflow_v24.10.5.sh | bash && mv nextflow /usr/local/bin && chmod +x /usr/local/bin/nextflow
-        
-      # Check-out the repo under $GITHUB_WORKSPACE so that the job can access it
-      - uses: actions/checkout@v4
+            ${{ runner.os }}-nextflow-24.10.6
 
-      - name: Cache Dockerfiles and TAR
+      - name: Install Nextflow
+        if: steps.cache-nextflow.outputs.cache-hit != 'true'
+        run: export NXF_VER=24.10.6 && curl -s https://get.nextflow.io | bash && sudo mv nextflow /usr/local/bin && sudo chmod +x /usr/local/bin/nextflow
+
+      # Cache Docker images
+      - name: Cache Docker images
         id: cache-dockerfiles
         uses: actions/cache@v4
         with:
           path: docker-images.tar
           key: ${{ runner.os }}-dockerfiles-${{ hashFiles('docker/**/*') }}
+          restore-keys: |
+            ${{ runner.os }}-dockerfiles-
 
       - name: Load cached Docker images
-        id: load-cache
+        if: steps.cache-dockerfiles.outputs.cache-hit == 'true'
         run: |
-          if [ -f docker-images.tar ]; then
-            echo "Loading cached Docker images..."
-            docker load -i docker-images.tar || true
-            echo "build=false" >> $GITHUB_ENV
-          else
-            echo "No Docker cache found"
-            echo "build=true" >> $GITHUB_ENV
-          fi
+          echo "Loading cached Docker images..."
+          docker load -i docker-images.tar
 
-      - name: Build images
-        if: env.build == 'true' || steps.cache-dockerfiles.outputs.cache-hit != 'true'
-        run: bash build_images.sh github_action
+      - name: Build Docker images
+        if: steps.cache-dockerfiles.outputs.cache-hit != 'true'
+        run: bash build_containers.sh --docker --github_action
 
       # Run test(s)
       - name: test short single

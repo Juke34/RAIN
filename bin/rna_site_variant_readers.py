@@ -107,22 +107,8 @@ class TestRNASiteVariantReader(RNASiteVariantReader):
 class ReditoolsXReader(RNASiteVariantReader):
     """Abstract base class defining common methods for the readers for the Reditools2 and Reditools3 formats"""
 
-    header_strings = (
-        "Region",
-        "Position",
-        "Reference",
-        "Strand",
-        "Coverage-q30",
-        "MeanQ",
-        "BaseCount[A,C,G,T]",
-        "AllSubs",
-        "Frequency",
-        "gCoverage-q30",
-        "gMeanQ",
-        "gBaseCount[A,C,G,T]",
-        "gAllSubs",
-        "gFrequency",
-    )
+    # header_strings should be defined in subclasses
+    header_strings = ()
 
     def __init__(self, file_handle: TextIO) -> None:
         self.file_handle: TextIO = file_handle
@@ -227,6 +213,23 @@ class ReditoolsXReader(RNASiteVariantReader):
         self.file_handle.close()
     
 class Reditools2Reader(ReditoolsXReader):
+    header_strings = (
+        "Region",
+        "Position",
+        "Reference",
+        "Strand",
+        "Coverage-q30",
+        "MeanQ",
+        "BaseCount[A,C,G,T]",
+        "AllSubs",
+        "Frequency",
+        "gCoverage-q30",
+        "gMeanQ",
+        "gBaseCount[A,C,G,T]",
+        "gAllSubs",
+        "gFrequency",
+    )
+
     def parse_strand(self) -> int:
         strand = int(self.parts[REDITOOLS_FIELD_INDEX["Strand"]])
         match strand:
@@ -240,6 +243,23 @@ class Reditools2Reader(ReditoolsXReader):
                 raise Exception(f"Invalid strand value: {strand}")
 
 class Reditools3Reader(ReditoolsXReader):
+    header_strings = (
+        "Region",
+        "Position",
+        "Reference",
+        "Strand",
+        "Coverage",
+        "MeanQ",
+        "BaseCount[A,C,G,T]",
+        "AllSubs",
+        "Frequency",
+        "gCoverage",
+        "gMeanQ",
+        "gBaseCount[A,C,G,T]",
+        "gAllSubs",
+        "gFrequency",
+    )
+
     def parse_strand(self) -> int:
         strand_str = self.parts[REDITOOLS_FIELD_INDEX["Strand"]]
         match strand_str:
