@@ -79,9 +79,9 @@ jobs:
             echo "build=true" >> $GITHUB_ENV
           fi
 
-      - name: Build images
+      - name: Build images/containers
         if: env.build == 'true' || steps.cache-dockerfiles.outputs.cache-hit != 'true'
-        run: bash build_images.sh github_action
+        run: bash build_containers.sh github_action
 
       # Run test(s)
       - name: test short single
