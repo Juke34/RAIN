@@ -16,13 +16,15 @@ params.reads        = null // "/path/to/reads_{1,2}.fastq.gz/or/folder"
 params.genome       = null // "/path/to/genome.fa"
 params.annotation   = null // "/path/to/annotations.gff3"
 params.outdir       = "rain_result"
-params.clipoverlap  = false
+params.clip_overlap  = false
+params.clean_duplicate  = true
 
 // Edit counting params
 edit_site_tools = ["reditools2", "reditools3", "jacusa2", "sapin"]
 params.edit_site_tool = "reditools3"
 params.edit_threshold = 1
 params.aggregation_mode = "all"
+params.skip_hyper_editing = false // Skip hyper-editing detection
 // Report params
 params.multiqc_config = "$baseDir/config/multiqc_config.yaml" // MultiQC config file
 
@@ -121,7 +123,9 @@ def helpMSG() {
     --strandedness              Set the strandedness for all your input reads [default: $params.strandedness]. In auto mode salmon will guess the library type for each fastq sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
     --edit_threshold            Minimal number of edited reads to count a site as edited [default: $params.edit_threshold]
     --aggregation_mode          Mode for aggregating edition counts mapped on genomic features. See documentation for details. Options are: "all" (default) or "cds_longest"
-    --clipoverlap               Clip overlapping sequences in read pairs to avoid double counting. [default: $params.clipoverlap]
+    --clip_overlap              Clip overlapping sequences in read pairs to avoid double counting. [default: $params.clipoverlap]
+    --clean_duplicate           Remove PCR duplicates from BAM files using GATK MarkDuplicates. [default: $params.clean_duplicate]
+    --skip_hyper_editing        Skip hyper-editing detection step for unmapped reads. [default: $params.skip_hyper_editing]
     --fastqc                    run fastqc on main steps [default: $params.fastqc]
 
         Nextflow options:
@@ -139,10 +143,13 @@ General Parameters
     genome                     : ${params.genome}
     strandedness               : ${params.strandedness}
     read_type                  : ${params.read_type}
+    hyper-editing              : ${params.skip_hyper_editing ? "skipped" : "performed"}
+    clip_overlap               : ${params.clip_overlap}
+    clean_duplicate            : ${params.clean_duplicate}
     outdir                     : ${params.outdir}
 
 Alignment Parameters
- aline_profiles                : ${params.aline_profiles}
+    aline_profiles             : ${params.aline_profiles}
     aligner                    : ${params.aligner}
     
 
@@ -169,13 +176,14 @@ include {fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from
 include {gatk_markduplicates } from './modules/gatk.nf'
 include {multiqc} from './modules/multiqc.nf'
 include {fasta_unzip} from "$baseDir/modules/pigz.nf"
-include {samtools_index; samtools_fasta_index; samtools_sort_bam} from './modules/samtools.nf'
+include {samtools_index; samtools_fasta_index; samtools_sort_bam as samtools_sort_bam_raw; samtools_sort_bam as samtools_sort_bam_merged; samtools_split_mapped_unmapped; samtools_merge_bams} from './modules/samtools.nf'
 include {reditools2} from "./modules/reditools2.nf"
 include {reditools3} from "./modules/reditools3.nf"
 include {jacusa2} from "./modules/jacusa2.nf"
 include {sapin} from "./modules/sapin.nf"
 include {normalize_gxf} from "./modules/agat.nf"
 include {pluviometer as pluviometer_jacusa2; pluviometer as pluviometer_reditools2; pluviometer as pluviometer_reditools3; pluviometer as pluviometer_sapin} from "./modules/pluviometer.nf"
+include {HYPER_EDITING} from "./subworkflows/hyper-editing.nf"
 
 //*************************************************
 // STEP 3 - Deal with parameters
@@ -397,12 +405,9 @@ workflow {
                     } 
         }
 
-        // sort the bam files
-        Channel.empty().set{sorted_bam}
-        sorted_bam = samtools_sort_bam( bams )
         // stat on aligned reads
         if(params.fastqc){
-            fastqc_ali(sorted_bam, "ali")
+            fastqc_ali(bams, "ali")
             logs.concat(fastqc_ali.out).set{logs} // save log
         }
 
@@ -475,7 +480,7 @@ workflow {
                 'Juke34/AliNe -r v1.6.0', // Select pipeline
                 "${workflow.resume?'-resume':''} -profile ${aline_profile}", // workflow opts supplied as params for flexibility
                 "-config ${params.aline_profiles}",
-                "--reads ${aline_data_in}",
+                aline_data_in,
                 genome,
                 "--read_type ${params.read_type}",
                 "--aligner ${params.aligner}",
@@ -571,49 +576,109 @@ workflow {
         }
 
         // MERGE ALINE BAM AND INPUT BAM TOGETHER
-        tuple_sample_sortedbam = aline_alignments_all.mix(sorted_bam)
-        log.info "The following bam file(s) will be processed by RAIN:"
-        tuple_sample_sortedbam.view()
+        all_input_bam = aline_alignments_all.mix(bams)
+        all_input_bam.view { meta, bam -> log.info " RAIN processing ${bam} (sample: ${meta.id}, strandedness: ${meta.strandedness})" }
+
+// -------------------------------------------------------
+// ----------------- DETECT HYPER_EDITING ----------------
+// -------------------------------------------------------
+
+        // Split BAM into mapped and unmapped reads
+        samtools_split_mapped_unmapped(all_input_bam)
+
+        // Process hyper-editing if not skipped
+        Channel.empty().set{all_bam}
+        if (!params.skip_hyper_editing) {
+            
+            HYPER_EDITING(
+                samtools_split_mapped_unmapped.out.unmapped_bam,
+                genome,
+                aline_profile,
+                clean_annotation,
+                30,  // quality threshold
+                "${params.outdir}/hyper_editing",
+            )
+            
+            // Access the results
+            hyperedit_bam_mapped = HYPER_EDITING.out.bam_mapped
+            bam_unmapped = HYPER_EDITING.out.bam_unmapped
+        
+              
+            // create a channel of tuples with (meta, bam, bam_he) joined by the id
+            samtools_split_mapped_unmapped.out.mapped_bam.map { meta, bam -> tuple(meta.id, meta, bam) }
+                        .join(
+                            hyperedit_bam_mapped.map { meta2, bam_he -> tuple(meta2.id, meta2, bam_he) }
+                        )
+                        .map { id, meta, bam, meta2, bam_he -> tuple(meta, bam, bam_he) }
+                        .set { meta_bam_bamhe } 
+            
+            // Merge the final bam with the original bam in case of hyper-editing to keep all reads for edition site detection
+            merged_bams = samtools_merge_bams(meta_bam_bamhe)
+            
+            // Add hyper-editing sample to analysis
+            // Here we have bam containing normal and hyper_editing reads and bam containing only hyper-editing reads.
+            // The bam with only hyper-editing reads will be used to count hyper-editing sites specifically. 
+            all_bam = merged_bams.mix(hyperedit_bam_mapped)
+       
+        } else {
+            all_bam = samtools_split_mapped_unmapped.out.mapped_bam
+        }
+        
+        // Sort the bam files
+        all_bam_sorted = samtools_sort_bam_merged(all_bam)
 
         // remove duplicates
-        gatk_markduplicates(tuple_sample_sortedbam)
-        logs.concat(gatk_markduplicates.out.log).set{logs} // save log
-        // stat on bam without duplicates
-        if(params.fastqc){
-            fastqc_dup(gatk_markduplicates.out.tuple_sample_dedupbam, "dup")
-            logs.concat(fastqc_dup.out).set{logs} // save log
+        if(params.clean_duplicate){
+            gatk_markduplicates(all_bam_sorted)
+            all_bam_sorted_dedup = gatk_markduplicates.out.tuple_sample_dedupbam
+            logs.concat(gatk_markduplicates.out.log).set{logs} // save log
+            // stat on bam without duplicates
+            if(params.fastqc){
+                fastqc_dup(all_bam_sorted_dedup, "dup")
+                logs.concat(fastqc_dup.out).set{logs} // save log
+            }
         }
+        else {
+            all_bam_sorted_dedup = all_bam_sorted
+        }
+
         // Clip overlap
-        if (params.clipoverlap) {
+        if (params.clip_overlap) {
             bamutil_clipoverlap(gatk_markduplicates.out.tuple_sample_dedupbam)
-            tuple_sample_bam_processed = bamutil_clipoverlap.out.tuple_sample_clipoverbam
+            all_bam_sorted_dedup_clip = bamutil_clipoverlap.out.tuple_sample_clipoverbam
             // stat on bam with overlap clipped
             if(params.fastqc){
-                fastqc_clip(tuple_sample_bam_processed, "clip")
+                fastqc_clip(all_bam_sorted_dedup_clip, "clip")
                 logs.concat(fastqc_clip.out).set{logs} // save log
             }
         } else {
-            tuple_sample_bam_processed = gatk_markduplicates.out.tuple_sample_dedupbam
+            all_bam_sorted_dedup_clip = gatk_markduplicates.out.tuple_sample_dedupbam
         }
-        // index bam
-        samtools_index(tuple_sample_bam_processed)
+        
+        // index mapped bam
+        samtools_index(all_bam_sorted_dedup_clip)
+        final_bam_for_editing = samtools_index.out.tuple_sample_bam_bamindex
+
+// -------------------------------------------------------
+// ----------------- DETECT EDITING SITES ----------------
+// -------------------------------------------------------
 
         // Select site detection tool
         if ( "jacusa2" in edit_site_tool_list ){ 
                 // Create a fasta index file of the reference genome
                 samtools_fasta_index(genome.collect())
-                jacusa2(samtools_index.out.tuple_sample_bam_bamindex, samtools_fasta_index.out.tuple_fasta_fastaindex.collect())
+                jacusa2(final_bam_for_editing, samtools_fasta_index.out.tuple_fasta_fastaindex.collect())
                 pluviometer_jacusa2(jacusa2.out.tuple_sample_jacusa2_table, clean_annotation.collect(), "jacusa2")
         }
         if ( "sapin" in edit_site_tool_list ){ 
                 sapin(tuple_sample_bam_processed, genome.collect())
         }
         if ( "reditools2" in edit_site_tool_list ){ 
-                reditools2(samtools_index.out.tuple_sample_bam_bamindex, genome.collect(), params.region)
+                reditools2(final_bam_for_editing, genome.collect(), params.region)
                 pluviometer_reditools2(reditools2.out.tuple_sample_serial_table, clean_annotation.collect(), "reditools2")
         }
         if ( "reditools3" in edit_site_tool_list ){ 
-                reditools3(samtools_index.out.tuple_sample_bam_bamindex, genome.collect())
+                reditools3(final_bam_for_editing, genome.collect())
                 pluviometer_reditools3(reditools3.out.tuple_sample_serial_table, clean_annotation.collect(), "reditools3")
         }
 
