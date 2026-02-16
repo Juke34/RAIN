@@ -115,7 +115,7 @@ if [ "$build_docker" = true ]; then
     # List of image names
     image_list=( )
     
-    for dir in docker/*; do 
+    for dir in containers/docker/*; do 
         cd "${dir}"
         imgname=$(echo $dir | rev | cut -d/ -f1 | rev)
         image_list+=(${imgname})
@@ -161,7 +161,7 @@ if [ "$build_singularity" = true ]; then
     sif_list=( )
 
     # Loop through all .def files in singularity/ subdirectories
-    for def_file in singularity/*/*.def; do
+    for def_file in containers/singularity/*/*.def; do
         # Extract image name from directory
         imgname=$(basename "$(dirname "$def_file")")
         sif_output="sif_images/${imgname}.sif"
