@@ -103,6 +103,8 @@ def helpMSG() {
 
         Input sequences:
     --annotation                Path to the annotation file (GFF or GTF)
+    --genome                    Path to the reference genome in FASTA format.
+    --read_type                 Type of reads among this list ${read_type_allowed} [no default]
     --reads                     path to the reads file, folder or csv. If a folder is provided, all the files with proper extension in the folder will be used. You can provide remote files (commma separated list).
                                     file extension expected : <.fastq.gz>, <.fq.gz>, <.fastq>, <.fq> or <.bam>. 
                                                               for paired reads extra <_R1_001> or <_R2_001> is expected where <R> and <_001> are optional. e.g. <sample_id_1.fastq.gz>, <sample_id_R1.fastq.gz>, <sample_id_R1_001.fastq.gz>)
@@ -112,22 +114,21 @@ def helpMSG() {
                                         sample,fastq_1,fastq_2,strandedness,read_type
                                         control1,path/to/data1.fastq.bam,,auto,short_single
                                         control2,path/to/data2_R1.fastq.gz,path/to/data2_R2.fastq.gz,auto,short_paired
-    --genome                    Path to the reference genome in FASTA format.
-    --read_type                 Type of reads among this list ${read_type_allowed} [no default]
 
         Output:
     --output                    Path to the output directory [default: $params.outdir]
 
        Optional input:
-    --aligner                   Aligner to use [default: $params.aligner]
-    --edit_site_tool            Tool used for detecting edited sites. [default: $params.edit_site_tool]
-    --strandedness              Set the strandedness for all your input reads [default: $params.strandedness]. In auto mode salmon will guess the library type for each fastq sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
-    --edit_threshold            Minimal number of edited reads to count a site as edited [default: $params.edit_threshold]
     --aggregation_mode          Mode for aggregating edition counts mapped on genomic features. See documentation for details. Options are: "all" (default) or "cds_longest"
-    --clip_overlap              Clip overlapping sequences in read pairs to avoid double counting. [default: $params.clipoverlap]
+    --aligner                   Aligner to use [default: $params.aligner]
     --clean_duplicate           Remove PCR duplicates from BAM files using GATK MarkDuplicates. [default: $params.clean_duplicate]
-    --skip_hyper_editing        Skip hyper-editing detection step for unmapped reads. [default: $params.skip_hyper_editing]
+    --clip_overlap              Clip overlapping sequences in read pairs to avoid double counting. [default: $params.clipoverlap]
+    --debug                     Enable debug output for troubleshooting. [default: $params.debug]
+    --edit_site_tool            Tool used for detecting edited sites. [default: $params.edit_site_tool]
+    --edit_threshold            Minimal number of edited reads to count a site as edited [default: $params.edit_threshold]
     --fastqc                    run fastqc on main steps [default: $params.fastqc]
+    --skip_hyper_editing        Skip hyper-editing detection step for unmapped reads. [default: $params.skip_hyper_editing]
+    --strandedness              Set the strandedness for all your input reads [default: $params.strandedness]. In auto mode salmon will guess the library type for each fastq sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
 
         Nextflow options:
     -profile                    Change the profile of nextflow both the engine and executor more details on github README [debug, test, itrop, singularity, local, docker]
