@@ -75,12 +75,17 @@ process samtools_split_mapped_unmapped {
         tuple val(meta), path("*_unmapped.bam"), emit: unmapped_bam
 
     script:
+        def base = bam.baseName
+        // _seqkit suffix is added by aline when starting from fastq, when starting from BAM, there is no _seqkit suffix. 
+        // We want to keep the same base name for both cases, because it is used to recognize the sample name (sample name is what is bofore the first occurrence of _seqkit)
+        // It is needed at the step of sequence restoration, where we join the aligned BAM with the original unmapped BAM based on the sample name. (see hyper-editing.nf)
+        def suffix = base.contains('_seqkit') ? '' : '_seqkit'
         """
         # Extract mapped reads (SAM flag -F 4: exclude unmapped)
-        samtools view -@ ${task.cpus} -b -F 4 ${bam} > ${bam.baseName}_mapped.bam
+        samtools view -@ ${task.cpus} -b -F 4 ${bam} > ${base}${suffix}_mapped.bam
         
         # Extract unmapped reads (SAM flag -f 4: include only unmapped)
-        samtools view -@ ${task.cpus} -b -f 4 ${bam} > ${bam.baseName}_unmapped.bam
+        samtools view -@ ${task.cpus} -b -f 4 ${bam} > ${base}${suffix}_unmapped.bam
         """
 }
 
@@ -109,7 +114,7 @@ process convert_to_fastq {
             samtools fastq -@ ${task.cpus} ${bam} | gzip > ${output_base}.fastq.gz
         else
             # Paired-end reads
-            samtools fastq -@ ${task.cpus} -1 ${output_base}_R1.fastq.gz -2 ${output_base}_R2.fastq.gz -s ${output_base}_single.fastq.gz ${bam}
+            samtools fastq -@ ${task.cpus} -1 ${output_base}_R1.fastq.gz -2 ${output_base}_R2.fastq.gz ${bam}
         fi
         """
 }

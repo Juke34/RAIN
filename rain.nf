@@ -34,6 +34,7 @@ params.region = "" // e.g. chr21 - Used to limit the analysis to a specific regi
 // others
 params.help = null
 params.monochrome_logs = false // if true, no color in logs
+params.debug = false // Enable debug output
 
 // --------------------------------------------------
 /* ---- Params shared between RAIN and AliNe ---- */
@@ -577,8 +578,9 @@ workflow {
 
         // MERGE ALINE BAM AND INPUT BAM TOGETHER
         all_input_bam = aline_alignments_all.mix(bams)
-        all_input_bam.view { meta, bam -> log.info " RAIN processing ${bam} (sample: ${meta.id}, strandedness: ${meta.strandedness})" }
-
+        if (params.debug) {
+            all_input_bam.view { meta, bam -> log.info "RAIN processing ${bam} (sample: ${meta.id})" }
+        }
 // -------------------------------------------------------
 // ----------------- DETECT HYPER_EDITING ----------------
 // -------------------------------------------------------

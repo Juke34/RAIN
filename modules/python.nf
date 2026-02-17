@@ -12,7 +12,7 @@ process restore_original_sequences {
     publishDir("${output_dir}", mode:"copy", pattern: "*_restored.bam")
     
     input:
-        tuple( val(meta), path(bam), path(fastq))
+        tuple( val(meta), path(bam), path(bam_unmapped))
         val output_dir
 
     output:
@@ -22,6 +22,6 @@ process restore_original_sequences {
         def output_name = "${bam.baseName}_restored.bam"
         
         """       
-        restore_sequences.py -b ${bam} -f ${fastq} -o ${output_name}
+        restore_sequences.py -b ${bam} -u ${bam_unmapped} -o ${output_name}
         """
 }

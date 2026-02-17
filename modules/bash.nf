@@ -23,6 +23,7 @@ process extract_libtype {
 /*
  * Transform A to G bases in FASTQ reads for hyper-editing detection
  * Converts all adenosine (A) nucleotides to guanosine (G) in sequence lines
+ * Handles both single-end and paired-end reads
  */
 process transform_bases_fastq {
     label 'bash'
@@ -30,18 +31,23 @@ process transform_bases_fastq {
     publishDir("${output_dir}", mode:"copy", pattern: "*_AtoG.fastq.gz")
     
     input:
-        tuple val(meta), path(fastq)
+        tuple val(meta), path(fastq)  // Can be single file or multiple files (R1, R2, singles)
         val output_dir
 
     output:
         tuple val(meta), path("*_AtoG.fastq.gz"), emit: converted_fastq
 
     script:
-        def output_name = "${fastq.baseName}_AtoG.fastq.gz"
         """
-        # Decompress, convert A to G in sequence lines (every 4th line starting from line 2),
-        # then recompress
-        zcat ${fastq} | awk 'NR%4==2 {gsub(/A/,"G"); gsub(/a/,"g")} {print}' | gzip > ${output_name}
+        # Process all FASTQ files (handles both single-end and paired-end)
+        for fq in ${fastq}; do
+            base=\$(basename "\${fq}" .fastq.gz)
+            base=\$(basename "\${base}" .fq.gz)
+            
+            # Decompress, convert A to G in sequence lines (every 4th line starting from line 2),
+            # then recompress
+            zcat "\${fq}" | awk 'NR%4==2 {gsub(/A/,"G"); gsub(/a/,"g")} {print}' | gzip > "\${base}_AtoG.fastq.gz"
+        done
         """
 }
 
