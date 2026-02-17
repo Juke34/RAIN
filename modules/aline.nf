@@ -30,7 +30,7 @@ process AliNe {
                 pipeline_name,
                 profile,
                 config,
-                reads,
+                "--reads ${reads}",
                 "--reference ${genome}",
                 read_type,
                 aligner,

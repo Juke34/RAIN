@@ -1,6 +1,6 @@
 process pluviometer {
     label "pluviometer"
-    publishDir("${params.outdir}/feature_edits", mode: "copy")
+    publishDir("${params.outdir}/pluviometer/${tool_format}", mode: "copy")
     tag "${meta.id}"
 
     input:
@@ -9,7 +9,7 @@ process pluviometer {
         val(tool_format)
 
     output:
-        tuple(val(meta), path("features.tsv"), path("aggregates.tsv"), path("pluviometer.log"), emit: tuple_sample_feature_edits)
+        tuple(val(meta), path("*features.tsv"), path("*aggregates.tsv"), path("*pluviometer.log"), emit: tuple_sample_feature_edits)
 
 
     script:
@@ -22,6 +22,7 @@ process pluviometer {
             --cov 1 \
             --edit_threshold ${params.edit_threshold} \
             --threads ${task.cpus} \
-            --aggregation_mode ${params.aggregation_mode}
+            --aggregation_mode ${params.aggregation_mode} \
+            --output ${meta.id}
         """
 }
