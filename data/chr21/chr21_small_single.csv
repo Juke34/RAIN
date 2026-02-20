@@ -1,3 +1,3 @@
 sample,input_1,input_2,strandedness,read_type
-test1,/Users/jacquesdainat/git/Juke34/rain/data/chr21/chr21_small_R1.fastq.gz,,auto,short_single
-test2,/Users/jacquesdainat/git/Juke34/rain/data/chr21/chr21_small_R2.fastq.gz,,ISR,short_single
+test1,data/chr21/chr21_small_R1.fastq.gz,,auto,short_single
+test2,data/chr21/chr21_small_R2.fastq.gz,,ISR,short_single
