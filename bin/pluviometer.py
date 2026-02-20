@@ -721,12 +721,12 @@ if __name__ == "__main__":
 
     args: argparse.Namespace = parse_cli_input()
     LOGGING_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
-    log_filename: str = args.output + ".pluviometer.log" if args.output else "pluviometer.log"
+    log_filename: str = args.output + "_pluviometer.log" if args.output else "pluviometer.log"
     logging.basicConfig(filename=log_filename, level=logging.INFO, format=LOGGING_FORMAT)
     logging.info(f"Pluviometer started. Log file: {log_filename}")
-    feature_output_filename: str = args.output + "features.tsv" if args.output else "features.tsv"
+    feature_output_filename: str = args.output + "_features.tsv" if args.output else "features.tsv"
     aggregate_output_filename: str = (
-        args.output + "aggregates.tsv" if args.output else "aggregates.tsv"
+        args.output + "_aggregates.tsv" if args.output else "aggregates.tsv"
     )
 
     global reader_factory
