@@ -568,6 +568,10 @@ workflow {
                 .map { bam -> 
                             def name = bam.getName().split('_AliNe')[0]  // Extract the base name of the BAM file. _seqkit is the separator.
                             def meta = [ uid: name ]
+                            if (! via_csv){
+                                meta.strandedness = params.strandedness
+                                meta.read_type = params.read_type
+                            }
                             tuple(meta, bam)
                     }  // Convert each BAM file into a tuple, with the base name as the first element
                 .set { aline_alignments }  // Store the channel
@@ -617,7 +621,7 @@ workflow {
 // -------------------------------------------------------
 // ----------------- DETECT HYPER_EDITING ----------------
 // -------------------------------------------------------
-        
+
         // Split BAM into mapped and unmapped reads and Add _AliNe to bam file name to look similar as fastq mapped via AliNe
         samtools_split_mapped_unmapped(all_input_bam)
 
