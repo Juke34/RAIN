@@ -84,3 +84,67 @@ process transform_bases_fasta {
             """
         }
 }
+
+/*
+ * Create CSV file for AliNe input from converted FASTQ reads
+ * Generates a CSV with columns: sample,fastq_1,fastq_2,strandedness,read_type
+ */
+process create_aline_csv_he {
+    label 'bash'
+    tag "${file_id}"
+
+    input:
+        tuple val(meta), path(fastq) 
+
+    output:
+        path "*.csv", emit: csv
+
+    script:
+        def sample_id = meta.sample_id ? meta.sample_id : RainUtils.get_file_id(fastq[0])  // Extract sample ID from meta or from filename
+        file_id = meta.file_id ? meta.file_id : RainUtils.get_file_id(fastq[0])
+        def strandedness = meta.strandedness ? meta.strandedness : "auto"
+        def read_type = meta.read_type ? meta.read_type : params.read_type
+        
+        if (fastq[1]) {
+            // Paired-end
+            """
+            fastq0=\$(readlink -f ${fastq[0]})
+            fastq1=\$(readlink -f ${fastq[1]})
+            echo "${sample_id},\${fastq0},\${fastq1},${strandedness},${read_type}" > ${file_id}.csv
+            """
+        } else {
+            // Single-end
+            """
+            fastq0=\$(readlink -f ${fastq[0]})
+            echo "${sample_id},\${fastq0},,${strandedness},${read_type}" > ${file_id}.csv
+            """
+        }
+}
+
+/*
+ * Collect CSV files for AliNe input from converted FASTQ reads
+ * Generates a single CSV with columns: sample,fastq_1,fastq_2,strandedness,read_type
+ */
+process collect_aline_csv_he {
+    label 'bash'
+    publishDir("${output_dir}", mode:"copy", pattern: "*.csv")
+    
+    input:
+        val all_csv  // List of tuples (meta, fastq_files)
+        val output_dir
+
+    output:
+        path "*.csv", emit: csv
+
+    script:
+
+        def list_csv = []
+        list_csv = all_csv
+        list_csv_bash = list_csv.join(" "); // remove bracket and replace comma by space to be processed by bash
+        """
+        echo "sample,fastq_1,fastq_2,strandedness,read_type" > hyper_editing_samples.csv
+        for entry in ${list_csv_bash}; do
+            cat \$entry >> hyper_editing_samples.csv
+        done
+        """
+}

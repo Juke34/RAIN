@@ -7,7 +7,7 @@
 
 include { AliNe as ALIGNMENT } from "${baseDir}/modules/aline.nf"
 include { convert_to_fastq; samtools_fasta_index; samtools_split_mapped_unmapped } from "${baseDir}/modules/samtools.nf"
-include { transform_bases_fastq; transform_bases_fasta } from "${baseDir}/modules/bash.nf"
+include { transform_bases_fastq; transform_bases_fasta; create_aline_csv_he; collect_aline_csv_he} from "${baseDir}/modules/bash.nf"
 include { multiqc } from "${baseDir}/modules/multiqc.nf"
 include { restore_original_sequences } from "${baseDir}/modules/python.nf"
 
@@ -35,7 +35,7 @@ workflow HYPER_EDITING {
         // For now, create an empty channel until processes are implemented
         // This prevents the workflow from failing while we build out the functionality
         Channel.empty().set { filtered_bams }
-        
+
         // Stage 1: Convert unmapped BAM to FASTQ format
         extracted_reads = convert_to_fastq(unmapped_bams, output_he)
         
@@ -44,47 +44,41 @@ workflow HYPER_EDITING {
         
         // Stage 3: Generate A-to-G converted reference genome
         converted_reference = transform_bases_fasta(genome, output_he)
-       
-        // Stage 4: Collect converted reads paths for AliNe
-        converted_reads
-            .map { meta, fastq -> fastq }
-            .collect()
-            .map { files -> 
-                // Create a comma-separated list or single file path
-                files.collect { it.toString() }.join(',')
-            }
-            .set { reads_path }
+
+        // Stage 4: Create CSV file for AliNe with all converted reads
+        aline_csv = create_aline_csv_he(converted_reads).collect()
+        aline_csv = collect_aline_csv_he(aline_csv,output_he)
 
         // Stage 5: Build alignment index for converted reference
         alignment_index = samtools_fasta_index(converted_reference)
 
-        // Stage 6: Perform alignment with converted sequences
+        // Stage 6: Perform alignment with converted sequences using CSV input
         if (params.debug) {
-            reads_path.view { paths -> log.info " AliNe feeded with FASTQ: ${paths.split(',').collect { it.split('/').last() }.join(', ')}" }
+            aline_csv.view { csv -> log.info "AliNe CSV created: ${csv}" }
         }
 
         ALIGNMENT (
-            'Juke34/AliNe -r v1.6.0', // Select pipeline
+            "Juke34/AliNe -r ${params.aline_version}", // Select pipeline
             "${workflow.resume?'-resume':''} -profile ${aline_profile}", // workflow opts supplied as params for flexibility
             "-config ${params.aline_profiles}",
-            reads_path,
+            aline_csv,
             converted_reference,
             "--read_type ${params.read_type}",
             "--aligner ${params.aligner}",
             "--strandedness ${params.strandedness}",
             clean_annotation,
-             workflow.workDir.resolve('Juke34/AliNe').toUriString()
+            workflow.workDir.resolve('Juke34/AliNe').toUriString()
         )
 
         // GET TUPLE [ID, BAM] FILES
         ALIGNMENT.out.output
             .map { dir ->
-                files("$dir/alignment/*/*.bam", checkIfExists: true)  // Find BAM files inside the output directory
+                files("$dir/alignment/**/*.bam", checkIfExists: true)  // Find BAM files recursively inside the output directory
             }
             .flatten()  // Ensure we emit each file separately
             .map { bam -> 
                         def basename = bam.getName()
-                        def name = bam.getName().split('_seqkit')[0]  // Extract the base name of the BAM file. _seqkit is the separator.
+                        def name = bam.getName().split('_AliNe')[0]  // Extract the base name of the BAM file. _AliNe is the separator.
 
                         tuple(name, bam)
                 }  // Convert each BAM file into a tuple, with the base name as the first element

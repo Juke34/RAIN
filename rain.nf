@@ -58,9 +58,10 @@ params.aline_profiles = "$baseDir/nextflow_aline.config" // e.g. "docker, singul
 // made in aline but params here because it is main step
 params.trimming_fastp = false
 // Aligner params
-align_tools = [ 'bbmap', 'bowtie', 'bowtie2', 'bwaaln', 'bwamem', 'bwamem2', 'bwasw', 'graphmap2', 'hisat2', 'kallisto', 'last', 'minimap2', 'novoalign', 'nucmer', 'ngmlr', 'salmon', 'star', 'subread', 'sublong' ]
+align_tools = [ 'bbmap', 'bowtie', 'bowtie2', 'bwaaln', 'bwamem', 'bwamem2', 'bwasw', 'dragmap', 'graphmap2', 'hisat2', 'kallisto', 'last', 'minimap2', 'novoalign', 'nucmer', 'ngmlr', 'salmon', 'star', 'subread', 'sublong' ]
 params.aligner = 'hisat2'
-
+// AliNe version
+params.aline_version = 'v1.6.1'
 //*************************************************
 // STEP 1 - HELP
 //*************************************************
@@ -88,7 +89,6 @@ if( !params.edit_site_tool ){
         }
     }
 }
-
 
 // Help Message
 def helpMSG() {
@@ -136,7 +136,6 @@ def helpMSG() {
 }
 
 // Parameter message
-
 log.info """
 
 General Parameters
@@ -208,6 +207,36 @@ str_list.each {
 }
 def aline_profile = aline_profile_list.join(',')
 
+// Check csv file
+def via_csv     = false
+def path_reads  = params.reads
+if ( path_reads.endsWith('.csv') ){  
+    via_csv = true
+    println  "Using CSV input file: ${path_reads}"
+}
+
+// check read type parameter
+def read_typep = params.read_type == "null" ? null : params.read_type // if read_type is "null" it will be set to null, otherwise it will be the value of params.read_type
+
+if( via_csv ) {
+    if( read_typep ){
+        if ( ! (read_typep.toLowerCase() in read_type_allowed*.toLowerCase()) ){
+            exit 1, "Error: <${read_typep}> read_type not acepted, please provide a read type among this list ${read_type_allowed}."
+        }
+        println """    This value will replace any read_type value found in your csv!"""
+    } else {
+        println """    No read_type provided by --read_type parameter, value will be taken from the csv file."""
+    }
+} else {
+    if( ! read_typep ){
+        exit 1, "Error: <read_type> parameter is empty it is allowed only when CSV provided as input. Please provide a read type among this list ${read_type_allowed}."
+    } else {
+        if ( ! (read_typep.toLowerCase() in read_type_allowed*.toLowerCase()) ){
+            exit 1, "Error: <${read_typep}> read_type not acepted, please provide a read type among this list ${read_type_allowed}."
+        }
+    }
+}
+
 //*************************************************
 // STEP 4 -  Workflow
 //*************************************************
@@ -245,15 +274,11 @@ workflow {
 // ----------------------------------------------------------------------------
 //                               DEAL WITH CSV FILE FIRST
 // ----------------------------------------------------------------------------
-        def path_reads     = params.reads
         def via_url = false
-        def via_csv = false
         Channel.empty().set{csv_ch}
 
-        if ( path_reads.endsWith('.csv') ){
-            log.info "Using CSV input file: ${path_reads}"
-            //   --------- BAM CSV  CASE ---------
-            via_csv = true
+        if ( via_csv ){
+            //   --------- BAM / FASTQ CSV CASE ---------
             File input_csv = new File(path_reads)
             if(!input_csv.exists()){ 
                 error "The input ${path_reads} file does not exist!\n" 
@@ -270,11 +295,11 @@ workflow {
                                         error "The input ${params.reads} file does not contain a 'input_1' column!\n" 
                                     }
                                     def input_1 = file(row.input_1.trim())
-                                    if( input_1.toString().endsWith('.bam') || Rain_utilities.is_fastq(input_1) ) { 
+                                    if( input_1.toString().endsWith('.bam') || RainUtils.is_fastq(input_1) ) { 
                                         
                                         def input_type = input_1.toString().endsWith('bam') ? 'bam' : 'fastq'
                                         def input_url = null 
-                                        if (! Rain_utilities.is_url(input_1) ) {
+                                        if (! RainUtils.is_url(input_1) ) {
                                             if (! input_1.exists() ) {
                                                 error "The input ${input_1} file does not does not exits!\n"
                                             }
@@ -293,30 +318,49 @@ workflow {
                                             }
                                         }
                                         libtype = row.strandedness.trim()
-                                        def meta = [ id: sample_id, strandedness: libtype, input_type: input_type, is_url: input_url ]
+
+                                        // read type
+                                        def read_type = null
+                                        def pair = false
+                                        if ( !read_typep ) {
+                                            if (row.read_type != null) {
+                                                read_type_value = row.read_type.trim().toLowerCase()
+                                                if (read_type_value){
+                                                    if ( ! ( read_type_value in read_type_allowed*.toLowerCase()) ){
+                                                        error "The input ${input_csv} file contains an invalid read type value: ${read_type_value}. Please provide one of the following values: ${read_type_allowed}."
+                                                    } else {
+                                                        read_type = read_type_value
+                                                    }
+                                                } else {
+                                                    error "The input ${input_csv} file contains an empty read_type value for sample ${sample_id}!"
+                                                }
+                                            } else {
+                                                error """Error: The input file ${input_csv} does not contain a read_type column, and the --read_type parameter was not provided.
+    Please specify the read type either by including a read_type column in the input file or by using the --read_type option."""
+                                            }
+                                        } else {
+                                            read_type = read_typep
+                                        }
+                                        // Define file_id based on the filename and read type using the utility function
+                                        def file_id = RainUtils.get_file_id(input_1)
+
+                                        def meta = [ id: file_id, sample_id: sample_id, strandedness: libtype, input_type: input_type, is_url: input_url, read_type: read_type]
                                         return tuple(meta, input_1)
                                     }
                                     else {
                                         error "The input ${row.input_1} file is not a BAM or FASTQ file!\n"
                                     }
                                 }
-        // If we are here it is because the csv is correct.
-        // lets create another channel with meta information
-        Channel.fromPath(params.reads)
-            .splitCsv(header: true)
-            .map { row ->
-                    def File file = new File(row.input_1)
-                    fileClean = file.baseName.replaceAll(/\.(gz)$/, '') // remove .gz
-                    fileClean = fileClean.replaceAll(/\.(fastq|fq)$/, '') // remove .fastq or .fq
-
-                return tuple (fileClean, row.sample, row.strandedness)
-                }
-            .set { csv_meta_ch }
         }
 
         // Separate FASTQ samples to BAM samples
         csv_in_bam   = csv_ch.filter { meta, reads -> meta.input_type == 'bam' }
         csv_in_fastq = csv_ch.filter { meta, reads -> meta.input_type != 'fastq' }
+
+        // Check read_type is provided when not using CSV
+        if (!via_csv && !params.read_type) {
+            exit 1, "Error: --read_type parameter is required when not using a CSV input file. Please provide a read type among ${read_type_allowed}.\n"
+        }
 
 // ----------------------------------------------------------------------------
 //                               DEAL WITH BAM FILES
@@ -340,7 +384,7 @@ workflow {
                     str_list2 = it.tokenize(' ')
                     str_list2.each {
                         if ( it.endsWith('.bam') ){
-                            if (  Rain_utilities.is_url(it) ) {
+                            if (  RainUtils.is_url(it) ) {
                                 log.info "This bam input is an URL: ${it}"
                                 via_url = true
                             }
@@ -371,7 +415,7 @@ workflow {
                     else {
                         if ( bam_path_reads.endsWith('.bam') ){
                             log.info "The input ${bam_path_reads} is a bam file!"
-                            if (  Rain_utilities.is_url(bam_path_reads) ) {
+                            if (  RainUtils.is_url(bam_path_reads) ) {
                                 log.info "This bam input is an URL: ${bam_path_reads}"
                                 via_url = true
                             }
@@ -401,8 +445,7 @@ workflow {
             bams = bams.map {  id, bam_file -> 
                         def strand = params.strandedness
                         strand = (strand && strand.toUpperCase() != "AUTO") ? strand : null // if strandedness is set to auto, set it to null
-
-                        def meta = [ id: id, strandedness: strand ]
+                        def meta = [ id: id, strandedness: strand, read_type: params.read_type ]
                         tuple(meta, bam_file)
                     } 
         }
@@ -433,8 +476,8 @@ workflow {
                 str_list.each {
                     str_list2 = it.tokenize(' ')
                     str_list2.each {
-                        if (  Rain_utilities.is_fastq( it ) ){
-                            if (  Rain_utilities.is_url(it) ) {
+                        if (  RainUtils.is_fastq( it ) ){
+                            if (  RainUtils.is_url(it) ) {
                                 log.info "This fastq input is an URL: ${it}"
                                 via_url = true
                             }
@@ -463,9 +506,9 @@ workflow {
                     }
                     //   --------- FASTQ FILE  CASE ---------
                     else {
-                        if ( Rain_utilities.is_fastq( path_reads ) ){
+                        if ( RainUtils.is_fastq( path_reads ) ){
                             log.info "The input ${path_reads} is a fastq file!"
-                            if (  Rain_utilities.is_url(path_reads) ) {
+                            if (  RainUtils.is_url(path_reads) ) {
                                 log.info "This fastq input is an URL: ${path_reads}"
                                 via_url = true
                             }
@@ -475,11 +518,12 @@ workflow {
                 }
             }
         }
+        
         Channel.empty().set{aline_alignments_all}
         if (aline_data_in){
 
             ALIGNMENT (
-                'Juke34/AliNe -r v1.6.0', // Select pipeline
+                "Juke34/AliNe -r ${params.aline_version}", // Select pipeline
                 "${workflow.resume?'-resume':''} -profile ${aline_profile}", // workflow opts supplied as params for flexibility
                 "-config ${params.aline_profiles}",
                 aline_data_in,
@@ -494,26 +538,16 @@ workflow {
             // GET TUPLE [ID, BAM] FILES
             ALIGNMENT.out.output
                 .map { dir ->
-                    files("$dir/alignment/*/*.bam", checkIfExists: true)  // Find BAM files inside the output directory
+                    files("$dir/alignment/**/*.bam", checkIfExists: true)  // Find BAM files recursively inside the output directory
                 }
                 .flatten()  // Ensure we emit each file separately
                 .map { bam -> 
-                            def name = bam.getName().split('_seqkit')[0]  // Extract the base name of the BAM file. _seqkit is the separator.
+                            def name = bam.getName().split('_AliNe')[0]  // Extract the base name of the BAM file. _seqkit is the separator.
                             tuple(name, bam)
                     }  // Convert each BAM file into a tuple, with the base name as the first element
                 .set { aline_alignments }  // Store the channel
             
-            // SET CORRECT ID NAME WHEN CSV catched from CSV sample row
-            if (via_csv){
-                csv_meta_ch
-                    .join(aline_alignments)
-                    .map{ name_AliNe, sample, strandedness, bam ->
-                            return tuple (sample, bam)
-                        }
-                    .set { aline_alignments }
-            }
-
-            // GET TUPLE [ID, OUTPUT_SALMON_LIBTYPE] FILES
+            // CATCH STRANDEDNESS INFORMATION
             if ( params.strandedness && params.strandedness.toUpperCase() != "AUTO" ) {
                 log.info "Strandedness type is set to ${params.strandedness}, no need to extract it from salmon output"
                 aline_alignments_all = aline_alignments.map { id, bam -> 
@@ -523,30 +557,24 @@ workflow {
                 log.info "Try to get strandedness from AliNe salmon output"
                 aline_libtype = ALIGNMENT.out.output
                     .map { dir ->
-                        files("$dir/salmon_strandedness/*/*.json", checkIfExists: true)  // Find BAM files inside the output directory
+                        files("$dir/salmon_strandedness/*.json", checkIfExists: true)  // Find BAM files inside the output directory
                     }
                     .flatten()  // Ensure we emit each file separately
                     .map { json -> 
-                                def name = json.getParent().getName().split('_seqkit')[0]  // Extract the base name of the BAM file. _seqkit is the separator. The name is in the fodler containing the json file. Why take this one? Because it is the same as teh bam name set by Aline. It will be used to sync both values
+                                def name = json.getName().split('_AliNe')[0]  // Extract the base name of the BAM file. _seqkit is the separator. The name is in the fodler containing the json file. Why take this one? Because it is the same as teh bam name set by Aline. It will be used to sync both values
                                 tuple(name, json)
                         }  // Convert each BAM file into a tuple, with the base name as the first element
 
                 // Extract the library type from the JSON file
                 aline_libtype = extract_libtype(aline_libtype)
-                
-                // because id and name can be different in csv case, we add the aline name to the tuple
-                aline_alignments_tmp = aline_alignments.map { id, file -> 
-                            def aline_name = file.getName().split('_seqkit')[0]  // Extract the base name of the BAM file. _seqkit is the separator.
-                            tuple(aline_name, id, file)
-                        }
-
-                aline_alignments_tmp.join(aline_libtype, remainder: true)
-                    .map { aline_name, id, file, lib -> 
+                // add the libtype to the meta information
+                aline_alignments.join(aline_libtype, remainder: true)
+                    .map { id, file, lib -> 
                             def meta = [ id: id, strandedness: lib ]
                             tuple(meta, file)
                         }  // Join the two channels on the key (the name of the BAM file)
                     .set { aline_alignments_all }  // Store the channel
-                
+
                 // Here strandedness is null if it was not guessed by AliNe. Try to catch it in CSV if csv case
                 if (via_csv) {
                     sample_with_strand = aline_alignments_all.filter { meta, reads -> meta.strandedness && meta.strandedness != 'auto' }
@@ -554,8 +582,8 @@ workflow {
 
                     log.info "Try to get strandedness from CSV file"
                     // Get the strandedness from the csv file
-                    csv_meta_ch.map { read_id, sample_id, strandedness -> 
-                        [sample_id, strandedness] 
+                    csv_ch.map { meta, reads -> 
+                        [meta.id, meta.strandedness] 
                     }
                     .set { csv_meta_ch_short }  // Set the channel with the new strandedness
 
@@ -582,11 +610,30 @@ workflow {
         if (params.debug) {
             all_input_bam.view { meta, bam -> log.info "RAIN processing ${bam} (sample: ${meta.id})" }
         }
+
+        // CATCH READ_TYPE INFORMATION
+        if (via_csv){
+
+             all_input_bam.map { meta, bam -> [meta.id, meta, bam] }
+                    .join(csv_ch.map { meta, reads -> [meta.id, meta.read_type] })
+                    .map { id, meta, bam, read_type ->
+                            meta.read_type = read_type
+                            tuple(meta, bam)
+                        }
+                    .set{all_input_bam}
+
+        } else {
+            all_input_bam = all_input_bam.map { meta, bam -> 
+                meta.read_type = params.read_type
+                tuple(meta, bam)
+            }
+        }
+
 // -------------------------------------------------------
 // ----------------- DETECT HYPER_EDITING ----------------
 // -------------------------------------------------------
 
-        // Split BAM into mapped and unmapped reads
+        // Split BAM into mapped and unmapped reads and Add _AliNe to bam file name to look similar as fastq mapped via AliNe
         samtools_split_mapped_unmapped(all_input_bam)
 
         // Process hyper-editing if not skipped
@@ -616,7 +663,7 @@ workflow {
                         .set { meta_bam_bamhe } 
             
             // Merge the final bam with the original bam in case of hyper-editing to keep all reads for edition site detection
-            merged_bams = samtools_merge_bams(meta_bam_bamhe)
+            merged_bams = samtools_merge_bams(meta_bam_bamhe, "bam_appended_with_he")
             
             // Add hyper-editing sample to analysis
             // Here we have bam containing normal and hyper_editing reads and bam containing only hyper-editing reads.
@@ -687,7 +734,6 @@ workflow {
 
         // ------------------- MULTIQC -----------------
         multiqc(logs.collect(),params.multiqc_config)
-
 }
 
 
@@ -749,6 +795,8 @@ workflow.onComplete {
     Duration    : ${duration}
     Succeeded   : ${succeeded}
     Cached      : ${cached}
+    Exit Status  : ${workflow.exitStatus}
+    Error report : ${workflow.errorReport ?: '-'}
     =======================================================
     ${c_reset}
     """

@@ -79,7 +79,7 @@ process samtools_split_mapped_unmapped {
         // _seqkit suffix is added by aline when starting from fastq, when starting from BAM, there is no _seqkit suffix. 
         // We want to keep the same base name for both cases, because it is used to recognize the sample name (sample name is what is bofore the first occurrence of _seqkit)
         // It is needed at the step of sequence restoration, where we join the aligned BAM with the original unmapped BAM based on the sample name. (see hyper-editing.nf)
-        def suffix = base.contains('_seqkit') ? '' : '_seqkit'
+        def suffix = base.contains('_AliNe') ? '' : '_AliNe'
         """
         # Extract mapped reads (SAM flag -F 4: exclude unmapped)
         samtools view -@ ${task.cpus} -b -F 4 ${bam} > ${base}${suffix}_mapped.bam
@@ -126,10 +126,11 @@ process convert_to_fastq {
 process samtools_merge_bams {
     label "samtools"
     tag "${meta.id}"
-    publishDir("${params.outdir}/merged_bam", mode:"copy")
+    publishDir("${params.outdir}/${output}", mode:"copy")
     
     input:
         tuple val(meta), path(bam1), path(bam2)
+        val output
 
     output:
         tuple val(meta), path("*_merged.bam"), emit: merged_bam
