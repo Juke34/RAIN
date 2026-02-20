@@ -91,7 +91,7 @@ process transform_bases_fasta {
  */
 process create_aline_csv_he {
     label 'bash'
-    tag "${file_id}"
+    tag "${meta.uid}"
 
     input:
         tuple val(meta), path(fastq) 
@@ -101,7 +101,6 @@ process create_aline_csv_he {
 
     script:
         def sample_id = meta.sample_id
-        file_id = meta.file_id[0] 
         def strandedness = meta.strandedness ? meta.strandedness : "auto"
         def read_type = meta.read_type
         
@@ -110,13 +109,13 @@ process create_aline_csv_he {
             """
             fastq0=\$(readlink -f ${fastq[0]})
             fastq1=\$(readlink -f ${fastq[1]})
-            echo "${sample_id},\${fastq0},\${fastq1},${strandedness},${read_type}" > ${file_id}.csv
+            echo "${sample_id},\${fastq0},\${fastq1},${strandedness},${read_type}" > ${meta.uid}.csv
             """
         } else {
             // Single-end
             """
             fastq0=\$(readlink -f ${fastq[0]})
-            echo "${sample_id},\${fastq0},,${strandedness},${read_type}" > ${file_id}.csv
+            echo "${sample_id},\${fastq0},,${strandedness},${read_type}" > ${meta.uid}.csv
             """
         }
 }
