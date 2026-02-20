@@ -1,7 +1,7 @@
 process reditools2 {
     label "reditools2"
     publishDir("${params.outdir}/reditools2", mode: "copy")
-    tag "${meta.id}"
+    tag "${meta.uid}"
 
     input:
         tuple(val(meta), path(bam), path(bamindex))

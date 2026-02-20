@@ -1,6 +1,6 @@
 process sapin {
     label "sapin"
-    tag "${meta.id}"
+    tag "${meta.uid}"
     publishDir("${params.outdir}/sapin", mode: "copy")
 
     input:

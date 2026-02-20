@@ -1,6 +1,6 @@
 process bamutil_clipoverlap {
     label 'bamutil'
-    tag "${meta.id}"
+    tag "${meta.uid}"
     publishDir "${params.outdir}/bamutil_clipoverlap", mode: 'copy'
 
     input:
@@ -13,7 +13,7 @@ process bamutil_clipoverlap {
     script:
 
         """
-        bam clipOverlap --storeOrig CG --poolSize 5000000 --in ${bam} --out ${bam}_clipoverlap.bam --stats --excludeFlags 0x37 > ${meta.id}_bamutil_clipoverlap.log
+        bam clipOverlap --storeOrig CG --poolSize 5000000 --in ${bam} --out ${bam}_clipoverlap.bam --stats --excludeFlags 0x37 > ${meta.uid}_bamutil_clipoverlap.log
         """
 
 }

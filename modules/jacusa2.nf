@@ -1,6 +1,6 @@
 process jacusa2 {
     label "jacusa2"
-    tag "${meta.id}"
+    tag "${meta.uid}"
     publishDir("${params.outdir}/jacusa2", mode: "copy")
 
     input:

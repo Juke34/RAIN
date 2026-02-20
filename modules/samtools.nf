@@ -1,6 +1,6 @@
 process samtools_index {
     label "samtools"
-    tag "${meta.id}"
+    tag "${meta.uid}"
     publishDir("${params.outdir}/bam_indices", mode:"copy")
     
     input:
@@ -38,7 +38,7 @@ Sort alignments by leftmost coordinates
 */
 process samtools_sort_bam {
     label "samtools"
-    tag "${meta.id}"
+    tag "${meta.uid}"
 
     input:
         tuple val(meta), path(bam)
@@ -64,7 +64,7 @@ process samtools_sort_bam {
  */
 process samtools_split_mapped_unmapped {
     label "samtools"
-    tag "${meta.id}"
+    tag "${meta.uid}"
     publishDir("${params.outdir}/split_bam", mode:"copy", pattern: "*_{mapped,unmapped}.bam")
     
     input:
@@ -95,7 +95,7 @@ process samtools_split_mapped_unmapped {
  */
 process convert_to_fastq {
     label "samtools"
-    tag "${meta.id}"
+    tag "${meta.uid}"
     publishDir("${output_dir}", mode:"copy", pattern: "*.fastq*")
     
     input:
@@ -125,7 +125,7 @@ process convert_to_fastq {
  */
 process samtools_merge_bams {
     label "samtools"
-    tag "${meta.id}"
+    tag "${meta.uid}"
     publishDir("${params.outdir}/${output}", mode:"copy")
     
     input:
@@ -137,6 +137,6 @@ process samtools_merge_bams {
 
     script:
         """
-        samtools merge -@ ${task.cpus} ${meta.id}_merged.bam ${bam1} ${bam2}
+        samtools merge -@ ${task.cpus} ${meta.uid}_merged.bam ${bam1} ${bam2}
         """
 }

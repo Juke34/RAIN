@@ -27,7 +27,7 @@ process extract_libtype {
  */
 process transform_bases_fastq {
     label 'bash'
-    tag "${meta.id}"
+    tag "${meta.uid}"
     publishDir("${output_dir}", mode:"copy", pattern: "*_AtoG.fastq.gz")
     
     input:
@@ -100,10 +100,10 @@ process create_aline_csv_he {
         path "*.csv", emit: csv
 
     script:
-        def sample_id = meta.sample_id ? meta.sample_id : RainUtils.get_file_id(fastq[0])  // Extract sample ID from meta or from filename
-        file_id = meta.file_id ? meta.file_id : RainUtils.get_file_id(fastq[0])
+        def sample_id = meta.sample_id
+        file_id = meta.file_id[0] 
         def strandedness = meta.strandedness ? meta.strandedness : "auto"
-        def read_type = meta.read_type ? meta.read_type : params.read_type
+        def read_type = meta.read_type
         
         if (fastq[1]) {
             // Paired-end

@@ -90,15 +90,15 @@ workflow HYPER_EDITING {
         // create a channel of tuples with (meta, bam, fastq) joined by the id:chr21_small_R1 and sample name   
         aligned_bams.map { id, bam -> tuple(id, bam) }
                     .join(
-                        unmapped_bams.map { meta2, bam_ori -> tuple(meta2.id, meta2, bam_ori) }
+                        unmapped_bams.map { meta2, bam_ori -> tuple(meta2.uid, meta2, bam_ori) }
                     )
                     .map { id, bam, meta2, bam_ori -> tuple(meta2, bam, bam_ori) }
                     .set { sample_bam_bamori } 
 
         // Stage 8: Reconstruct original sequences from converted alignments
         if (params.debug) {
-            sample_bam_bamori.view { meta, bam, bam_ori -> log.info "    Restoring sequences for BAM: ${bam.getName()} (sample: ${meta.id}) using original BAM: ${bam_ori.getName()}" }
-            unmapped_bams.view { meta, bam -> log.info "    Original unmapped BAM for restoration: ${bam.getName()} (sample: ${meta.id})" }
+            sample_bam_bamori.view { meta, bam, bam_ori -> log.info "    Restoring sequences for BAM: ${bam.getName()} (sample: ${meta.uid}) using original BAM: ${bam_ori.getName()}" }
+            unmapped_bams.view { meta, bam -> log.info "    Original unmapped BAM for restoration: ${bam.getName()} (sample: ${meta.uid})" }
         }
         reconstructed_bams = restore_original_sequences(sample_bam_bamori, output_he)
        

@@ -1,6 +1,6 @@
 process fastqc {
     label 'fastqc'
-    tag "${meta.id}"
+    tag "${meta.uid}"
     publishDir "${params.outdir}/FastQC", mode: 'copy'
 
     input:
@@ -8,12 +8,12 @@ process fastqc {
         val (suffix)
 
     output:
-        path ("fastqc_${meta.id}_logs_${suffix}")
+        path ("fastqc_${meta.uid}_logs_${suffix}")
 
     script:
         """
-        mkdir fastqc_${meta.id}_logs_${suffix}
-        fastqc -t ${task.cpus} -o fastqc_${meta.id}_logs_${suffix} -q ${reads}
+        mkdir fastqc_${meta.uid}_logs_${suffix}
+        fastqc -t ${task.cpus} -o fastqc_${meta.uid}_logs_${suffix} -q ${reads}
         """
 
 }

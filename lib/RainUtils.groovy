@@ -22,6 +22,19 @@ class RainUtils {
         }
     }
     
+    // Function to extract the basename of a file //getCleanName
+    public static String cleanPrefix (file) {
+        def fileClean = new File(file.toString()).getName()
+        fileClean = fileClean.replaceAll(/\.(gz)$/, '') // remove .gz
+        fileClean = fileClean.replaceAll(/\.(fasta|fa)$/, '') // remove .fasta or .fa
+        fileClean = fileClean.replaceAll(/\.(fastq|fq)$/, '') // remove .fastq or .fq
+        fileClean = fileClean.replaceAll(/\.(bam)$/, '') // remove .bam
+        fileClean = fileClean.replaceAll(/\.(gff3)$/, '') // remove .bam
+        fileClean = fileClean.replaceAll(/\.(gff)$/, '') // remove .bam
+        fileClean = fileClean.replaceAll(/\.(gtf)$/, '') // remove .bam
+        return fileClean
+    }
+
     /*
      * Extract sample ID from filename (nf-core style)
      * Removes file extensions and paired-end suffixes based on read type
@@ -40,7 +53,7 @@ class RainUtils {
      *
      * This function must be synchronized with the counterpart in RAIN!
      */
-    public static String get_file_id(filename, read_type = "short_paired") {
+    public static String get_file_uid(filename, read_type = "short_paired") {
         def name = new File(filename.toString()).getName()
 
         if (read_type == "short_paired") {

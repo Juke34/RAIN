@@ -341,10 +341,31 @@ workflow {
                                         } else {
                                             read_type = read_typep
                                         }
+                                        // check its is paired or not
+                                        def fastq2
+                                        if(row.input_2) {
+                                            fastq2 = file(row.input_2.trim())
+                                        } else if (row.fastq_2) {
+                                            fastq2 = file(row.fastq_2.trim())
+                                        }
+                                        if ( fastq2 ) {
+                                            if (read_type == "short_paired") {
+                                                pair = true
+                                                file_id2 = RainUtils.cleanPrefix(fastq2)
+                                            } else {
+                                                log.info "The input ${input_csv} file contains a second fastq file for sample ${sample_id} but the read_type is set to <${read_type}>! R2 will not be taken into account! paired set to false."
+                                            }
+                                        } else {
+                                            if (read_type == "short_paired" && input_type == "fastq") {
+                                                error "The input ${input_csv} file does not contain a second fastq file for sample ${sample_id} but the read_type is set to <short_paired>!"
+                                            }
+                                        }
                                         // Define file_id based on the filename and read type using the utility function
-                                        def file_id = RainUtils.get_file_id(input_1)
-
-                                        def meta = [ id: file_id, sample_id: sample_id, strandedness: libtype, input_type: input_type, is_url: input_url, read_type: read_type]
+                                        def file_id1 = RainUtils.cleanPrefix(input_1)
+                                        def uid = pair ? RainUtils.get_file_uid(input_1) : RainUtils.cleanPrefix(input_1)
+                                        def file_id = pair ? [file_id1, file_id2] : [file_id1]
+                                        // uid is similar to file_id[0] but file_id needed to make difference between R1 and R2 in paired end case.
+                                        def meta = [ uid: uid, file_id: file_id, sample_id: sample_id, strandedness: libtype, input_type: input_type, is_url: input_url, read_type: read_type]
                                         return tuple(meta, input_1)
                                     }
                                     else {
@@ -432,7 +453,10 @@ workflow {
             }
             if (via_url ){
                 my_samples = Channel.of(bam_list)
-                bams = my_samples.flatten().map { it -> [it.name.split('_')[0], it] }
+                bams = my_samples.flatten().map { it -> 
+                                                    uid = RainUtils.get_file_uid(it)
+                                                    [uid, it] 
+                                                }
                                 .groupTuple()
                                 .ifEmpty { exit 1, "Cannot find reads matching ${bam_path_reads}!\n" }
             } else {
@@ -442,10 +466,10 @@ workflow {
             }
 
             // Set structure with dictionary as first value
-            bams = bams.map {  id, bam_file -> 
+            bams = bams.map {  uid, bam_file -> 
                         def strand = params.strandedness
                         strand = (strand && strand.toUpperCase() != "AUTO") ? strand : null // if strandedness is set to auto, set it to null
-                        def meta = [ id: id, strandedness: strand, read_type: params.read_type ]
+                        def meta = [ uid: uid, strandedness: strand, read_type: params.read_type ]
                         tuple(meta, bam_file)
                     } 
         }
@@ -543,96 +567,57 @@ workflow {
                 .flatten()  // Ensure we emit each file separately
                 .map { bam -> 
                             def name = bam.getName().split('_AliNe')[0]  // Extract the base name of the BAM file. _seqkit is the separator.
-                            tuple(name, bam)
+                            def meta = [ uid: name ]
+                            tuple(meta, bam)
                     }  // Convert each BAM file into a tuple, with the base name as the first element
                 .set { aline_alignments }  // Store the channel
-            
-            // CATCH STRANDEDNESS INFORMATION
-            if ( params.strandedness && params.strandedness.toUpperCase() != "AUTO" ) {
-                log.info "Strandedness type is set to ${params.strandedness}, no need to extract it from salmon output"
-                aline_alignments_all = aline_alignments.map { id, bam -> 
-                                                                def meta = [ id: id, strandedness: params.strandedness ]
-                                                                            tuple(meta, bam)}
-            } else {
-                log.info "Try to get strandedness from AliNe salmon output"
-                aline_libtype = ALIGNMENT.out.output
-                    .map { dir ->
-                        files("$dir/salmon_strandedness/*.json", checkIfExists: true)  // Find BAM files inside the output directory
-                    }
-                    .flatten()  // Ensure we emit each file separately
-                    .map { json -> 
-                                def name = json.getName().split('_AliNe')[0]  // Extract the base name of the BAM file. _seqkit is the separator. The name is in the fodler containing the json file. Why take this one? Because it is the same as teh bam name set by Aline. It will be used to sync both values
-                                tuple(name, json)
-                        }  // Convert each BAM file into a tuple, with the base name as the first element
 
-                // Extract the library type from the JSON file
-                aline_libtype = extract_libtype(aline_libtype)
-                // add the libtype to the meta information
-                aline_alignments.join(aline_libtype, remainder: true)
-                    .map { id, file, lib -> 
-                            def meta = [ id: id, strandedness: lib ]
-                            tuple(meta, file)
-                        }  // Join the two channels on the key (the name of the BAM file)
-                    .set { aline_alignments_all }  // Store the channel
-
-                // Here strandedness is null if it was not guessed by AliNe. Try to catch it in CSV if csv case
-                if (via_csv) {
-                    sample_with_strand = aline_alignments_all.filter { meta, reads -> meta.strandedness && meta.strandedness != 'auto' }
-                    sample_no_strand   = aline_alignments_all.filter { meta, reads -> !meta.strandedness || meta.strandedness == 'auto' }
-
-                    log.info "Try to get strandedness from CSV file"
-                    // Get the strandedness from the csv file
-                    csv_ch.map { meta, reads -> 
-                        [meta.id, meta.strandedness] 
-                    }
-                    .set { csv_meta_ch_short }  // Set the channel with the new strandedness
-
-                    channel_data_tojoin = sample_no_strand.map { meta, bam_path -> 
-                                            [meta.id, [meta, bam_path]] 
-                                        }
-
-                    channel_data_tojoin
-                    .join(csv_meta_ch_short)
-                    .map { id, data_pair, strandedness ->
-                            def (meta, bam_path) = data_pair
-                            meta.strandedness = strandedness
-                            [meta, bam_path]
-                        }
-                    .set{sample_no_strand}
-
-                    aline_alignments_all = sample_with_strand.concat(sample_no_strand)
-                }
+            if (via_csv) {
+                aline_alignments.map { meta, bam -> tuple(meta.uid, bam) }  // Reorder the tuple to have uid as the first element for joining
+                    .join(  
+                        csv_ch.map { meta, file -> tuple(meta.uid, meta) }  // Create a channel of tuples with (uid, meta) from the CSV metadata
+                    )
+                    .map { uid, bam, meta -> tuple(meta, bam) }  
+                    .set { aline_alignments }  // Store the channel
             }
+
+            // UPDATE STRANDEDNESS INFORMATION
+            log.info "Try to get strandedness from AliNe salmon output when strandedness is set to auto or not provided"
+            aline_libtype = ALIGNMENT.out.output
+                .map { dir ->
+                    files("$dir/salmon_strandedness/*.json")  // Find BAM files inside the output directory
+                }
+                .flatten()  // Ensure we emit each file separately
+                .map { json -> 
+                            def name = json.getName().split('_AliNe')[0]  // Extract the base name of the BAM file. _seqkit is the separator. The name is in the fodler containing the json file. Why take this one? Because it is the same as teh bam name set by Aline. It will be used to sync both values
+                            tuple(name, json)
+                    }  // Convert each BAM file into a tuple, with the base name as the first element
+
+            // Extract the library type from the JSON file
+            aline_libtype = extract_libtype(aline_libtype)
+
+            // add the libtype to the meta information
+            aline_alignments.map { meta, bam -> tuple(meta.uid, meta, bam) }
+                .join(aline_libtype, remainder: true)
+                .map { uid, meta, bam, lib ->
+                        if (lib != null) {
+                            meta.strandedness = lib
+                        } 
+                        tuple(meta, bam)
+                    }  // Join the two channels on the key (the name of the BAM file)
+                .set { aline_alignments }  // Store the channel
         }
 
         // MERGE ALINE BAM AND INPUT BAM TOGETHER
-        all_input_bam = aline_alignments_all.mix(bams)
+        all_input_bam = aline_alignments.mix(bams)
         if (params.debug) {
-            all_input_bam.view { meta, bam -> log.info "RAIN processing ${bam} (sample: ${meta.id})" }
-        }
-
-        // CATCH READ_TYPE INFORMATION
-        if (via_csv){
-
-             all_input_bam.map { meta, bam -> [meta.id, meta, bam] }
-                    .join(csv_ch.map { meta, reads -> [meta.id, meta.read_type] })
-                    .map { id, meta, bam, read_type ->
-                            meta.read_type = read_type
-                            tuple(meta, bam)
-                        }
-                    .set{all_input_bam}
-
-        } else {
-            all_input_bam = all_input_bam.map { meta, bam -> 
-                meta.read_type = params.read_type
-                tuple(meta, bam)
-            }
+            all_input_bam.view { meta, bam -> log.info "RAIN processing ${bam} (sample: ${meta.uid})" }
         }
 
 // -------------------------------------------------------
 // ----------------- DETECT HYPER_EDITING ----------------
 // -------------------------------------------------------
-
+        
         // Split BAM into mapped and unmapped reads and Add _AliNe to bam file name to look similar as fastq mapped via AliNe
         samtools_split_mapped_unmapped(all_input_bam)
 
@@ -652,12 +637,11 @@ workflow {
             // Access the results
             hyperedit_bam_mapped = HYPER_EDITING.out.bam_mapped
             bam_unmapped = HYPER_EDITING.out.bam_unmapped
-        
-              
+         
             // create a channel of tuples with (meta, bam, bam_he) joined by the id
-            samtools_split_mapped_unmapped.out.mapped_bam.map { meta, bam -> tuple(meta.id, meta, bam) }
+            samtools_split_mapped_unmapped.out.mapped_bam.map { meta, bam -> tuple(meta.uid, meta, bam) }
                         .join(
-                            hyperedit_bam_mapped.map { meta2, bam_he -> tuple(meta2.id, meta2, bam_he) }
+                            hyperedit_bam_mapped.map { meta2, bam_he -> tuple(meta2.uid, meta2, bam_he) }
                         )
                         .map { id, meta, bam, meta2, bam_he -> tuple(meta, bam, bam_he) }
                         .set { meta_bam_bamhe } 

@@ -1,6 +1,6 @@
 process gatk_markduplicates {
     label 'gatk'
-    tag "${meta.id}"
+    tag "${meta.uid}"
     publishDir "${params.outdir}/gatk_markduplicates", mode: 'copy'
 
     input:
