@@ -80,10 +80,12 @@ jobs:
         run: bash build_containers.sh --docker --github_action
 
       # Run test(s)
-      - name: test short single
-        run: nextflow run rain.nf -profile docker,test
+      - name: test short single list
+        run: nextflow run rain.nf -profile docker,test_short_single_list
 
-      - name: test short paired
-        run: nextflow run rain.nf -profile docker,test2
+      - name: test short paired folder
+        run: nextflow run rain.nf -profile docker,test_short_paired_folder
 
+      - name: test csv mix
+        run: nextflow run rain.nf -profile docker,test_mix_csv
 
