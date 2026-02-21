@@ -183,7 +183,6 @@ include {reditools3} from "./modules/reditools3.nf"
 include {jacusa2} from "./modules/jacusa2.nf"
 include {sapin} from "./modules/sapin.nf"
 include {normalize_gxf} from "./modules/agat.nf"
-include {aggregate_editing_analysis} from "./modules/python.nf"
 include {pluviometer as pluviometer_jacusa2; pluviometer as pluviometer_reditools2; pluviometer as pluviometer_reditools3; pluviometer as pluviometer_sapin} from "./modules/pluviometer.nf"
 include {HYPER_EDITING} from "./subworkflows/hyper-editing.nf"
 
