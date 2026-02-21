@@ -124,9 +124,9 @@ process create_aline_csv_he {
  * Collect CSV files for AliNe input from converted FASTQ reads
  * Generates a single CSV with columns: sample,fastq_1,fastq_2,strandedness,read_type
  */
-process collect_aline_csv_he {
+process collect_aline_csv {
     label 'bash'
-    publishDir("${output_dir}", mode:"copy", pattern: "*.csv")
+    publishDir("${params.outdir}/${output_dir}", mode:"copy", pattern: "*.csv")
     
     input:
         val all_csv  // List of tuples (meta, fastq_files)
@@ -141,9 +141,36 @@ process collect_aline_csv_he {
         list_csv = all_csv
         list_csv_bash = list_csv.join(" "); // remove bracket and replace comma by space to be processed by bash
         """
-        echo "sample,fastq_1,fastq_2,strandedness,read_type" > hyper_editing_samples.csv
+        echo "sample,fastq_1,fastq_2,strandedness,read_type" > aline_input.csv
         for entry in ${list_csv_bash}; do
-            cat \$entry >> hyper_editing_samples.csv
+            cat \$entry >> aline_input.csv
         done
+        """
+}
+
+/*
+ * Recreate CSV file with absolute paths from metadata
+ * Takes input samples with metadata and generates a new CSV with absolute file paths
+ * This allows conversion of relative paths to absolute paths for CI/CD compatibility
+ */
+process recreate_csv_with_abs_paths {
+    label 'bash'
+    tag "${meta.uid}"
+    
+    input:
+        tuple val(meta), path(file) 
+
+    output:
+        path "*.csv", emit: csv
+
+    script:
+        
+        def sample_id = meta.sample_id
+        def strandedness = meta.strandedness
+        def read_type = meta.read_type
+        def file1 = meta.file_abspath[0]
+        def file2 = meta.file_abspath[1] ? meta.file_abspath[1] : ""
+        """
+        echo "${sample_id},${file1},${file2},${strandedness},${read_type}" > ${meta.uid}.csv
         """
 }

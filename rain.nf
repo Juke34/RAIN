@@ -108,10 +108,10 @@ def helpMSG() {
     --reads                     path to the reads file, folder or csv. If a folder is provided, all the files with proper extension in the folder will be used. You can provide remote files (commma separated list).
                                     file extension expected : <.fastq.gz>, <.fq.gz>, <.fastq>, <.fq> or <.bam>. 
                                                               for paired reads extra <_R1_001> or <_R2_001> is expected where <R> and <_001> are optional. e.g. <sample_id_1.fastq.gz>, <sample_id_R1.fastq.gz>, <sample_id_R1_001.fastq.gz>)
-                                    csv input expects 6 columns: sample, fastq_1, fastq_2, strandedness and read_type. 
-                                    fastq_2 is optional and can be empty. Strandedness, read_type expects same values as corresponding AliNe parameter; If a value is provided via AliNe paramter, it will override the value in the csv file.
+                                    csv input expects 6 columns: sample, input_1, input_2, strandedness and read_type. 
+                                    input_2 is optional and can be empty. Strandedness, read_type expects same values as corresponding AliNe parameter; If a value is provided via AliNe paramter, it will override the value in the csv file.
                                     Example of csv file:
-                                        sample,fastq_1,fastq_2,strandedness,read_type
+                                        sample,input_1,input_2,strandedness,read_type
                                         control1,path/to/data1.fastq.bam,,auto,short_single
                                         control2,path/to/data2_R1.fastq.gz,path/to/data2_R2.fastq.gz,auto,short_paired
 
@@ -170,7 +170,7 @@ Report Parameters
 // STEP 2 - Include needed modules
 //*************************************************
 include { AliNe as ALIGNMENT } from "./modules/aline.nf"
-include { extract_libtype } from "./modules/bash.nf"
+include { extract_libtype; recreate_csv_with_abs_paths; collect_aline_csv} from "./modules/bash.nf"
 include {bamutil_clipoverlap} from './modules/bamutil.nf'
 include {fastp} from './modules/fastp.nf'
 include {fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from './modules/fastqc.nf'
@@ -183,8 +183,10 @@ include {reditools3} from "./modules/reditools3.nf"
 include {jacusa2} from "./modules/jacusa2.nf"
 include {sapin} from "./modules/sapin.nf"
 include {normalize_gxf} from "./modules/agat.nf"
+include {aggregate_editing_analysis} from "./modules/python.nf"
 include {pluviometer as pluviometer_jacusa2; pluviometer as pluviometer_reditools2; pluviometer as pluviometer_reditools3; pluviometer as pluviometer_sapin} from "./modules/pluviometer.nf"
 include {HYPER_EDITING} from "./subworkflows/hyper-editing.nf"
+
 
 //*************************************************
 // STEP 3 - Deal with parameters
@@ -294,7 +296,7 @@ workflow {
                                     if(row.input_1 == null || row.input_1.trim() == ''){ 
                                         error "The input ${params.reads} file does not contain a 'input_1' column!\n" 
                                     }
-                                    def input_1 = file(row.input_1.trim())
+                                    def input_1 =file(RainUtils.getAbsolutePath(row.input_1))
                                     if( input_1.toString().endsWith('.bam') || RainUtils.is_fastq(input_1) ) { 
                                         
                                         def input_type = input_1.toString().endsWith('bam') ? 'bam' : 'fastq'
@@ -342,16 +344,14 @@ workflow {
                                             read_type = read_typep
                                         }
                                         // check its is paired or not
-                                        def fastq2
+                                        def input_2
                                         if(row.input_2) {
-                                            fastq2 = file(row.input_2.trim())
-                                        } else if (row.fastq_2) {
-                                            fastq2 = file(row.fastq_2.trim())
+                                            input_2 = file(RainUtils.getAbsolutePath(row.input_2))
                                         }
-                                        if ( fastq2 ) {
+                                        if ( input_2 ) {
                                             if (read_type == "short_paired") {
                                                 pair = true
-                                                file_id2 = RainUtils.cleanPrefix(fastq2)
+                                                file_id2 = RainUtils.cleanPrefix(input_2)
                                             } else {
                                                 log.info "The input ${input_csv} file contains a second fastq file for sample ${sample_id} but the read_type is set to <${read_type}>! R2 will not be taken into account! paired set to false."
                                             }
@@ -364,8 +364,9 @@ workflow {
                                         def file_id1 = RainUtils.cleanPrefix(input_1)
                                         def uid = pair ? RainUtils.get_file_uid(input_1) : RainUtils.cleanPrefix(input_1)
                                         def file_id = pair ? [file_id1, file_id2] : [file_id1]
+                                        def file_abspath = pair ? [input_1, input_2] : [input_1]
                                         // uid is similar to file_id[0] but file_id needed to make difference between R1 and R2 in paired end case.
-                                        def meta = [ uid: uid, file_id: file_id, sample_id: sample_id, strandedness: libtype, input_type: input_type, is_url: input_url, read_type: read_type]
+                                        def meta = [ uid: uid, file_id: file_id, sample_id: sample_id, file_abspath: file_abspath, strandedness: libtype, input_type: input_type, is_url: input_url, read_type: read_type]
                                         return tuple(meta, input_1)
                                     }
                                     else {
@@ -489,7 +490,9 @@ workflow {
         def aline_data_in = null
 
         if ( via_csv ){
-            aline_data_in = path_reads
+            aline_data_in_ch = recreate_csv_with_abs_paths(csv_ch)
+            aline_data_in_ch = collect_aline_csv(aline_data_in_ch.collect(), "AliNe")
+            aline_data_in = aline_data_in_ch
         } 
         else {
             //   --------- FASTQ LIST CASE ---------

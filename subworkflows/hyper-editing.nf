@@ -6,10 +6,10 @@
  */
 
 include { AliNe as ALIGNMENT } from "${baseDir}/modules/aline.nf"
-include { convert_to_fastq; samtools_fasta_index; samtools_split_mapped_unmapped } from "${baseDir}/modules/samtools.nf"
-include { transform_bases_fastq; transform_bases_fasta; create_aline_csv_he; collect_aline_csv_he} from "${baseDir}/modules/bash.nf"
+include { transform_bases_fastq; transform_bases_fasta; create_aline_csv_he; collect_aline_csv} from "${baseDir}/modules/bash.nf"
 include { multiqc } from "${baseDir}/modules/multiqc.nf"
 include { restore_original_sequences } from "${baseDir}/modules/python.nf"
+include { convert_to_fastq; samtools_fasta_index; samtools_split_mapped_unmapped } from "${baseDir}/modules/samtools.nf"
 
 /**
  * Hyper-editing discovery workflow
@@ -47,7 +47,7 @@ workflow HYPER_EDITING {
 
         // Stage 4: Create CSV file for AliNe with all converted reads
         aline_csv = create_aline_csv_he(converted_reads).collect()
-        aline_csv = collect_aline_csv_he(aline_csv,output_he)
+        aline_csv = collect_aline_csv(aline_csv,output_he)
 
         // Stage 5: Build alignment index for converted reference
         alignment_index = samtools_fasta_index(converted_reference)

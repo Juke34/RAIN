@@ -80,4 +80,17 @@ class RainUtils {
                 .replaceAll(/\.bam$/, '')        // Remove .bam
         }
     } 
+    // Function to get absolute path from relative or absolute input
+    public static String getAbsolutePath( path ) {
+        if (!path) return null
+        def trimmedPath = path.toString().trim()
+        def f = new File(trimmedPath)
+        
+        // If path is already absolute, return it
+        if (f.isAbsolute()) {
+            return f.toString()
+        }
+        f = f.getAbsoluteFile()
+         return f.toString()
+    }
 }
