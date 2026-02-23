@@ -7,7 +7,7 @@ process normalize_gxf {
         path(gxf)
 
     output:
-        path ("*.gff3"), emit: gff
+        path ("*_normalized.gff3"), emit: gff
 
     script:
         base_name = RainUtils.cleanPrefix(gxf)
