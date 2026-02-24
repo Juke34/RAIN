@@ -42,8 +42,8 @@ process AliNe {
         cat > ${task.workDir}/aline_job.sh <<'SBATCH_EOF'
 #!/bin/bash
 #SBATCH --job-name=AliNe_pipeline
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
+#SBATCH --cpus-per-task=1
+#SBATCH --mem=4G
 #SBATCH --time=2-00:00:00
 #SBATCH --output=${task.workDir}/aline_%j.out
 #SBATCH --error=${task.workDir}/aline_%j.err
