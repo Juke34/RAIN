@@ -12,7 +12,6 @@ process normalize_gxf {
     script:
         base_name = RainUtils.cleanPrefix(gxf)
         """
-        agat config --expose --tabix
-        agat_convert_sp_gxf2gxf.pl --gxf ${gxf} -o ${base_name}_normalized.gff3
+        agat_convert_sp_gxf2gxf.pl --gxf ${gxf} -o ${base_name}_normalized.gff3 -t ${task.cpus} --no-progess_bar --tabix
         """
 }
