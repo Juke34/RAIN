@@ -4,6 +4,7 @@ from https://github.com/mahesh-panchal/nf-cascade
 */
 process AliNe {
     tag "$pipeline_name"
+    label 'aline'
     publishDir "${params.outdir}", mode: 'copy'
 
     input:
