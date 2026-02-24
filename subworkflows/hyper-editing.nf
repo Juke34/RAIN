@@ -27,6 +27,7 @@ workflow HYPER_EDITING {
         unmapped_bams    // Unmapped read chunks from primary alignment
         genome        // Genomic reference sequence
         aline_profile // AliNe profile in coma-separated format
+        use_slurm_for_aline  // Boolean - whether to use slurm for AliNe
         clean_annotation // Annotation file for AliNe
         quality_threshold       // Quality score filter threshold
         output_he         // output directory path  ier
@@ -67,7 +68,8 @@ workflow HYPER_EDITING {
             "--aligner ${params.aligner}",
             "--strandedness ${params.strandedness}",
             clean_annotation,
-            workflow.workDir.resolve('Juke34/AliNe').toUriString()
+            workflow.workDir.resolve('Juke34/AliNe').toUriString(),
+            use_slurm_for_aline  // Pass info about whether to use slurm submission
         )
 
         // GET TUPLE [ID, BAM] FILES

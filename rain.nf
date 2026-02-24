@@ -170,20 +170,21 @@ Report Parameters
 // STEP 2 - Include needed modules
 //*************************************************
 include { AliNe as ALIGNMENT } from "./modules/aline.nf"
+include {normalize_gxf} from "./modules/agat.nf"
 include { extract_libtype; recreate_csv_with_abs_paths; collect_aline_csv} from "./modules/bash.nf"
 include {bamutil_clipoverlap} from './modules/bamutil.nf'
 include {fastp} from './modules/fastp.nf'
 include {fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from './modules/fastqc.nf'
 include {gatk_markduplicates } from './modules/gatk.nf'
+include {jacusa2} from "./modules/jacusa2.nf"
 include {multiqc} from './modules/multiqc.nf'
 include {fasta_unzip} from "$baseDir/modules/pigz.nf"
 include {samtools_index; samtools_fasta_index; samtools_sort_bam as samtools_sort_bam_raw; samtools_sort_bam as samtools_sort_bam_merged; samtools_split_mapped_unmapped; samtools_merge_bams} from './modules/samtools.nf'
 include {reditools2} from "./modules/reditools2.nf"
 include {reditools3} from "./modules/reditools3.nf"
-include {jacusa2} from "./modules/jacusa2.nf"
-include {sapin} from "./modules/sapin.nf"
-include {normalize_gxf} from "./modules/agat.nf"
 include {pluviometer as pluviometer_jacusa2; pluviometer as pluviometer_reditools2; pluviometer as pluviometer_reditools3; pluviometer as pluviometer_sapin} from "./modules/pluviometer.nf"
+include {sapin} from "./modules/sapin.nf"
+
 include {HYPER_EDITING} from "./subworkflows/hyper-editing.nf"
 
 
@@ -200,10 +201,15 @@ else { exit 1, "No executer selected: please use a profile activating docker or 
 
 // check AliNE profile
 def aline_profile_list=[]
+def use_slurm_for_aline = false
 str_list = workflow.profile.tokenize(',')
 str_list.each {
     if ( it in aline_profile_allowed ){
          aline_profile_list.add(it)
+         if (it == 'itrop') {
+             // Don't pass itrop to AliNe, but remember we're in slurm context
+             use_slurm_for_aline = true
+         } 
     }
 }
 def aline_profile = aline_profile_list.join(',')
@@ -558,7 +564,8 @@ workflow {
                 "--aligner ${params.aligner}",
                 "--strandedness ${params.strandedness}",
                 clean_annotation,
-                workflow.workDir.resolve('Juke34/AliNe').toUriString()
+                workflow.workDir.resolve('Juke34/AliNe').toUriString(),
+                use_slurm_for_aline  // Pass info about whether to use slurm submission
             )
 
             // GET TUPLE [ID, BAM] FILES
@@ -635,6 +642,7 @@ workflow {
                 samtools_split_mapped_unmapped.out.unmapped_bam,
                 genome,
                 aline_profile,
+                use_slurm_for_aline,
                 clean_annotation,
                 30,  // quality threshold
                 "${params.outdir}/hyper_editing",
