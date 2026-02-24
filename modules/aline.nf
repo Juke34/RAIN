@@ -62,6 +62,10 @@ SBATCH_EOF
         echo "[AliNe] Submitted SLURM job: \$JOB_ID"
         echo \$JOB_ID > ${task.workDir}/aline_job_id.txt
         
+        # Wait a few seconds for job to appear in queue
+        echo "[AliNe] Waiting for job to appear in scheduler queue..."
+        sleep 120
+
         # Wait for job completion
         echo "[AliNe] Waiting for job \$JOB_ID to complete..."
         while squeue -j \$JOB_ID 2>/dev/null | grep -q \$JOB_ID; do
