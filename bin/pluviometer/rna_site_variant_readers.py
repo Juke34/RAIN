@@ -1,7 +1,7 @@
 import numpy as np
 from numpy.typing import NDArray
 from typing import TextIO, Optional
-from utils import RNASiteVariantData, NUC_STR_TO_IND, OUTPUT_PAIRING_TYPES, NONEDIT_TYPES
+from .utils import RNASiteVariantData, NUC_STR_TO_IND, OUTPUT_PAIRING_TYPES, NONEDIT_TYPES
 from abc import ABC, abstractmethod
 import logging
 import sys

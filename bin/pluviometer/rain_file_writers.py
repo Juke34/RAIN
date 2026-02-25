@@ -1,6 +1,6 @@
-from utils import OUTPUT_BASE_TYPES, OUTPUT_MATCH_MISMATCH_TYPES
+from .utils import OUTPUT_BASE_TYPES, OUTPUT_MATCH_MISMATCH_TYPES
 from Bio.SeqFeature import ExactPosition
-from multi_counter import MultiCounter
+from .multi_counter import MultiCounter
 from Bio.SeqFeature import SeqFeature
 from collections import defaultdict
 from typing import TextIO
@@ -263,5 +263,34 @@ class AggregateFileWriter(RainFileWriter):
             "chimaera",
         )
         b += self.write_data("0", self.STR_ZERO_BASE_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS)
+
+        return b
+
+    def write_rows_with_data_by_parent_type(
+        self,
+        record_id: str,
+        parent_list: list[str],
+        aggregate_id: str,
+        aggregation_mode: str,
+        counter_dict: defaultdict[tuple[str, str], MultiCounter],
+    ) -> int:
+        """Write metadata and data fields of multiple counters grouped by (parent_type, aggregate_type)"""
+        b: int = 0
+
+        for (parent_type, aggregate_type), aggregate_counter in counter_dict.items():
+            b += super().write_metadata(
+                record_id,
+                make_parent_path(parent_list),
+                aggregate_id,
+                parent_type,
+                aggregate_type,
+                aggregation_mode,
+            )
+            b += self.write_data(
+                str(aggregate_counter.genome_base_freqs.sum()),
+                ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),
+                ",".join(map(str, aggregate_counter.edit_site_freqs[0:4, 0:4].flat)),
+                ",".join(map(str, aggregate_counter.edit_read_freqs[0:4, 0:4].flat)),
+            )
 
         return b

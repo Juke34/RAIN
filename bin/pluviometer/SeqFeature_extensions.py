@@ -1,6 +1,6 @@
 # Custom methods and attributes for Bio.SeqFeature
 from Bio.SeqFeature import SeqFeature, SimpleLocation, CompoundLocation
-from utils import location_union
+from .utils import location_union
 from typing import Optional
 import logging
 

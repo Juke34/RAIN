@@ -16,7 +16,7 @@ process pluviometer {
     script:
         base_name = site_edits.BaseName
         """
-        pluviometer.py \
+        pluviometer_wrapper.py \
             --sites ${site_edits} \
             --gff ${gff} \
             --format ${tool_format} \

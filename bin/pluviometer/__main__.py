@@ -1,20 +1,20 @@
 #!/usr/bin/env python
-from rain_file_writers import FeatureFileWriter, AggregateFileWriter
+from .rain_file_writers import FeatureFileWriter, AggregateFileWriter
 from typing import Any, Optional, Generator, Callable, TextIO
 from Bio.SeqFeature import SimpleLocation, CompoundLocation
-from SeqFeature_extensions import SeqFeature
+from .SeqFeature_extensions import SeqFeature
 from collections import deque, defaultdict
 from dataclasses import dataclass, field
-from multi_counter import MultiCounter
+from .multi_counter import MultiCounter
 from Bio.SeqRecord import SeqRecord
-from site_filter import SiteFilter
-from rna_site_variant_readers import (
+from .site_filter import SiteFilter
+from .rna_site_variant_readers import (
     RNASiteVariantReader,
     Reditools2Reader,
     Reditools3Reader,
     Jacusa2Reader,
 )
-from utils import RNASiteVariantData
+from .utils import RNASiteVariantData
 from natsort import natsorted
 import multiprocessing
 from BCBio import GFF
@@ -82,6 +82,22 @@ class RecordCountingContext:
             DefaultMultiCounterFactory(self.filter)
         )
         """Dictionary of counters for the record-level all isoforms aggregates. Keys correspond to aggregate feature types"""
+
+        # New: Aggregate counters by (parent_type, aggregate_type) for intermediate-level aggregation
+        self.longest_isoform_aggregate_counters_by_parent_type: defaultdict[tuple[str, str], MultiCounter] = defaultdict(
+            DefaultMultiCounterFactory(self.filter)
+        )
+        """Dictionary of counters for longest isoform aggregates grouped by parent type. Keys are (parent_type, aggregate_type) tuples"""
+
+        self.chimaera_aggregate_counters_by_parent_type: defaultdict[tuple[str, str], MultiCounter] = defaultdict(
+            DefaultMultiCounterFactory(self.filter)
+        )
+        """Dictionary of counters for chimaeric aggregates grouped by parent type. Keys are (parent_type, aggregate_type) tuples"""
+
+        self.all_isoforms_aggregate_counters_by_parent_type: defaultdict[tuple[str, str], MultiCounter] = defaultdict(
+            DefaultMultiCounterFactory(self.filter)
+        )
+        """Dictionary of counters for all isoforms aggregates grouped by parent type. Keys are (parent_type, aggregate_type) tuples"""
 
         self.total_counter: MultiCounter = MultiCounter(self.filter)
         """The counter that keeps tallies of editions on all the sites of the record, regardless of feature"""
@@ -334,6 +350,8 @@ class RecordCountingContext:
                     self.record.id, feature, parent_feature, feature_counter
                 )
                 self.chimaera_aggregate_counters[feature.type].merge(feature_counter)
+                # Also track by parent_type
+                self.chimaera_aggregate_counters_by_parent_type[(parent_feature.type, feature.type)].merge(feature_counter)
             else:
                 self.feature_writer.write_row_with_data(self.record.id, feature, feature_counter)
             del self.counters[feature.id]
@@ -359,6 +377,13 @@ class RecordCountingContext:
             merge_aggregation_counter_dicts(
                 self.all_isoforms_aggregate_counters, level1_all_isoforms_aggregation_counters
             )
+
+            # Also merge into by-parent-type dictionaries
+            parent_type = feature.type
+            for aggregate_type, aggregate_counter in level1_longest_isoform_aggregation_counters.items():
+                self.longest_isoform_aggregate_counters_by_parent_type[(parent_type, aggregate_type)].merge(aggregate_counter)
+            for aggregate_type, aggregate_counter in level1_all_isoforms_aggregation_counters.items():
+                self.all_isoforms_aggregate_counters_by_parent_type[(parent_type, aggregate_type)].merge(aggregate_counter)
 
             for (
                 aggregate_type,
@@ -638,6 +663,18 @@ class DefaultMultiCounterFactory:
         return MultiCounter(self.filter)
 
 
+# Global variables for multiprocessing
+args = None
+reader_factory = None
+
+
+def init_worker(args_value, reader_factory_value):
+    """Initialize global variables in each worker process"""
+    global args, reader_factory
+    args = args_value
+    reader_factory = reader_factory_value
+
+
 def run_job(record: SeqRecord) -> dict[str, Any]:
     """
     A wrapper function for performing counting parallelized by record. The return value is a dict containing all the information needed for integrating
@@ -696,9 +733,32 @@ def run_job(record: SeqRecord) -> dict[str, Any]:
             record_ctx.chimaera_aggregate_counters,
         )
 
+        # Write aggregate counter data by parent type
+        aggregate_writer.write_rows_with_data_by_parent_type(
+            record.id,
+            ["."],
+            ".",
+            "longest_isoform",
+            record_ctx.longest_isoform_aggregate_counters_by_parent_type,
+        )
+        aggregate_writer.write_rows_with_data_by_parent_type(
+            record.id,
+            ["."],
+            ".",
+            "all_isoforms",
+            record_ctx.all_isoforms_aggregate_counters_by_parent_type,
+        )
+        aggregate_writer.write_rows_with_data_by_parent_type(
+            record.id,
+            ["."],
+            ".",
+            "chimaera",
+            record_ctx.chimaera_aggregate_counters_by_parent_type,
+        )
+
         # Write the total counter data of the record. A dummy dict needs to be created to use the `write_rows_with_data` method
         total_counter_dict: defaultdict[str, MultiCounter] = defaultdict(
-            lambda: MultiCounter(genome_filter)
+            lambda: MultiCounter(filter)
         )
         total_counter_dict["."] = record_ctx.total_counter
         aggregate_writer.write_rows_with_data(
@@ -712,14 +772,18 @@ def run_job(record: SeqRecord) -> dict[str, Any]:
         "chimaera_aggregate_counters": record_ctx.chimaera_aggregate_counters,
         "longest_isoform_aggregate_counters": record_ctx.longest_isoform_aggregate_counters,
         "all_isoforms_aggregate_counters": record_ctx.all_isoforms_aggregate_counters,
+        "chimaera_aggregate_counters_by_parent_type": record_ctx.chimaera_aggregate_counters_by_parent_type,
+        "longest_isoform_aggregate_counters_by_parent_type": record_ctx.longest_isoform_aggregate_counters_by_parent_type,
+        "all_isoforms_aggregate_counters_by_parent_type": record_ctx.all_isoforms_aggregate_counters_by_parent_type,
         "total_counter": record_ctx.total_counter,
     }
 
 
-if __name__ == "__main__":
+def main():
     global args
+    global reader_factory
 
-    args: argparse.Namespace = parse_cli_input()
+    args = parse_cli_input()
     LOGGING_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
     log_filename: str = args.output + "_pluviometer.log" if args.output else "pluviometer.log"
     logging.basicConfig(filename=log_filename, level=logging.INFO, format=LOGGING_FORMAT)
@@ -728,8 +792,6 @@ if __name__ == "__main__":
     aggregate_output_filename: str = (
         args.output + "_aggregates.tsv" if args.output else "aggregates.tsv"
     )
-
-    global reader_factory
 
     with (
         open(args.gff) as gff_handle,
@@ -764,13 +826,24 @@ if __name__ == "__main__":
             lambda: MultiCounter(genome_filter)
         )
 
+        # By-parent-type genome-level aggregates
+        genome_longest_isoform_aggregate_counters_by_parent_type: defaultdict[tuple[str, str], MultiCounter] = defaultdict(
+            lambda: MultiCounter(genome_filter)
+        )
+        genome_all_isoforms_aggregate_counters_by_parent_type: defaultdict[tuple[str, str], MultiCounter] = defaultdict(
+            lambda: MultiCounter(genome_filter)
+        )
+        genome_chimaera_aggregate_counters_by_parent_type: defaultdict[tuple[str, str], MultiCounter] = defaultdict(
+            lambda: MultiCounter(genome_filter)
+        )
+
         feature_writer: FeatureFileWriter = FeatureFileWriter(feature_output_handle)
         aggregate_writer: AggregateFileWriter = AggregateFileWriter(aggregate_output_handle)
 
         feature_writer.write_header()
         aggregate_writer.write_header()
 
-        with multiprocessing.Pool(processes=args.threads) as pool:
+        with multiprocessing.Pool(processes=args.threads, initializer=init_worker, initargs=(args, reader_factory)) as pool:
             # Run the jobs and save the result of each record in a dict stored in the `record_data` list
             record_data_list: list[dict[str, Any]] = pool.map(run_job, records)
 
@@ -814,6 +887,28 @@ if __name__ == "__main__":
                 record_data["all_isoforms_aggregate_counters"],
             )
 
+            # Update the genome's by-parent-type aggregate counters
+            for (parent_type, aggregate_type), record_aggregate_counter in record_data[
+                "longest_isoform_aggregate_counters_by_parent_type"
+            ].items():
+                genome_longest_isoform_aggregate_counters_by_parent_type[(parent_type, aggregate_type)].merge(
+                    record_aggregate_counter
+                )
+
+            for (parent_type, aggregate_type), record_aggregate_counter in record_data[
+                "all_isoforms_aggregate_counters_by_parent_type"
+            ].items():
+                genome_all_isoforms_aggregate_counters_by_parent_type[(parent_type, aggregate_type)].merge(
+                    record_aggregate_counter
+                )
+
+            for (parent_type, aggregate_type), record_aggregate_counter in record_data[
+                "chimaera_aggregate_counters_by_parent_type"
+            ].items():
+                genome_chimaera_aggregate_counters_by_parent_type[(parent_type, aggregate_type)].merge(
+                    record_aggregate_counter
+                )
+
             # Update the genome's total counter from the record data total counter
             genome_total_counter.merge(record_data["total_counter"])
 
@@ -832,6 +927,17 @@ if __name__ == "__main__":
             ".", ["."], ".", ".", "chimaera", genome_chimaera_aggregate_counters
         )
 
+        # Write genomic counts by parent type
+        aggregate_writer.write_rows_with_data_by_parent_type(
+            ".", ["."], ".", "longest_isoform", genome_longest_isoform_aggregate_counters_by_parent_type
+        )
+        aggregate_writer.write_rows_with_data_by_parent_type(
+            ".", ["."], ".", "all_isoforms", genome_all_isoforms_aggregate_counters_by_parent_type
+        )
+        aggregate_writer.write_rows_with_data_by_parent_type(
+            ".", ["."], ".", "chimaera", genome_chimaera_aggregate_counters_by_parent_type
+        )
+
         # Write the genomic total. A dummy dict needs to be created to use the `write_rows_with_data` method
         genomic_total_counter_dict: defaultdict[str, MultiCounter] = defaultdict(
             lambda: MultiCounter(genome_filter)
@@ -842,3 +948,6 @@ if __name__ == "__main__":
         )
 
         logging.info("Program finished")
+
+if __name__ == "__main__":
+    main()

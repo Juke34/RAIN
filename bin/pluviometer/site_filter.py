@@ -1,4 +1,4 @@
-from utils import RNASiteVariantData
+from .utils import RNASiteVariantData
 import numpy as np
 from numpy.typing import NDArray
 

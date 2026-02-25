@@ -1,0 +1,17 @@
+# Pluviometer Dependencies
+# RNA editing site analysis tool
+
+# Biological sequence analysis
+biopython>=1.79
+
+# GFF file parsing
+bcbio-gff>=0.7.0
+
+# Natural sorting
+natsort>=8.0.0
+
+# Progress bar visualization
+progressbar2>=4.0.0
+
+# Numerical computing
+numpy>=1.21.0

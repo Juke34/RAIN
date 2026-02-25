@@ -1,7 +1,7 @@
-from utils import RNASiteVariantData
+from .utils import RNASiteVariantData
 import numpy as np
 from numpy.typing import NDArray
-from site_filter import SiteFilter
+from .site_filter import SiteFilter
 from typing import TextIO
 
 class MultiCounter:
