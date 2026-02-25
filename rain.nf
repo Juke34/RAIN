@@ -150,7 +150,7 @@ General Parameters
     outdir                     : ${params.outdir}
 
 Alignment Parameters
-    aline_profiles             : ${params.aline_profiles}
+    aline_config               : ${params.aline_profiles}
     aligner                    : ${params.aligner}
     
 
@@ -661,12 +661,12 @@ workflow {
                         .set { meta_bam_bamhe } 
             
             // Merge the final bam with the original bam in case of hyper-editing to keep all reads for edition site detection
-            merged_bams = samtools_merge_bams(meta_bam_bamhe, "bam_appended_with_he")
+            all_bam = samtools_merge_bams(meta_bam_bamhe, "bam_appended_with_he")
             
             // Add hyper-editing sample to analysis
             // Here we have bam containing normal and hyper_editing reads and bam containing only hyper-editing reads.
             // The bam with only hyper-editing reads will be used to count hyper-editing sites specifically. 
-            all_bam = merged_bams.mix(hyperedit_bam_mapped)
+            //all_bam = merged_bams.mix(hyperedit_bam_mapped)
        
         } else {
             all_bam = samtools_split_mapped_unmapped.out.mapped_bam
@@ -728,6 +728,14 @@ workflow {
         if ( "reditools3" in edit_site_tool_list ){ 
                 reditools3(final_bam_for_editing, genome.collect())
                 pluviometer_reditools3(reditools3.out.tuple_sample_serial_table, clean_annotation.collect(), "reditools3")
+                if(via_csv){
+                    // Deal with AGGREGATES
+                    drip_aggregates(pluviometer_reditools3.out.tuple_sample_aggregate.collect())
+                    filter_drip_by_aggregation_mode(drip_aggregates.out.editing_ag, "AG")
+                    // Deal with FEATURES
+                    drip_features(pluviometer_reditools3.out.tuple_sample_feature.collect())
+                    filter_drip_features_by_type(drip_features.out.editing_ag, "AG")
+                }
         }
 
         // ------------------- MULTIQC -----------------

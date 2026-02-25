@@ -52,6 +52,7 @@ dependencies:
   - tzdata=2025b=h78e105d_0
   - wheel=0.45.1=pyhd8ed1ab_1
   - pysam=0.23.3=py312h47d5410_1
+  - pandas
   - pip:
       - flameprof==0.4
 prefix: /home/earx/miniforge3/envs/rain-stats-scripts

@@ -174,3 +174,111 @@ process recreate_csv_with_abs_paths {
         echo "${sample_id},${file1},${file2},${strandedness},${read_type}" > ${meta.uid}.csv
         """
 }
+
+/*
+ * Filter drip output files by AggregationMode
+ * Creates separate files for each unique AggregationMode value
+ * Output files are named with the AggregationMode as suffix (e.g., drip_AG_all_isoforms.tsv)
+ */
+process filter_drip_by_aggregation_mode {
+    label 'bash'
+    tag "${tsv.baseName}"
+    publishDir("${params.outdir}/drip/aggregates_${output_dir}_by_mode", mode:"copy", pattern: "*.tsv")
+    
+    input:
+        path tsv
+        val output_dir
+
+    output:
+        path "*.tsv", emit: filtered_files
+        val output_dir
+
+    script:
+        def basename = tsv.baseName
+        """
+        # Separate the 3 kinds of values with header written only once per file
+        awk 'BEGIN {FS=OFS="\\t"; h1=0; h3=0}
+             NR==1 {header=\$0; next}
+             {
+                 if(\$1=="." && \$2=="."){
+                     if(h1==0){print header > "total.tsv"; h1=1}
+                     print \$0 > "total.tsv"
+                 } 
+                 else if(\$2=="."){
+                     fname="bySeq_"\$1".tsv"
+                     if(!(fname in h2)){print header > fname; h2[fname]=1}
+                     print \$0 > fname
+                 } 
+                 else {
+                     if(h3==0){print header > "therest"; h3=1}
+                     print \$0 > "therest"
+                 }
+             }' ${tsv}
+        
+        # Get unique AggregationMode values (column 6)
+        # Skip header, extract column 6, get unique values, remove empty lines
+        MODES=\$(tail -n +2 therest | cut -f 6 | sort -u | grep -v '^\$')
+        
+        # Extract header
+        HEADER=\$(head -n 1 ${tsv})
+
+        # Create a file for each AggregationMode
+        for MODE in \$MODES; do
+            OUTPUT_FILE="${basename}_\${MODE}.tsv"
+            
+            # Write header
+            echo "\$HEADER" > "\$OUTPUT_FILE"
+            
+            # Filter rows by this AggregationMode (column 6)
+            tail -n +2 therest | awk -F'\t' -v mode="\$MODE" '\$6 == mode' >> "\$OUTPUT_FILE"
+            
+            echo "Created \$OUTPUT_FILE with \$(tail -n +2 \"\$OUTPUT_FILE\" | wc -l) rows"
+        done
+        
+        echo "Filtering complete. Created files for modes: \$MODES"
+        """
+}
+
+/*
+ * Filter drip_features output files by Type
+ * Creates separate files for each unique Type value
+ * Output files are named with the Type as suffix (e.g., drip_features_AG_gene.tsv)
+ */
+process filter_drip_features_by_type {
+    label 'bash'
+    tag "${tsv.baseName}"
+    publishDir("${params.outdir}/drip/features_${output_dir}_by_type", mode:"copy", pattern: "*_*.tsv")
+    
+    input:
+        path tsv
+        val output_dir
+
+    output:
+        path "*_*.tsv", emit: filtered_files
+
+    script:
+        def basename = tsv.baseName
+        """
+        # Extract header
+        HEADER=\$(head -n 1 ${tsv})
+        
+        # Get unique Type values (column 4)
+        # Skip header, extract column 4, get unique values, remove empty lines
+        TYPES=\$(tail -n +2 ${tsv} | cut -f 4 | sort -u | grep -v '^\$')
+        
+        # Create a file for each Type
+        for TYPE in \$TYPES; do
+            OUTPUT_FILE="${basename}_\${TYPE}.tsv"
+            
+            # Write header
+            echo "\$HEADER" > "\$OUTPUT_FILE"
+            
+            # Filter rows by this Type (column 4)
+            tail -n +2 ${tsv} | awk -F'\t' -v type="\$TYPE" '\$4 == type' >> "\$OUTPUT_FILE"
+            
+            echo "Created \$OUTPUT_FILE with \$(tail -n +2 \"\$OUTPUT_FILE\" | wc -l) rows"
+        done
+        
+        echo "Filtering complete. Created files for types: \$TYPES"
+        """
+}

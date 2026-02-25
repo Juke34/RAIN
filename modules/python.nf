@@ -25,3 +25,63 @@ process restore_original_sequences {
         restore_sequences.py -b ${bam} -u ${bam_unmapped} -o ${output_name}
         """
 }
+
+process drip_features {
+    label "pluviometer"
+    tag "drip_features"
+    publishDir("${params.outdir}/drip/features", mode:"copy", pattern: "*.tsv")
+    
+    input:
+        val(meta_tsv)
+
+    output:
+        path("*_AG.tsv"), emit: editing_ag
+        path("*.tsv"), emit: editing_all
+
+    script:
+        def list = meta_tsv
+        def args = []
+        
+        // Process list by pairs: [meta, file, meta, file, ...]
+        for (int i = 0; i < list.size(); i += 2) {
+            def meta = list[i]
+            def file = list[i + 1]
+            args.add("${file}:${meta.sample_id}")
+        }
+        
+        def args_str = args.join(" ")
+
+        """
+        drip_features.py drip ${args_str}
+        """
+}
+
+process drip_aggregates {
+    label "pluviometer"
+    tag "drip_aggregates"
+    publishDir("${params.outdir}/drip/aggregates", mode:"copy", pattern: "*.tsv")
+    
+    input:
+        val(meta_tsv)
+
+    output:
+        path("*_AG.tsv"), emit: editing_ag
+        path("*.tsv"), emit: editing_all
+
+    script:
+        def list = meta_tsv
+        def args = []
+        
+        // Process list by pairs: [meta, file, meta, file, ...]
+        for (int i = 0; i < list.size(); i += 2) {
+            def meta = list[i]
+            def file = list[i + 1]
+            args.add("${file}:${meta.sample_id}")
+        }
+        
+        def args_str = args.join(" ")
+
+        """
+        drip_aggregates.py drip ${args_str}
+        """
+}
