@@ -171,7 +171,7 @@ Report Parameters
 //*************************************************
 include { AliNe as ALIGNMENT } from "./modules/aline.nf"
 include {normalize_gxf} from "./modules/agat.nf"
-include { extract_libtype; recreate_csv_with_abs_paths; collect_aline_csv} from "./modules/bash.nf"
+include { extract_libtype; recreate_csv_with_abs_paths; collect_aline_csv; filter_drip_by_aggregation_mode; filter_drip_features_by_type} from "./modules/bash.nf"
 include {bamutil_clipoverlap} from './modules/bamutil.nf'
 include {fastp} from './modules/fastp.nf'
 include {fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from './modules/fastqc.nf'
@@ -183,6 +183,7 @@ include {samtools_index; samtools_fasta_index; samtools_sort_bam as samtools_sor
 include {reditools2} from "./modules/reditools2.nf"
 include {reditools3} from "./modules/reditools3.nf"
 include {pluviometer as pluviometer_jacusa2; pluviometer as pluviometer_reditools2; pluviometer as pluviometer_reditools3; pluviometer as pluviometer_sapin} from "./modules/pluviometer.nf"
+include {drip_aggregates; drip_features} from "./modules/python.nf"
 include {sapin} from "./modules/sapin.nf"
 
 include {HYPER_EDITING} from "./subworkflows/hyper-editing.nf"
