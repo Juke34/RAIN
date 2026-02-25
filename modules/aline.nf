@@ -44,7 +44,7 @@ process AliNe {
             # Create sbatch script for AliNe
             cat > \$WORK_DIR/aline_job.sh <<SBATCH_EOF
         #!/bin/bash
-        #SBATCH --job-name=AliNe_pipeline
+        #SBATCH --job-name=rain_AliNe_pipeline
         #SBATCH --cpus-per-task=1
         #SBATCH --mem=4G
         #SBATCH --time=2-00:00:00
