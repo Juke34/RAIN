@@ -1,0 +1,54 @@
+# RAIN bin Scripts
+
+This directory contains the main analysis tools for RNA editing quantification.
+
+## Scripts Overview
+
+### pluviometer
+RNA editing quantification tool that counts and analyzes editing sites from variant calling data (Reditools2/3, Jacusa2) in the context of genomic features (GFF3). Outputs feature-level and aggregate-level editing statistics.
+
+**Usage:**
+```bash
+# Call as a python module (recommended)
+cd bin
+python -m pluviometer --sites SITES --gff GFF [OPTIONS]
+
+# Call via the shell wrapper
+./pluviometer.sh --sites SITES --gff GFF [OPTIONS]
+
+# Call via the python wrapper
+python pluviometer_wrapper.py --sites SITES --gff GFF [OPTIONS]
+```
+
+### drip_features.py
+Post-processing tool for pluviometer feature output. Analyzes RNA editing from feature TSV files, calculating editing metrics (espf and espr) for all 16 genome-variant base pair combinations across multiple samples. Combines data into unified matrix format.
+
+**Usage:**
+```bash
+./drip_features.py OUTPUT_PREFIX FILE1:SAMPLE1 FILE2:SAMPLE2 [...]
+```
+
+### drip_aggregates.py
+Post-processing tool for pluviometer aggregate output. Similar to drip_features.py but operates on aggregate-level data, calculating editing metrics for aggregated genomic regions across samples.
+
+**Usage:**
+```bash
+./drip_aggregates.py OUTPUT_PREFIX FILE1:SAMPLE1 FILE2:SAMPLE2 [...]
+```
+
+### restore_sequences.py
+Utility to restore original sequences in BAM files from original unmapped BAM. Replaces modified sequences with their original counterparts using indexed lookup.
+
+**Usage:**
+```bash
+./restore_sequences.py --aligned ALIGNED_BAM --unmapped UNMAPPED_BAM --output OUTPUT_BAM
+```
+
+### quickstats.sh
+Quick statistics tool for variant calling output files. Counts A→G and C→T edits per contig/chromosome from Reditools or Jacusa2 output files.
+
+**Usage:**
+```bash
+./quickstats.sh -i INPUT_FILE -f FORMAT
+# FORMAT: "jacusa2" or "reditools"
+``` 
