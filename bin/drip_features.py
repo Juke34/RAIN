@@ -15,12 +15,15 @@ DESCRIPTION:
     samples and combines them into a unified matrix format.
 
 USAGE:
-    ./drip_features.py OUTPUT_PREFIX FILE1:SAMPLE1 FILE2:SAMPLE2 [FILE3:SAMPLE3 ...]
+    ./drip_features.py OUTPUT_PREFIX FILE1:GROUP1:SAMPLE1:REP1 FILE2:GROUP2:SAMPLE2:REP2 [...] [--with-file-id]
     ./drip_features.py --help | -h
 
 ARGUMENTS:
     OUTPUT_PREFIX    Prefix for the output TSV files (will create OUTPUT_PREFIX_XY.tsv for each base pair)
-    FILEn:SAMPLEn    Pairs of input file paths and sample names, separated by colons
+    FILEn:GROUPn:SAMPLEn:REPn  
+                     Input file path, group name, sample name, and replicate ID
+                     separated by colons. All four components are required.
+    --with-file-id   Include file ID in column names (default: omit file ID)
     --help, -h       Display this help message
 
 INPUT FILE FORMAT:
@@ -74,17 +77,25 @@ OUTPUT FORMAT:
     - CoveredSites: Number of covered sites
     
     Metric columns (for each sample):
-    - SAMPLE::FILE_ID_espf: XY sites proportion in feature (XY sites / X bases)
-    - SAMPLE::FILE_ID_espr: XY sites proportion in reads (XY reads / all X reads)
+    - GROUP::SAMPLE::REPLICATE::espf: XY sites proportion in feature (XY sites / X bases)
+    - GROUP::SAMPLE::REPLICATE::espr: XY sites proportion in reads (XY reads / all X reads)
     
-    Where FILE_ID is the input filename with extension and suffix after last '_' removed.
-    The '::' separator allows easy splitting to retrieve sample name and file ID separately.
+    Or with --with-file-id option:
+    - GROUP::SAMPLE::REPLICATE::FILE_ID::espf
+    - GROUP::SAMPLE::REPLICATE::FILE_ID::espr
+    
+    Where:
+    - GROUP: Group/condition name provided in arguments
+    - SAMPLE: Sample name provided in arguments
+    - REPLICATE: Replicate ID (e.g., rep1, rep2) from arguments
+    - FILE_ID: Input filename without extension and last '_' suffix (optional)
+    - The '::' separator allows easy splitting to retrieve all components
 
 EXAMPLE:
     ./drip_features.py results \\
-        sample1_features.tsv:control \\
-        sample2_features.tsv:treated \\
-        sample3_features.tsv:mock
+        sample1_features.tsv:control:sample1:rep1 \\
+        sample2_features.tsv:control:sample2:rep2 \\
+        sample3_features.tsv:treated:sample1:rep1
 
     This creates 16 files (one per base pair combination):
     - results_AA.tsv, results_AC.tsv, results_AG.tsv, results_AT.tsv,
@@ -94,15 +105,17 @@ EXAMPLE:
     
     Each file has columns:
     SeqID, ParentIDs, FeatureID, Type, Start, End, Strand, CoveredSites,
-    control::rain_sample1_espf, control::rain_sample1_espr, 
-    treated::rain_sample2_espf, treated::rain_sample2_espr, 
-    mock::rain_sample3_espf, mock::rain_sample3_espr
+    control::sample1::rep1::rain_sample1::espf, control::sample1::rep1::rain_sample1::espr,
+    control::sample2::rep2::rain_sample2::espf, control::sample2::rep2::rain_sample2::espr,
+    treated::sample1::rep1::rain_sample3::espf, treated::sample1::rep1::rain_sample3::espr
     
-    Column headers use format: SAMPLE::FILE_ID_METRIC
+    Column headers use format: GROUP::SAMPLE::REPLICATE::FILE_ID::METRIC
+    - GROUP: The group/condition name provided
     - SAMPLE: The sample name provided
+    - REPLICATE: Replicate ID (rep1, rep2, etc.)
     - FILE_ID: Input filename without extension and last '_' suffix
     - METRIC: espf or espr
-    - Separator '::' can be used to split and retrieve sample/file_id
+    - Separator '::' allows easy splitting to retrieve all components
 
 AUTHORS:
     RNA Editing Analysis Pipeline
@@ -111,7 +124,7 @@ AUTHORS:
     print(help_text)
     sys.exit(0)
 
-def parse_tsv_file(filepath, sample_name, file_id):
+def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, include_file_id=False):
     """Parse a single TSV file and extract editing metrics for all base pair combinations."""
     df = pd.read_csv(filepath, sep='\t')
     
@@ -135,14 +148,17 @@ def parse_tsv_file(filepath, sample_name, file_id):
     # Calculate metrics for each base pair combination
     result_cols = ['FeatureID']
     
-    # Create column prefix with sample::file_id
-    col_prefix = f'{sample_name}::{file_id}'
+    # Create column prefix with group::sample::replicate::file_id or group::sample::replicate
+    if include_file_id:
+        col_prefix = f'{group_name}::{sample_name}::{replicate}::{file_id}'
+    else:
+        col_prefix = f'{group_name}::{sample_name}::{replicate}'
     
     for bp in base_pairs:
         genome_base = bp[0]  # First letter is the genome base
         
         # Calculate espf: XY_sites / X_count
-        espf_col = f'{col_prefix}_{bp}_espf'
+        espf_col = f'{col_prefix}::{bp}::espf'
         df[espf_col] = df.apply(
             lambda row: row[f'{bp}_sites'] / row[f'{genome_base}_count'] 
                         if row[f'{genome_base}_count'] > 0 else 0,
@@ -161,7 +177,7 @@ def parse_tsv_file(filepath, sample_name, file_id):
                 df[f'{genome_base}T_reads']
             )
         
-        espr_col = f'{col_prefix}_{bp}_espr'
+        espr_col = f'{col_prefix}::{bp}::espr'
         df[espr_col] = df.apply(
             lambda row: row[f'{bp}_reads'] / row[total_reads_col] 
                         if row[total_reads_col] > 0 else 0,
@@ -182,28 +198,32 @@ def parse_tsv_file(filepath, sample_name, file_id):
     
     return result, metadata
 
-def merge_samples(file_sample_dict, output_prefix):
+def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id=False):
     """Merge data from multiple samples and create output matrices - one file per base pair combination."""
     
     all_data = []
     all_metadata = []
     file_id_list = []
+    group_name_list = []
     sample_name_list = []
+    replicate_list = []
     
     # Base pair combinations in order
     base_pairs = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT', 
                   'GA', 'GC', 'GG', 'GT', 'TA', 'TC', 'TG', 'TT']
     
-    for filepath, sample_name in file_sample_dict.items():
+    for filepath, (group_name, sample_name, replicate) in file_group_sample_replicate_dict.items():
         # Extract file ID (everything before the last underscore in filename)
         filename_stem = Path(filepath).stem
         file_id = '_'.join(filename_stem.split('_')[:-1])
-        print(f"Processing {sample_name} from {filepath} (file_id: {file_id})...")
-        data, metadata = parse_tsv_file(filepath, sample_name, file_id)
+        print(f"Processing {group_name}::{sample_name} (replicate {replicate}) from {filepath} (file_id: {file_id})...")
+        data, metadata = parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, include_file_id)
         all_data.append(data)
         all_metadata.append(metadata)
         file_id_list.append(file_id)
+        group_name_list.append(group_name)
         sample_name_list.append(sample_name)
+        replicate_list.append(replicate)
     
     # Merge metadata (use first file's metadata as base, they should be identical)
     # We use _row_id to ensure all rows are kept, even those with '.' values
@@ -239,10 +259,13 @@ def merge_samples(file_sample_dict, output_prefix):
     for bp in base_pairs:
         # Select columns for this base pair combination
         bp_cols = metadata_cols.copy()
-        for sample_name, file_id in zip(sample_name_list, file_id_list):
-            col_prefix = f'{sample_name}::{file_id}'
-            espf_col = f'{col_prefix}_{bp}_espf'
-            espr_col = f'{col_prefix}_{bp}_espr'
+        for group_name, sample_name, replicate, file_id in zip(group_name_list, sample_name_list, replicate_list, file_id_list):
+            if include_file_id:
+                col_prefix = f'{group_name}::{sample_name}::{replicate}::{file_id}'
+            else:
+                col_prefix = f'{group_name}::{sample_name}::{replicate}'
+            espf_col = f'{col_prefix}::{bp}::espf'
+            espr_col = f'{col_prefix}::{bp}::espr'
             if espf_col in full_result.columns:
                 bp_cols.append(espf_col)
             if espr_col in full_result.columns:
@@ -251,12 +274,15 @@ def merge_samples(file_sample_dict, output_prefix):
         # Create result for this base pair
         bp_result = full_result[bp_cols].copy()
         
-        # Rename columns to remove the _BP_ suffix from metrics (cleaner output)
+        # Rename columns to remove the bp suffix (cleaner output)
         rename_dict = {}
-        for sample_name, file_id in zip(sample_name_list, file_id_list):
-            col_prefix = f'{sample_name}::{file_id}'
-            rename_dict[f'{col_prefix}_{bp}_espf'] = f'{col_prefix}_espf'
-            rename_dict[f'{col_prefix}_{bp}_espr'] = f'{col_prefix}_espr'
+        for group_name, sample_name, replicate, file_id in zip(group_name_list, sample_name_list, replicate_list, file_id_list):
+            if include_file_id:
+                col_prefix = f'{group_name}::{sample_name}::{replicate}::{file_id}'
+            else:
+                col_prefix = f'{group_name}::{sample_name}::{replicate}'
+            rename_dict[f'{col_prefix}::{bp}::espf'] = f'{col_prefix}::espf'
+            rename_dict[f'{col_prefix}::{bp}::espr'] = f'{col_prefix}::espr'
         bp_result = bp_result.rename(columns=rename_dict)
         
         # Save to file
@@ -288,35 +314,49 @@ if __name__ == "__main__":
     
     # Parse command line arguments
     output_prefix = sys.argv[1]
-    file_sample_dict = {}
-    sample_counts = {}
+    file_group_sample_replicate_dict = {}
+    group_sample_rep_counts = {}
+    include_file_id = False  # Default: omit file_id from column names
     
     for arg in sys.argv[2:]:
+        # Check for --with-file-id flag
+        if arg == '--with-file-id':
+            include_file_id = True
+            continue
+            
         if ':' not in arg:
             print(f"ERROR: Invalid argument format '{arg}'", file=sys.stderr)
-            print("Expected format: FILE:SAMPLE", file=sys.stderr)
+            print("Expected format: FILE:GROUP:SAMPLE:REPLICATE", file=sys.stderr)
             print("For help, run: ./drip_features.py --help\n", file=sys.stderr)
             sys.exit(1)
         
-        filepath, sample_name = arg.split(':', 1)
+        parts = arg.split(':')
+        if len(parts) == 4:
+            filepath, group_name, sample_name, replicate = parts
+        else:
+            print(f"ERROR: Invalid argument format '{arg}'", file=sys.stderr)
+            print("Expected format: FILE:GROUP:SAMPLE:REPLICATE (all 4 components required)", file=sys.stderr)
+            print("For help, run: ./drip_features.py --help\n", file=sys.stderr)
+            sys.exit(1)
         
         # Check if file exists
         if not Path(filepath).exists():
             print(f"ERROR: File not found: {filepath}", file=sys.stderr)
             sys.exit(1)
         
-        # Handle duplicate sample names by adding suffix
-        original_name = sample_name
-        if sample_name in sample_counts:
-            sample_counts[sample_name] += 1
-            sample_name = f"{sample_name}_{sample_counts[sample_name]}"
-            print(f"WARNING: Duplicate sample name '{original_name}' found. Renaming to '{sample_name}'", file=sys.stderr)
+        # Handle duplicate group:sample:replicate combinations by adding suffix
+        group_sample_rep_key = f"{group_name}:{sample_name}:{replicate}"
+        original_key = group_sample_rep_key
+        if group_sample_rep_key in group_sample_rep_counts:
+            group_sample_rep_counts[group_sample_rep_key] += 1
+            replicate = f"{replicate}_{group_sample_rep_counts[group_sample_rep_key]}"
+            print(f"WARNING: Duplicate group:sample:replicate '{original_key}' found. Renaming replicate to '{replicate}'", file=sys.stderr)
         else:
-            sample_counts[sample_name] = 1
+            group_sample_rep_counts[group_sample_rep_key] = 1
         
-        file_sample_dict[filepath] = sample_name
+        file_group_sample_replicate_dict[filepath] = (group_name, sample_name, replicate)
     
     # Process all samples
-    result = merge_samples(file_sample_dict, output_prefix)
+    result = merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id)
     
     print("\nAnalysis complete!")
