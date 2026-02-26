@@ -107,13 +107,17 @@ def helpMSG() {
     --read_type                 Type of reads among this list ${read_type_allowed} [no default]
     --reads                     path to the reads file, folder or csv. If a folder is provided, all the files with proper extension in the folder will be used. You can provide remote files (commma separated list).
                                     file extension expected : <.fastq.gz>, <.fq.gz>, <.fastq>, <.fq> or <.bam>. 
-                                                              for paired reads extra <_R1_001> or <_R2_001> is expected where <R> and <_001> are optional. e.g. <sample_id_1.fastq.gz>, <sample_id_R1.fastq.gz>, <sample_id_R1_001.fastq.gz>)
-                                    csv input expects 6 columns: sample, input_1, input_2, strandedness and read_type. 
-                                    input_2 is optional and can be empty. Strandedness, read_type expects same values as corresponding AliNe parameter; If a value is provided via AliNe paramter, it will override the value in the csv file.
+                                                              for paired reads extra <_R1_001> or <_R2_001> is expected where <R> and <_001> are optional. e.g. <sample_1.fastq.gz>, <sample_R1.fastq.gz>, <sample_R1_001.fastq.gz>)
+                                    CSV Input Format:
+                                        4 required columns: group, input_1, strandedness and read_type.
+                                        3 optional columns: - input_2   : in case of paired-end data
+                                                            - sample    : by default, the sample name is extracted from the filename and would be uniq. However, you must provide this column if you have biological or technical replicates, so that replicates from the same sample are correctly grouped. 
+                                                            - replicate : Specifies the replicate number. Otherwise, each sample will be treated as independent and assigned as rep1. Required the sample column.
+                                    Strandedness, read_type expects same values as corresponding AliNe parameter; If a value is provided via AliNe paramter, it will override the value in the csv file.
                                     Example of csv file:
-                                        sample,input_1,input_2,strandedness,read_type
-                                        control1,path/to/data1.fastq.bam,,auto,short_single
-                                        control2,path/to/data2_R1.fastq.gz,path/to/data2_R2.fastq.gz,auto,short_paired
+                                        sample,input_1,input_2,strandedness,read_type,replicate
+                                        control1,path/to/data1.fastq.bam,,auto,short_single,replicate1
+                                        control2,path/to/data2_R1.fastq.gz,path/to/data2_R2.fastq.gz,auto,short_paired,replicate1
 
         Output:
     --output                    Path to the output directory [default: $params.outdir]
@@ -295,10 +299,10 @@ workflow {
             csv_ch = Channel.fromPath(params.reads)
                                 .splitCsv(header: true, sep: ',')
                                 .map { row ->
-                                    if(row.sample == null || row.sample.trim() == ''){ 
-                                        error "The input ${params.reads} file does not contain a 'sample' column!\n" 
-                                    } 
-                                    def sample_id = row.sample
+                                    if(row.group == null || row.group.trim() == ''){ 
+                                        error "The input ${params.reads} file does not contain a 'group' column!\n" 
+                                    }
+                                    def group = row.group.trim()
                                     if(row.input_1 == null || row.input_1.trim() == ''){ 
                                         error "The input ${params.reads} file does not contain a 'input_1' column!\n" 
                                     }
@@ -340,7 +344,7 @@ workflow {
                                                         read_type = read_type_value
                                                     }
                                                 } else {
-                                                    error "The input ${input_csv} file contains an empty read_type value for sample ${sample_id}!"
+                                                    error "The input ${input_csv} file contains an empty read_type value for input_1 ${input_1}!"
                                                 }
                                             } else {
                                                 error """Error: The input file ${input_csv} does not contain a read_type column, and the --read_type parameter was not provided.
@@ -359,20 +363,45 @@ workflow {
                                                 pair = true
                                                 file_id2 = RainUtils.cleanPrefix(input_2)
                                             } else {
-                                                log.info "The input ${input_csv} file contains a second fastq file for sample ${sample_id} but the read_type is set to <${read_type}>! R2 will not be taken into account! paired set to false."
+                                                log.info "The input ${input_csv} file contains a second fastq file for input_1 ${input_1} but the read_type is set to <${read_type}>! R2 will not be taken into account! paired set to false."
                                             }
                                         } else {
                                             if (read_type == "short_paired" && input_type == "fastq") {
-                                                error "The input ${input_csv} file does not contain a second fastq file for sample ${sample_id} but the read_type is set to <short_paired>!"
+                                                error "The input ${input_csv} file does not contain a second fastq file for input_1 ${input_1} but the read_type is set to <short_paired>!"
                                             }
                                         }
                                         // Define file_id based on the filename and read type using the utility function
                                         def file_id1 = RainUtils.cleanPrefix(input_1)
+                                        // uid is similar to file_id[0] but file_id needed to make difference between R1 and R2 in paired end case.
                                         def uid = pair ? RainUtils.get_file_uid(input_1) : RainUtils.cleanPrefix(input_1)
                                         def file_id = pair ? [file_id1, file_id2] : [file_id1]
                                         def file_abspath = pair ? [input_1, input_2] : [input_1]
-                                        // uid is similar to file_id[0] but file_id needed to make difference between R1 and R2 in paired end case.
-                                        def meta = [ uid: uid, file_id: file_id, sample_id: sample_id, file_abspath: file_abspath, strandedness: libtype, input_type: input_type, is_url: input_url, read_type: read_type]
+                                        
+                                        // Deal with sample and replicate columns
+                                        def sample
+                                        def replicate
+                                        if(row.sample == null || row.sample.trim() == ''){ 
+                                            if(row.replicate == null || row.replicate.trim() == ''){
+                                                // case no sample column and no replicate column, we consider each file as a sample and assign the sample as the uid
+                                                log.info "No sample column and no replicate column, we consider each file as a sample and assign the sample as <${uid}>!"
+                                                sample = uid
+                                                replicate = "rep1"
+                                            } else {
+                                                error "You provided a replicate column but the sample column is missing. Please add a sample column!"
+                                            } 
+                                        } else {
+                                            sample = row.sample.trim()
+                                            if(row.replicate == null && row.replicate.trim() == ''){
+                                                replicate = "rep1"
+                                            } else {
+                                                replicate = row.replicate.trim()
+                                            }
+                                        }
+
+                                        // create meta dictionary with all the information about the sample, it will be used in the rest of the pipeline to keep trace of the different parameters for each sample
+                                        def meta = [ uid: uid, file_id: file_id, sample: sample, rep: replicate, group: group, file_abspath: file_abspath, strandedness: libtype, input_type: input_type, is_url: input_url, read_type: read_type]
+                                        
+                                        
                                         return tuple(meta, input_1)
                                     }
                                     else {
