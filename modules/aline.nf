@@ -7,6 +7,8 @@ process AliNe {
     tag "$pipeline_name"
     label 'aline'
     publishDir "${params.outdir}", mode: 'copy'
+    
+    maxRetries 0  // Override global retry config - do not retry this process
 
     input:
         val pipeline_name     // String
@@ -27,6 +29,8 @@ process AliNe {
     script:
         def nxf_cmd = "nextflow run ${pipeline_name} ${profile} ${config} --reads ${reads} --reference ${genome} ${read_type} ${aligner} ${library_type} --annotation ${annotation} --data_type rna --outdir \$WORK_DIR/AliNe"
         """
+        echo "[AliNe] Process started at \$(date '+%Y-%m-%d %H:%M:%S')"
+        
         # Save absolute work directory before changing context
         WORK_DIR=\$(pwd)
 
@@ -62,7 +66,7 @@ process AliNe {
             
             # Submit job and capture job ID
             JOB_ID=\$(sbatch --parsable \$WORK_DIR/aline_job.sh)
-            echo "[AliNe] Submitted SLURM job: \$JOB_ID"
+            echo "[AliNe] Submitted SLURM job: \$JOB_ID at \$(date '+%Y-%m-%d %H:%M:%S')" 
             echo \$JOB_ID > \$WORK_DIR/aline_job_id.txt
             
             # Wait for job to appear in scheduler queue
@@ -88,10 +92,10 @@ process AliNe {
             
             # Check job exit status
             JOB_STATE=\$(sacct -j \$JOB_ID --format=State --noheader | head -1 | tr -d ' ')
-            echo "[AliNe] Job \$JOB_ID finished with state: \$JOB_STATE"
+            echo "[AliNe] Job \$JOB_ID finished with state: \$JOB_STATE at \$(date '+%Y-%m-%d %H:%M:%S')"
             
             if [[ "\$JOB_STATE" != "COMPLETED" ]]; then
-                echo "[AliNe] ERROR: Job failed with state \$JOB_STATE" >&2
+                echo "[AliNe] ERROR: Job failed with state \$JOB_STATE at \$(date '+%Y-%m-%d %H:%M:%S')" >&2
                 cat \$WORK_DIR/aline_*.err >&2 || true
                 exit 1
             fi
@@ -101,20 +105,25 @@ process AliNe {
                 cp .nextflow.log \$WORK_DIR/nextflow.log
             fi
             
-            echo "[AliNe] Pipeline completed successfully via SLURM"
+            echo "[AliNe] Pipeline completed successfully via SLURM at \$(date '+%Y-%m-%d %H:%M:%S')"
         else
             echo "[AliNe] Detected local/standard environment - running AliNe directly"
             
             # Run nextflow command directly
-            ${nxf_cmd}
+            ${nxf_cmd} || {
+                echo "[AliNe] ERROR: Pipeline failed at \$(date '+%Y-%m-%d %H:%M:%S')" >&2
+                exit 1
+            }
             
             # Copy log for reference
             if [ -f .nextflow.log ]; then
                 cp .nextflow.log \$WORK_DIR/nextflow.log
             fi
             
-            echo "[AliNe] Pipeline completed successfully (direct execution)"
+            echo "[AliNe] Pipeline completed successfully (direct execution) at \$(date '+%Y-%m-%d %H:%M:%S')"
         fi
+        
+        echo "[AliNe] Process finished at \$(date '+%Y-%m-%d %H:%M:%S')"
 """
 
     output:
