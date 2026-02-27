@@ -35,6 +35,7 @@ params.region = "" // e.g. chr21 - Used to limit the analysis to a specific regi
 params.help = null
 params.monochrome_logs = false // if true, no color in logs
 params.debug = false // Enable debug output
+params.use_slurm_for_aline = false // Whether to submit AliNe as a separate SLURM job when using an HPC environment
 
 // --------------------------------------------------
 /* ---- Params shared between RAIN and AliNe ---- */
@@ -61,7 +62,7 @@ params.trimming_fastp = false
 align_tools = [ 'bbmap', 'bowtie', 'bowtie2', 'bwaaln', 'bwamem', 'bwamem2', 'bwasw', 'dragmap', 'graphmap2', 'hisat2', 'kallisto', 'last', 'minimap2', 'novoalign', 'nucmer', 'ngmlr', 'salmon', 'star', 'subread', 'sublong' ]
 params.aligner = 'hisat2'
 // AliNe version
-params.aline_version = 'v1.6.1'
+params.aline_version = 'v1.6.2'
 //*************************************************
 // STEP 1 - HELP
 //*************************************************
@@ -206,15 +207,11 @@ else { exit 1, "No executer selected: please use a profile activating docker or 
 
 // check AliNE profile
 def aline_profile_list=[]
-def use_slurm_for_aline = false
+def use_slurm_for_aline = params.use_slurm_for_aline
 str_list = workflow.profile.tokenize(',')
 str_list.each {
     if ( it in aline_profile_allowed ){
          aline_profile_list.add(it)
-         if (it == 'itrop') {
-             // Don't pass itrop to AliNe, but remember we're in slurm context
-             use_slurm_for_aline = true
-         } 
     }
 }
 def aline_profile = aline_profile_list.join(',')
