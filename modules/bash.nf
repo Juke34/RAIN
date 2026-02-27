@@ -100,7 +100,7 @@ process create_aline_csv_he {
         path "*.csv", emit: csv
 
     script:
-        def sample_id = meta.sample_id
+        def sample = meta.sample
         def strandedness = meta.strandedness ? meta.strandedness : "auto"
         def read_type = meta.read_type
         
@@ -109,13 +109,13 @@ process create_aline_csv_he {
             """
             fastq0=\$(readlink -f ${fastq[0]})
             fastq1=\$(readlink -f ${fastq[1]})
-            echo "${sample_id},\${fastq0},\${fastq1},${strandedness},${read_type}" > ${meta.uid}.csv
+            echo "${sample},\${fastq0},\${fastq1},${strandedness},${read_type}" > ${meta.uid}.csv
             """
         } else {
             // Single-end
             """
             fastq0=\$(readlink -f ${fastq[0]})
-            echo "${sample_id},\${fastq0},,${strandedness},${read_type}" > ${meta.uid}.csv
+            echo "${sample},\${fastq0},,${strandedness},${read_type}" > ${meta.uid}.csv
             """
         }
 }
@@ -165,13 +165,196 @@ process recreate_csv_with_abs_paths {
 
     script:
         
-        def sample_id = meta.sample_id
+        def sample = meta.sample
         def strandedness = meta.strandedness
         def read_type = meta.read_type
         def file1 = meta.file_abspath[0]
         def file2 = meta.file_abspath[1] ? meta.file_abspath[1] : ""
         """
-        echo "${sample_id},${file1},${file2},${strandedness},${read_type}" > ${meta.uid}.csv
+        echo "${sample},${file1},${file2},${strandedness},${read_type}" > ${meta.uid}.csv
+        """
+}
+
+process standardize_pluvio_aggregates {
+    label 'bash'
+    tag "${tsv.baseName}"
+    publishDir("${params.outdir}/pluviometer/${tool_name}/standardized", mode:"copy", pattern: "*_standardized.tsv")
+    
+    input:
+        tuple(val(meta), path(tsv))
+
+    output:
+        tuple val(meta), path("*_standardized.tsv"), emit: standardized_tsv
+
+    script:
+        def basename = tsv.baseName
+        tool_name = basename.split('_')[-2]
+        """
+        awk 'BEGIN {
+            FS=OFS="\\t"
+        }
+        NR==1 {
+            # Store original header and find column indices
+            for(i=1; i<=NF; i++) {
+                col[\$i] = i
+            }
+            
+            # Print new header
+            printf "SeqID\\tParentIDs\\tID\\tMtype\\tPtype\\tType\\tCtype\\tMode\\tStart\\tEnd\\tStrand"
+            
+            # Print remaining data columns (after Strand)
+            for(i=col["Strand"]+1; i<=NF; i++) {
+                printf "\\t%s", \$i
+            }
+            printf "\\n"
+            next
+        }
+        {
+            # SeqID
+            seqid = \$col["SeqID"]
+            printf "%s\\t", seqid
+            
+            # ParentIDs
+            printf "%s\\t", \$col["ParentIDs"]
+            
+            # ID (from AggregateID)
+            aggregate_id = \$col["AggregateID"]
+            printf "%s\\t", aggregate_id
+
+            # Mtype (always "aggregate")
+            printf "aggregate\\t"
+
+            # Ptype (from ParentType)
+            printf "%s\\t", \$col["ParentType"]
+            
+            # Type (logic: feature if AggregateID has info, chr if SeqID not ".", global if SeqID is ".")
+            if(aggregate_id != "." && aggregate_id != "") {
+                type = "feature_agg"
+            } else if(seqid != ".") {
+                type = "chr_agg"
+            } else {
+                type = "global_agg"
+            }
+            printf "%s\\t", type
+            
+            # Ctype (from AggregateType)
+            printf "%s\\t", \$col["AggregateType"]
+            
+            # Mode (from AggregationMode)
+            printf "%s\\t", \$col["AggregationMode"]
+            
+            # Start, End, Strand (use existing columns if present, otherwise ".")
+            if("Start" in col) {
+                printf "%s\\t", \$col["Start"]
+            } else {
+                printf ".\\t"
+            }
+            
+            if("End" in col) {
+                printf "%s\\t", \$col["End"]
+            } else {
+                printf ".\\t"
+            }
+            
+            if("Strand" in col) {
+                printf "%s", \$col["Strand"]
+            } else {
+                printf "."
+            }
+            
+            # Print remaining data columns
+            for(i=col["Strand"]+1; i<=NF; i++) {
+                printf "\\t%s", \$i
+            }
+            printf "\\n"
+        }' ${tsv} > ${basename}_standardized.tsv
+        
+        echo "Standardization complete: ${basename}_standardized.tsv"
+        """
+}
+
+/*
+ * Standardize drip_features output format
+ * Transforms feature-level data into standardized column structure
+ * Output: SeqID | ParentIDs | ID | MType | Ptype | Type | Ctype | Mode | Start | End | Strand | [data...]
+ */
+process standardize_pluvio_features {
+    label 'bash'
+    tag "${tsv.baseName}"
+    publishDir("${params.outdir}/pluviometer/${tool_name}/standardized", mode:"copy", pattern: "*_standardized.tsv")
+    
+    input:
+        tuple(val(meta), path(tsv))
+
+    output:
+        tuple val(meta), path("*_standardized.tsv"), emit: standardized_tsv
+
+    script:
+        def basename = tsv.baseName
+        tool_name = basename.split('_')[-2]
+        """
+        awk 'BEGIN {
+            FS=OFS="\\t"
+        }
+        NR==1 {
+            # Store original header and find column indices
+            for(i=1; i<=NF; i++) {
+                col[\$i] = i
+            }
+            
+            # Print new header
+            printf "SeqID\\tParentIDs\\tID\\tMtype\\tPtype\\tType\\tCtype\\tMode\\tStart\\tEnd\\tStrand"
+            
+            # Print remaining data columns (after Strand if exists, or after Strand)
+            start_data_col = ("Strand" in col) ? col["Strand"]+1 : col["Strand"]+1
+            for(i=start_data_col; i<=NF; i++) {
+                printf "\\t%s", \$i
+            }
+            printf "\\n"
+            next
+        }
+        {
+            # SeqID
+            printf "%s\\t", \$col["SeqID"]
+            
+            # ParentIDs
+            printf "%s\\t", \$col["ParentIDs"]
+            
+            # ID (from FeatureID)
+            printf "%s\\t", \$col["FeatureID"]
+            
+            # Mtype (always "feature")
+            printf "feature\\t"
+
+            # Ptype (always ".")
+            printf ".\\t"
+            
+            # Type (from original Type column)
+            printf "%s\\t", \$col["Type"]
+            
+            # Ctype (always ".")
+            printf ".\\t"
+            
+            # Mode (always ".")
+            printf ".\\t"
+            
+            # Start
+            printf "%s\\t", \$col["Start"]
+            
+            # End
+            printf "%s\\t", \$col["End"]
+            
+            # Strand
+            printf "%s", \$col["Strand"]
+            
+            # Print remaining data columns
+            for(i=col["Strand"]+1; i<=NF; i++) {
+                printf "\\t%s", \$i
+            }
+            printf "\\n"
+        }' ${tsv} > ${basename}_standardized.tsv
+        
+        echo "Standardization complete: ${basename}_standardized.tsv"
         """
 }
 

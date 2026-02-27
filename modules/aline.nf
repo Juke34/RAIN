@@ -31,7 +31,7 @@ process AliNe {
         def nxf_cmd = "nextflow run ${pipeline_name} ${profile} ${config} --reads ${reads} --reference ${genome} ${read_type} ${aligner} ${library_type} --annotation ${annotation} --data_type rna --outdir \$WORK_DIR/AliNe"
         """
         echo "[AliNe] Process started at \$(date '+%Y-%m-%d %H:%M:%S')"
-
+        
         # Save absolute work directory before changing context
         WORK_DIR=\$(pwd)
         
@@ -115,7 +115,6 @@ process AliNe {
             if [ -f .nextflow.log ]; then
                 cp .nextflow.log \$WORK_DIR/nextflow.log
             fi
-
             echo "[AliNe] Pipeline completed successfully via SLURM at \$(date '+%Y-%m-%d %H:%M:%S')"
         else
             echo "[AliNe] Detected local/standard environment - running AliNe directly"

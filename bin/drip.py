@@ -10,7 +10,7 @@ def print_help():
 DRIP - RNA Editing Analysis Tool
 
 DESCRIPTION:
-    This script analyzes RNA editing from RAIN aggregate files. It calculates
+    This script analyzes RNA editing from standardized puviometer files. It calculates
     two key metrics for all 16 genome-variant base pair combinations across multiple 
     samples and combines them into a unified matrix format.
 
@@ -35,7 +35,7 @@ INPUT FILE FORMAT:
                         (order: AA, AC, AG, AT, CA, CC, CG, CT, GA, GC, GG, GT, TA, TC, TG, TT)
 
 CALCULATED METRICS:
-    For each aggregate feature, the script calculates metrics for all 16 base pair combinations:
+    For each line, the script calculates metrics for all 16 base pair combinations:
     
     For each combination XY (where X = genome base, Y = read base):
     
@@ -61,10 +61,11 @@ OUTPUT FORMAT:
     Metadata columns (first 6 columns):
     - SeqID: Sequence/chromosome identifier
     - ParentIDs: Parent feature identifiers
-    - AggregateID: Unique aggregate identifier
-    - ParentType: Type of parent feature
-    - AggregateType: Type of aggregate feature
-    - AggregationMode: Mode of aggregation used
+    - ID: Unique identifier
+    - Ptype: Type of Parent feature
+    - Type: Type of feature
+    - Ctype: Type of Children feature
+    - Mode: Mode of aggregation used if any (e.g., 'all_sites', 'edited_sites', 'edited_reads')
     
     Metric columns (for each sample):
     - GROUP::SAMPLE::REPLICATE::espf: XY sites proportion in feature (XY sites / X bases)
@@ -94,7 +95,7 @@ EXAMPLE:
     - results_TA.tsv, results_TC.tsv, results_TG.tsv, results_TT.tsv
     
     Each file has columns:
-    SeqID, ParentIDs, AggregateID, ParentType, AggregateType, AggregationMode,
+    SeqID, ParentIDs, ID, Ptype, Ctype, Mode,
     control::sample1::rep1::rain_sample1::espf, control::sample1::rep1::rain_sample1::espr,
     control::sample2::rep2::rain_sample2::espf, control::sample2::rep2::rain_sample2::espr,
     treated::sample1::rep1::rain_sample3::espf, treated::sample1::rep1::rain_sample3::espr
@@ -118,9 +119,8 @@ def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, includ
     """Parse a single TSV file and extract editing metrics for all base pair combinations."""
     df = pd.read_csv(filepath, sep='\t')
     
-    # DO NOT filter out rows where AggregateID is '.' 
+    # DO NOT filter out rows where ID is '.' 
     # These are special aggregate rows (e.g., all_sites) that should be kept
-    
     # Base pair combinations in order
     base_pairs = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT', 
                   'GA', 'GC', 'GG', 'GT', 'TA', 'TC', 'TG', 'TT']
@@ -129,7 +129,7 @@ def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, includ
     # Parse GenomeBases (order: A, C, G, T)
     for i, base in enumerate(bases):
         df[f'{base}_count'] = df['GenomeBases'].str.split(',').str[i].astype(int)
-    
+
     # Parse SiteBasePairings (all 16 combinations)
     for i, bp in enumerate(base_pairs):
         df[f'{bp}_sites'] = df['SiteBasePairings'].str.split(',').str[i].astype(int)
@@ -139,7 +139,7 @@ def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, includ
         df[f'{bp}_reads'] = df['ReadBasePairings'].str.split(',').str[i].astype(int)
     
     # Calculate metrics for each base pair combination
-    metadata_cols = ['SeqID', 'ParentIDs', 'AggregateID', 'ParentType', 'AggregateType', 'AggregationMode']
+    metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type', 'Ctype', 'Mode', 'Start', 'End', 'Strand']
     result_cols = metadata_cols.copy()
     
     # Create column prefix with group::sample::replicate::file_id or group::sample::replicate
@@ -210,7 +210,7 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
         replicate_list.append(replicate)
     
     # Merge all samples based on metadata columns
-    metadata_cols = ['SeqID', 'ParentIDs', 'AggregateID', 'ParentType', 'AggregateType', 'AggregationMode']
+    metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type', 'Ctype', 'Mode', 'Start', 'End', 'Strand']
     merged = all_data[0]
     for data in all_data[1:]:
         merged = merged.merge(data, on=metadata_cols, how='outer')
@@ -218,10 +218,10 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
     # Fill NA values with 0 for metrics
     merged = merged.fillna(0)
     
-    # Sort by SeqID, then ParentIDs, then AggregationMode
-    merged = merged.sort_values(['SeqID', 'ParentIDs', 'AggregationMode'])
+    # Sort by SeqID, then ParentIDs, then Mode
+    merged = merged.sort_values(['SeqID', 'ParentIDs', 'Mode'])
     
-    metadata_cols = ['SeqID', 'ParentIDs', 'AggregateID', 'ParentType', 'AggregateType', 'AggregationMode']
+    metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type', 'Ctype', 'Mode', 'Start', 'End', 'Strand']
     
     # Create one file per base pair combination
     output_files = []

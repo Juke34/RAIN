@@ -160,6 +160,9 @@ class AggregateFileWriter(RainFileWriter):
     "ParentType",
     "AggregateType",
     "AggregationMode",
+    "Start",
+    "End",
+    "Strand",
     ]
 
     data_fields: list[str] = [
@@ -181,7 +184,10 @@ class AggregateFileWriter(RainFileWriter):
             aggregate_id: str,
             parent_type: str,
             aggregate_type: str,
-            aggregation_mode: str
+            aggregation_mode: str,
+            start: str = ".",
+            end: str = ".",
+            strand: str = "."
     ) -> int:
         """Write metadata fields of an aggregate"""
         b: int = self.handle.write(seq_id)
@@ -196,9 +202,20 @@ class AggregateFileWriter(RainFileWriter):
         b += self.handle.write('\t')
         b += self.handle.write(aggregation_mode)
         b += self.handle.write('\t')
+        b += self.handle.write(start)
+        b += self.handle.write('\t')
+        b += self.handle.write(end)
+        b += self.handle.write('\t')
+        b += self.handle.write(strand)
+        b += self.handle.write('\t')
 
         return b
     
+    # Case like that we will add an empty start end strand
+    # 21	.	.	.	exon	longest_isoform
+    # 21	.	.	.	.	    all_sites
+    # .	    .	.	.	exon	longest_isoform
+    # .	    .	.	.	.	all_sites
     def write_rows_with_data(
         self,
         record_id: str,
@@ -219,7 +236,11 @@ class AggregateFileWriter(RainFileWriter):
                 feature_type,
                 aggregate_type,
                 aggregation_mode,
+                ".",
+                ".",
+                ".",
             )
+
             b += self.write_data(
                 str(aggregate_counter.genome_base_freqs.sum()),
                 ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),
@@ -233,13 +254,26 @@ class AggregateFileWriter(RainFileWriter):
         self, record_id: str, feature: SeqFeature, parent_feature: SeqFeature, counter: MultiCounter
     ) -> int:
         """Write matadata and data of a chimaeric aggregate"""
-        b: int = super().write_metadata(
+        # Extract positions from the chimaera feature location
+        start_str, end_str, strand_str = ".", ".", "."
+        if hasattr(feature, 'location') and feature.location:
+            if hasattr(feature.location, 'start'):
+                start_str = str(int(feature.location.start) + 1)  # Convert to 1-based
+            if hasattr(feature.location, 'end'):
+                end_str = str(int(feature.location.end))
+            if hasattr(feature.location, 'strand') and feature.location.strand is not None:
+                strand_str = str(feature.location.strand)
+        
+        b: int = self.write_metadata(
             record_id,
             make_parent_path(feature.parent_list),
             feature.id,
             parent_feature.type,
             feature.type,
             "chimaera",
+            start=start_str,
+            end=end_str,
+            strand=strand_str,
         )
         b += self.write_data(
             str(counter.genome_base_freqs.sum()),
@@ -254,18 +288,36 @@ class AggregateFileWriter(RainFileWriter):
         self, record_id: str, feature: SeqFeature, parent_feature: SeqFeature
     ) -> int:
         """Write matadata and data of a chimaeric aggregate without observations"""
-        b: int = super().write_metadata(
+        # Extract positions from the chimaera feature location
+        start_str, end_str, strand_str = ".", ".", "."
+        if hasattr(feature, 'location') and feature.location:
+            if hasattr(feature.location, 'start'):
+                start_str = str(int(feature.location.start) + 1)  # Convert to 1-based
+            if hasattr(feature.location, 'end'):
+                end_str = str(int(feature.location.end))
+            if hasattr(feature.location, 'strand') and feature.location.strand is not None:
+                strand_str = str(feature.location.strand)
+        
+        b: int = self.write_metadata(
             record_id,
             make_parent_path(feature.parent_list),
             feature.id,
             parent_feature.type,
             feature.type,
             "chimaera",
+            start=start_str,
+            end=end_str,
+            strand=strand_str,
         )
         b += self.write_data("0", self.STR_ZERO_BASE_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS)
 
         return b
 
+    # Case like that we will add empty start end strand
+    # 21	.	.	gene	    exon	longest_isoform
+    # 21	.	.	pseudogene	exon	longest_isoform
+    # .	    .	.	pseudogene	exon	longest_isoform
+    # .	    .	.	gene	    exon	longest_isoform	
     def write_rows_with_data_by_parent_type(
         self,
         record_id: str,
@@ -285,7 +337,11 @@ class AggregateFileWriter(RainFileWriter):
                 parent_type,
                 aggregate_type,
                 aggregation_mode,
+                ".",
+                ".",
+                ".",
             )
+
             b += self.write_data(
                 str(aggregate_counter.genome_base_freqs.sum()),
                 ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),

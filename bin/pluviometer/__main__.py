@@ -37,6 +37,40 @@ class QueueActionList:
     activate: list[SeqFeature] = field(default_factory=list)
     deactivate: list[SeqFeature] = field(default_factory=list)
 
+
+@dataclass(slots=True)
+class AggregatePositions:
+    """
+    Contains the extreme positions (start, end, strand) for an aggregate of features
+    """
+    start: int = float('inf')  # Will be replaced by minimum start position
+    end: int = 0  # Will be replaced by maximum end position
+    strand: int = 0  # Strand from parent feature
+    
+    def update_from_feature(self, feature: SeqFeature) -> None:
+        """Update positions with a feature's location"""
+        if hasattr(feature.location, 'start') and hasattr(feature.location, 'end'):
+            self.start = min(self.start, int(feature.location.start))
+            self.end = max(self.end, int(feature.location.end))
+            if self.strand == 0 and hasattr(feature.location, 'strand'):
+                self.strand = feature.location.strand if feature.location.strand else 0
+    
+    def merge(self, other: 'AggregatePositions') -> None:
+        """Merge with another AggregatePositions"""
+        if other.start != float('inf'):
+            self.start = min(self.start, other.start)
+        self.end = max(self.end, other.end)
+        if self.strand == 0:
+            self.strand = other.strand
+    
+    def to_strings(self) -> tuple[str, str, str]:
+        """Convert to string representation for output"""
+        start_str = str(self.start + 1) if self.start != float('inf') else "."  # Convert to 1-based
+        end_str = str(self.end) if self.end > 0 else "."
+        strand_str = str(self.strand) if self.strand != 0 else "."
+        return start_str, end_str, strand_str
+
+
 def merge_aggregation_counter_dicts(
     dst: defaultdict[str, MultiCounter], src: defaultdict[str, MultiCounter]
 ) -> None:
@@ -373,6 +407,8 @@ class RecordCountingContext:
             (
                 level1_longest_isoform_aggregation_counters,
                 level1_all_isoforms_aggregation_counters,
+                level1_longest_isoform_aggregation_positions,
+                level1_all_isoforms_aggregation_positions,
             ) = self.aggregate_level1(feature)
             merge_aggregation_counter_dicts(
                 self.all_isoforms_aggregate_counters, level1_all_isoforms_aggregation_counters
@@ -389,6 +425,11 @@ class RecordCountingContext:
                 aggregate_type,
                 aggregate_counter,
             ) in level1_longest_isoform_aggregation_counters.items():
+                # Get positions for this aggregate type
+                start_str, end_str, strand_str = ".", ".", "."
+                if aggregate_type in level1_longest_isoform_aggregation_positions:
+                    start_str, end_str, strand_str = level1_longest_isoform_aggregation_positions[aggregate_type].to_strings()
+                
                 self.aggregate_writer.write_metadata(
                     seq_id=self.record.id,
                     parent_ids=".," + feature.id,
@@ -396,6 +437,9 @@ class RecordCountingContext:
                     parent_type=feature.type,
                     aggregate_type=aggregate_type,
                     aggregation_mode="longest_isoform",
+                    start=start_str,
+                    end=end_str,
+                    strand=strand_str,
                 )
                 self.aggregate_writer.write_counter_data(aggregate_counter)
 
@@ -403,6 +447,11 @@ class RecordCountingContext:
                 aggregate_type,
                 aggregate_counter,
             ) in level1_all_isoforms_aggregation_counters.items():
+                # Get positions for this aggregate type
+                start_str, end_str, strand_str = ".", ".", "."
+                if aggregate_type in level1_all_isoforms_aggregation_positions:
+                    start_str, end_str, strand_str = level1_all_isoforms_aggregation_positions[aggregate_type].to_strings()
+                
                 self.aggregate_writer.write_metadata(
                     seq_id=self.record.id,
                     parent_ids=".," + feature.id,
@@ -410,11 +459,19 @@ class RecordCountingContext:
                     parent_type=feature.type,
                     aggregate_type=aggregate_type,
                     aggregation_mode="all_isoforms",
+                    start=start_str,
+                    end=end_str,
+                    strand=strand_str,
                 )
                 self.aggregate_writer.write_counter_data(aggregate_counter)
         else:
-            feature_aggregation_counters = self.aggregate_children(feature)
+            feature_aggregation_counters, feature_aggregation_positions = self.aggregate_children(feature)
             for aggregate_type, aggregate_counter in feature_aggregation_counters.items():
+                # Get positions for this aggregate type
+                start_str, end_str, strand_str = ".", ".", "."
+                if aggregate_type in feature_aggregation_positions:
+                    start_str, end_str, strand_str = feature_aggregation_positions[aggregate_type].to_strings()
+                
                 self.aggregate_writer.write_metadata(
                     seq_id=self.record.id,
                     parent_ids=",".join(feature.parent_list),
@@ -422,6 +479,9 @@ class RecordCountingContext:
                     parent_type=parent_feature.type,
                     aggregate_type=aggregate_type,
                     aggregation_mode="feature",
+                    start=start_str,
+                    end=end_str,
+                    strand=strand_str,
                 )
                 self.aggregate_writer.write_counter_data(aggregate_counter)
 
@@ -433,12 +493,13 @@ class RecordCountingContext:
 
     def aggregate_level1(
         self, feature: SeqFeature
-    ) -> tuple[defaultdict[str, MultiCounter], defaultdict[str, MultiCounter]]:
+    ) -> tuple[defaultdict[str, MultiCounter], defaultdict[str, MultiCounter], dict[str, AggregatePositions], dict[str, AggregatePositions]]:
         """
         Perform aggregation for level-1 feature.
         
         It handles the special cases caused by the different modes of aggregation (all_isoforms, longest_isoform, and chimaera).
         Triggers the recursive aggregation of the feature descendants (features of higher levels)
+        Returns: (longest_isoform_counters, all_isoforms_counters, longest_isoform_positions, all_isoforms_positions)
         """
 
         level1_longest_isoform_aggregation_counters: defaultdict[str, MultiCounter] = defaultdict(
@@ -447,6 +508,8 @@ class RecordCountingContext:
         level1_all_isoforms_aggregation_counters: defaultdict[str, MultiCounter] = defaultdict(
             DefaultMultiCounterFactory(self.filter)
         )
+        level1_longest_isoform_aggregation_positions: dict[str, AggregatePositions] = {}
+        level1_all_isoforms_aggregation_positions: dict[str, AggregatePositions] = {}
 
         # List of tuples of transcript-like sub-features. In each tuple:
         # - 0: ID of the sub-feature
@@ -488,19 +551,30 @@ class RecordCountingContext:
         # Perform aggregations
         for child in feature.sub_features:
             # Compute aggregates in the child. Recursively aggregates on all its children.
-            aggregation_counters_from_child: defaultdict[str, MultiCounter] = (
+            aggregation_counters_from_child, aggregation_positions_from_child = (
                 self.aggregate_children(child)
             )
 
             merge_aggregation_counter_dicts(
                 level1_all_isoforms_aggregation_counters, aggregation_counters_from_child
             )
+            
+            # Merge positions for all_isoforms
+            for aggregate_type, positions in aggregation_positions_from_child.items():
+                if aggregate_type not in level1_all_isoforms_aggregation_positions:
+                    level1_all_isoforms_aggregation_positions[aggregate_type] = AggregatePositions(strand=feature.location.strand if hasattr(feature.location, 'strand') else 0)
+                level1_all_isoforms_aggregation_positions[aggregate_type].merge(positions)
 
             if child.id == longest_isoform_id:
                 # Merge the aggregates from the child with all the other aggregates under this feature
                 merge_aggregation_counter_dicts(
                     level1_longest_isoform_aggregation_counters, aggregation_counters_from_child
                 )
+                # Merge positions for longest_isoform
+                for aggregate_type, positions in aggregation_positions_from_child.items():
+                    if aggregate_type not in level1_longest_isoform_aggregation_positions:
+                        level1_longest_isoform_aggregation_positions[aggregate_type] = AggregatePositions(strand=feature.location.strand if hasattr(feature.location, 'strand') else 0)
+                    level1_longest_isoform_aggregation_positions[aggregate_type].merge(positions)
 
         # Merge the feature-level aggregation counters into the record-level aggregation counters
         self.update_aggregate_counters(
@@ -510,20 +584,24 @@ class RecordCountingContext:
         return (
             level1_longest_isoform_aggregation_counters,
             level1_all_isoforms_aggregation_counters,
+            level1_longest_isoform_aggregation_positions,
+            level1_all_isoforms_aggregation_positions,
         )
 
-    def aggregate_children(self, feature: SeqFeature) -> defaultdict[str, MultiCounter]:
+    def aggregate_children(self, feature: SeqFeature) -> tuple[defaultdict[str, MultiCounter], dict[str, AggregatePositions]]:
         """
         Perform aggregation of features. Not intended to handle level-1 features (see `aggregate_level1`)
+        Returns a tuple of (counters_dict, positions_dict) where positions_dict contains extreme positions for each aggregate type
         """
 
         aggregation_counters: defaultdict[str, MultiCounter] = defaultdict(
             DefaultMultiCounterFactory(self.filter)
         )
+        aggregation_positions: dict[str, AggregatePositions] = {}
 
         for child in feature.sub_features:
             # Compute aggregates in the child
-            aggregation_counters_from_child = self.aggregate_children(child)
+            aggregation_counters_from_child, aggregation_positions_from_child = self.aggregate_children(child)
 
             # Merge the aggregates from the child with all the other aggregates under this feature
             for (
@@ -532,14 +610,25 @@ class RecordCountingContext:
             ) in aggregation_counters_from_child.items():
                 aggregation_counter: MultiCounter = aggregation_counters[child_aggregation_type]
                 aggregation_counter.merge(child_aggregation_counter)
+                
+                # Merge positions
+                if child_aggregation_type not in aggregation_positions:
+                    aggregation_positions[child_aggregation_type] = AggregatePositions(strand=feature.location.strand if hasattr(feature.location, 'strand') else 0)
+                if child_aggregation_type in aggregation_positions_from_child:
+                    aggregation_positions[child_aggregation_type].merge(aggregation_positions_from_child[child_aggregation_type])
 
             # Add the child itself to the aggregations
             aggregation_counter: MultiCounter = aggregation_counters[child.type]
             feature_counter: Optional[MultiCounter] = self.counters.get(child.id, None)
             if feature_counter:
                 aggregation_counter.merge(feature_counter)
+                
+            # Update positions with the child feature's position
+            if child.type not in aggregation_positions:
+                aggregation_positions[child.type] = AggregatePositions(strand=feature.location.strand if hasattr(feature.location, 'strand') else 0)
+            aggregation_positions[child.type].update_from_feature(child)
 
-        return aggregation_counters
+        return aggregation_counters, aggregation_positions
 
     def update_active_counters(self, site_data: RNASiteVariantData) -> None:
         """
@@ -948,6 +1037,6 @@ def main():
         )
 
         logging.info("Program finished")
-
 if __name__ == "__main__":
+        print ()"Program finished")
     main()

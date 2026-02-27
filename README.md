@@ -274,7 +274,7 @@ This hierarchical information is provided in the same manner in the aggregate fi
 | AggregateID        | String                                                       | ID assigned after the feature under which the aggregation was done                                                                                                                 |
 | ParentType       | String                                                       | Type of the parent of the feature under which the aggregation was done                                                                                                 |
 | AggregateType    | String                                                       | Type of the features that are aggregated                                                                                                                               |
-| AggregationMode  | `all_isoforms`, `longest_isoform`, `chimaera` or `all-sites` | Way in which the aggregation was performed                                                                                                                             |
+| AggregationMode  | `all_isoforms`, `longest_isoform`, `chimaera`, `feature` or `all-sites` | Way in which the aggregation was performed                                                                                                                             |
 | CoveredSites     | Positive integer                                             | Number of sites in the aggregated features that satisfy the minimum level of coverage                                                                                  |
 | GenomeBases      | Comma-separated positive integers                            | Frequencies of the bases in the aggregated features in the reference genome (order: A, C, G, T)                                                                        |
 | SiteBasePairings | Comma-separated positive integers                            | Number of sites in which each genome-variant base pairings is found in the aggregated features (order: AA, AC, AG, AT, CA, CC, CG, CT, GA, GC, GG, GT, TA, TC, TG, TT) |
@@ -302,6 +302,9 @@ The existence of alternative transcripts of a same gene causes some complication
 2. **All isoforms** (*Transcripts 1 to 3* in the figure): Report the sum of the counts from all the isoforms, regardless of counting several times the same site. Its ID is composed of the ID of the gene plus "-all_isoforms".
 
 3. **Chimaera** (*Chimaera* in the figure): Report the counts from the union of feature ranges over all the isoforms. Its ID is composed of the ID of the gene plus "-chimaera". The aggregation types of chimaeras are postfixed with "-chimaera" as well.
+
+4. **Feature**
+Standard mode for regular features. Aggregates data from sub-features (children) of a given feature. For example, for an exon or CDS, it aggregates the counts of all its constituent elements.
 
 In the example below, a gene has three transcripts. For the **longest isoform** aggregation, Transcript 1 would be selected, because it has the greatest sum of exon lengths (numbers under the exon boxes). For the **all isoforms** aggregation, all the transcripts (1, 2, and 3) would be used. For **chimaera** aggregation, the aggregation ranges are the union of the ranges of the exons of all the transcripts. Therefore, the total length of the chimaeric features is always equal ot greater than the longest transcript.
 

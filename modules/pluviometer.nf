@@ -1,6 +1,6 @@
 process pluviometer {
     label "pluviometer"
-    publishDir("${params.outdir}/pluviometer/${tool_format}", mode: "copy")
+    publishDir("${params.outdir}/pluviometer/${tool_format}/raw", mode: "copy")
     tag "${meta.uid}"
 
     input:
@@ -24,6 +24,6 @@ process pluviometer {
             --edit_threshold ${params.edit_threshold} \
             --threads ${task.cpus} \
             --aggregation_mode ${params.aggregation_mode} \
-            --output ${meta.uid}
+            --output "${meta.uid}_${tool_format}" 
         """
 }

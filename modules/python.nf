@@ -26,13 +26,14 @@ process restore_original_sequences {
         """
 }
 
-process drip_features {
+process drip {
     label "pluviometer"
-    tag "drip_features"
-    publishDir("${params.outdir}/drip/features", mode:"copy", pattern: "*.tsv")
+    tag "drip"
+    publishDir("${params.outdir}/drip/${prefix}", mode:"copy", pattern: "*.tsv")
     
     input:
         val(meta_tsv)
+        val prefix
 
     output:
         path("*_AG.tsv"), emit: editing_ag
@@ -44,44 +45,17 @@ process drip_features {
         
         // Process list by pairs: [meta, file, meta, file, ...]
         for (int i = 0; i < list.size(); i += 2) {
-            def meta = list[i]
+            def m = list[i]  // Don't reuse 'meta' variable name
             def file = list[i + 1]
-            args.add("${file}:${meta.sample_id}")
+            def group = m.group ?: "group_unknown"
+            def sample = m.sample ?: "sample_unknown"
+            def replicate = m.rep ?: "rep1"  // Note: it's 'rep' not 'replicate' in meta
+            args.add("${file}:${group}:${sample}:${replicate}")
         }
         
         def args_str = args.join(" ")
 
         """
-        drip_features.py drip ${args_str}
-        """
-}
-
-process drip_aggregates {
-    label "pluviometer"
-    tag "drip_aggregates"
-    publishDir("${params.outdir}/drip/aggregates", mode:"copy", pattern: "*.tsv")
-    
-    input:
-        val(meta_tsv)
-
-    output:
-        path("*_AG.tsv"), emit: editing_ag
-        path("*.tsv"), emit: editing_all
-
-    script:
-        def list = meta_tsv
-        def args = []
-        
-        // Process list by pairs: [meta, file, meta, file, ...]
-        for (int i = 0; i < list.size(); i += 2) {
-            def meta = list[i]
-            def file = list[i + 1]
-            args.add("${file}:${meta.sample_id}")
-        }
-        
-        def args_str = args.join(" ")
-
-        """
-        drip_aggregates.py drip ${args_str}
+        drip.py drip_${prefix} ${args_str}
         """
 }
