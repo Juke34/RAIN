@@ -1038,5 +1038,5 @@ def main():
 
         logging.info("Program finished")
 if __name__ == "__main__":
-        print ()"Program finished")
+        print ("Program finished")
     main()
