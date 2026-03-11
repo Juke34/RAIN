@@ -97,6 +97,7 @@ process samtools_split_mapped_unmapped {
         
             # Extract unmapped reads (SAM flag -f 12: include only unmapped)
             samtools view -@ ${task.cpus} -b -f 12 ${bam} > ${base}${suffix}_unmapped.bam
+        fi
         """
 }
 
