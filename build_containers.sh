@@ -168,10 +168,26 @@ if [ "$build_singularity" = true ]; then
         sif_list+=("$sif_output")
 
         echo ██████████████████▓▒░   Building ${imgname}   ░▒▓██████████████████
-        
+
+        # Check if .sif already exists and ask user what to do
+        singularity_force=""
+        if [ -f "$sif_output" ]; then
+            if [[ "${github_action_mode}" == 'github_action' ]]; then
+                echo "  ⚠ $sif_output already exists - overwriting (non-interactive mode)"
+                singularity_force="--force"
+            else
+                echo "  ⚠ $sif_output already exists."
+                read -rp "  [s]kip / [o]verwrite ? [s/o]: " choice
+                case "$choice" in
+                    o|O) singularity_force="--force" ;;
+                    *)   echo "  Skipping ${imgname}." ; continue ;;
+                esac
+            fi
+        fi
+
         # Build with fakeroot if available
         if command -v singularity &> /dev/null; then
-            singularity build --fakeroot "$sif_output" "$def_file"
+            singularity build ${singularity_force} --fakeroot "$sif_output" "$def_file"
         else
             echo "❌ Singularity not found! Aborting."
             exit 1
