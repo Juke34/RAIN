@@ -3,7 +3,7 @@ From: python:slim-bullseye
 
 %post
     apt-get update && apt-get install -y procps
-    pip install REDItools3
+    pip install REDItools3==3.6
 
 %environment
     export PATH=/usr/local/bin/:$PATH

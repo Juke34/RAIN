@@ -2,7 +2,7 @@ Bootstrap: docker
 From: condaforge/miniforge3:24.7.1-2
 
 %files
-    singularity/pluviometer/env_pluviometer.yml /env_pluviometer.yml
+    containers/singularity/pluviometer/env_pluviometer.yml /env_pluviometer.yml
 
 %post
     conda env update --name base --file env_pluviometer.yml
