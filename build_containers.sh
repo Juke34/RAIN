@@ -6,6 +6,8 @@
 #   ./build_containers.sh --docker           # Build only Docker images
 #   ./build_containers.sh --singularity      # Build only Singularity images
 #   ./build_containers.sh --all              # Build both (explicit)
+#   ./build_containers.sh --skip             # Skip existing .sif files without asking
+#   ./build_containers.sh --overwrite        # Overwrite existing .sif files without asking
 #   ./build_containers.sh --github_action      # Build both for GitHub Actions
 #   ./build_containers.sh --docker github_action    # Build Docker for GitHub Actions
 #   ./build_containers.sh --singularity github_action # Build Singularity for GitHub Actions
@@ -17,6 +19,7 @@ build_docker=false
 build_singularity=false
 github_action_mode=""
 auto_detect=false
+sif_existing="ask"  # Options: ask | skip | overwrite
 
 # If no arguments provided, auto-detect available tools
 if [ $# -eq 0 ]; then
@@ -36,6 +39,12 @@ while [ $# -gt 0 ]; do
             build_docker=true
             build_singularity=true
             ;;
+        --skip)
+            sif_existing="skip"
+            ;;
+        --overwrite)
+            sif_existing="overwrite"
+            ;;
         --github_action)
             github_action_mode="github_action"
             # If --github_action is used without --docker or --singularity, enable auto-detect
@@ -51,6 +60,8 @@ while [ $# -gt 0 ]; do
             echo "  --singularity     Build Singularity/Apptainer images only"
             echo "  --apptainer       Alias for --singularity"
             echo "  --all             Build both Docker and Singularity images"
+            echo "  --skip            Skip existing .sif files without prompting"
+            echo "  --overwrite       Overwrite existing .sif files without prompting"
             echo "  (no options)      Build both by default"
             echo ""
             echo "Additional arguments:"
@@ -59,6 +70,8 @@ while [ $# -gt 0 ]; do
             echo "Examples:"
             echo "  $0                              # Build both (default)"
             echo "  $0 --docker                     # Build only Docker"
+            echo "  $0 --singularity --skip         # Build Singularity, skip existing"
+            echo "  $0 --singularity --overwrite    # Build Singularity, overwrite existing"
             echo "  $0 --singularity github_action  # Build Singularity for CI"
             exit 0
             ;;
@@ -172,9 +185,12 @@ if [ "$build_singularity" = true ]; then
         # Check if .sif already exists and ask user what to do
         singularity_force=""
         if [ -f "$sif_output" ]; then
-            if [[ "${github_action_mode}" == 'github_action' ]]; then
-                echo "  ⚠ $sif_output already exists - overwriting (non-interactive mode)"
+            if [[ "${github_action_mode}" == 'github_action' ]] || [[ "$sif_existing" == 'overwrite' ]]; then
+                echo "  ⚠ $sif_output already exists - overwriting"
                 singularity_force="--force"
+            elif [[ "$sif_existing" == 'skip' ]]; then
+                echo "  ⚠ $sif_output already exists - skipping"
+                continue
             else
                 echo "  ⚠ $sif_output already exists."
                 read -rp "  [s]kip / [o]verwrite ? [s/o]: " choice
