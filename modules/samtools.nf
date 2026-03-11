@@ -61,6 +61,8 @@ process samtools_sort_bam {
 
 /*
  * Split BAM file into mapped and unmapped reads
+ -f 4  : a single read unmapped
+ -f 12 : both reads unmapped (plus stringent pour paired-end)
  */
 process samtools_split_mapped_unmapped {
     label "samtools"
@@ -81,11 +83,20 @@ process samtools_split_mapped_unmapped {
         // It is needed at the step of sequence restoration, where we join the aligned BAM with the original unmapped BAM based on the sample name. (see hyper-editing.nf)
         def suffix = base.contains('_AliNe') ? '' : '_AliNe'
         """
-        # Extract mapped reads (SAM flag -F 4: exclude unmapped)
-        samtools view -@ ${task.cpus} -b -F 4 ${bam} > ${base}${suffix}_mapped.bam
+        if samtools view -c -f 1 ${bam} | grep -q "^0\$"; then
+            # Single-end reads
+            # Extract mapped reads (SAM flag -F 4: exclude unmapped)
+            samtools view -@ ${task.cpus} -b -F 4 ${bam} > ${base}${suffix}_mapped.bam
         
-        # Extract unmapped reads (SAM flag -f 4: include only unmapped)
-        samtools view -@ ${task.cpus} -b -f 4 ${bam} > ${base}${suffix}_unmapped.bam
+            # Extract unmapped reads (SAM flag -f 4: include only unmapped)
+            samtools view -@ ${task.cpus} -b -f 4 ${bam} > ${base}${suffix}_unmapped.bam
+        else
+            # Paired-end reads
+            # Extract mapped reads (SAM flag -F 12: exclude unmapped)
+            samtools view -@ ${task.cpus} -b -F 12 ${bam} > ${base}${suffix}_mapped.bam
+        
+            # Extract unmapped reads (SAM flag -f 12: include only unmapped)
+            samtools view -@ ${task.cpus} -b -f 12 ${bam} > ${base}${suffix}_unmapped.bam
         """
 }
 
