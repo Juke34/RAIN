@@ -373,7 +373,7 @@ class RecordCountingContext:
         self.active_features.pop(feature.id, None)
 
         # Counter for the feature itself
-        feature_counter: Optional[MultiCounter] = self.counters.get(feature.id, None)
+        feature_counter: Optional[MultiCounter] = self.counters.pop(feature.id, None)
 
         assert self.record.id
 
@@ -388,7 +388,8 @@ class RecordCountingContext:
                 self.chimaera_aggregate_counters_by_parent_type[(parent_feature.type, feature.type)].merge(feature_counter)
             else:
                 self.feature_writer.write_row_with_data(self.record.id, feature, feature_counter)
-            del self.counters[feature.id]
+            # Explicitly delete counter after use to free memory
+            del feature_counter
         else:
             if feature.is_chimaera:
                 assert parent_feature
@@ -488,6 +489,10 @@ class RecordCountingContext:
         # Recursively check-out children
         for child in feature.sub_features:
             self.checkout(child, feature)
+        
+        # After processing all children, clear sub_features to free memory
+        if hasattr(feature, 'sub_features'):
+            feature.sub_features.clear()
 
         return None
 
@@ -668,6 +673,35 @@ class RecordCountingContext:
         if self.use_progress_bar:
             self.progbar.finish()
 
+        return None
+
+    def cleanup(self) -> None:
+        """
+        Clean up memory after processing a record. Clear all data structures.
+        """
+        self.active_features.clear()
+        self.action_queue.clear()
+        self.counters.clear()
+        
+        # Clear aggregate counters
+        self.longest_isoform_aggregate_counters.clear()
+        self.chimaera_aggregate_counters.clear()
+        self.all_isoforms_aggregate_counters.clear()
+        self.longest_isoform_aggregate_counters_by_parent_type.clear()
+        self.chimaera_aggregate_counters_by_parent_type.clear()
+        self.all_isoforms_aggregate_counters_by_parent_type.clear()
+        
+        # Clear record reference
+        if hasattr(self, 'record'):
+            # Clear features from record to help garbage collection
+            if hasattr(self.record, 'features'):
+                self.record.features.clear()
+            delattr(self, 'record')
+        
+        # Clear progress bar reference
+        if hasattr(self, 'progbar'):
+            delattr(self, 'progbar')
+        
         return None
 
 
@@ -854,18 +888,112 @@ def run_job(record: SeqRecord) -> dict[str, Any]:
             record.id, ["."], ".", ".", "all_sites", total_counter_dict
         )
 
-    return {
+    # Extract data needed for return before cleanup
+    result = {
         "record_id": record.id,
         "tmp_feature_output_file": tmp_feature_output_file,
         "tmp_aggregate_output_file": tmp_aggregate_output_file,
-        "chimaera_aggregate_counters": record_ctx.chimaera_aggregate_counters,
-        "longest_isoform_aggregate_counters": record_ctx.longest_isoform_aggregate_counters,
-        "all_isoforms_aggregate_counters": record_ctx.all_isoforms_aggregate_counters,
-        "chimaera_aggregate_counters_by_parent_type": record_ctx.chimaera_aggregate_counters_by_parent_type,
-        "longest_isoform_aggregate_counters_by_parent_type": record_ctx.longest_isoform_aggregate_counters_by_parent_type,
-        "all_isoforms_aggregate_counters_by_parent_type": record_ctx.all_isoforms_aggregate_counters_by_parent_type,
+        "chimaera_aggregate_counters": record_ctx.chimaera_aggregate_counters.copy(),
+        "longest_isoform_aggregate_counters": record_ctx.longest_isoform_aggregate_counters.copy(),
+        "all_isoforms_aggregate_counters": record_ctx.all_isoforms_aggregate_counters.copy(),
+        "chimaera_aggregate_counters_by_parent_type": record_ctx.chimaera_aggregate_counters_by_parent_type.copy(),
+        "longest_isoform_aggregate_counters_by_parent_type": record_ctx.longest_isoform_aggregate_counters_by_parent_type.copy(),
+        "all_isoforms_aggregate_counters_by_parent_type": record_ctx.all_isoforms_aggregate_counters_by_parent_type.copy(),
         "total_counter": record_ctx.total_counter,
     }
+    
+    # Clean up record context to free memory immediately
+    record_ctx.cleanup()
+    
+    # Clear record features to help garbage collection
+    if hasattr(record, 'features'):
+        record.features.clear()
+    del record
+    
+    return result
+
+
+def process_and_write_record_data(
+    record_data: dict[str, Any],
+    feature_output_handle: TextIO,
+    aggregate_output_handle: TextIO,
+    genome_longest_isoform_aggregate_counters: defaultdict[str, MultiCounter],
+    genome_all_isoforms_aggregate_counters: defaultdict[str, MultiCounter],
+    genome_chimaera_aggregate_counters: defaultdict[str, MultiCounter],
+    genome_longest_isoform_aggregate_counters_by_parent_type: defaultdict[tuple[str, str], MultiCounter],
+    genome_all_isoforms_aggregate_counters_by_parent_type: defaultdict[tuple[str, str], MultiCounter],
+    genome_chimaera_aggregate_counters_by_parent_type: defaultdict[tuple[str, str], MultiCounter],
+    genome_total_counter: MultiCounter,
+) -> None:
+    """
+    Process a single record's data: write its output and merge counters into genome totals.
+    This function writes immediately to output files and only keeps genome-level totals in memory.
+    """
+    logging.info(f"Record {record_data['record_id']} · Writing output and merging totals...")
+
+    # Write temporary files to final output immediately
+    with open(record_data["tmp_feature_output_file"]) as tmp_output_handle:
+        feature_output_handle.write(tmp_output_handle.read())
+    remove(record_data["tmp_feature_output_file"])
+
+    with open(record_data["tmp_aggregate_output_file"]) as tmp_output_handle:
+        aggregate_output_handle.write(tmp_output_handle.read())
+    remove(record_data["tmp_aggregate_output_file"])
+
+    # Update the genome's aggregate counters from the record data aggregate counters
+    for record_aggregate_type, record_aggregate_counter in record_data[
+        "longest_isoform_aggregate_counters"
+    ].items():
+        genome_longest_isoform_aggregate_counters[record_aggregate_type].merge(
+            record_aggregate_counter
+        )
+
+    for record_aggregate_type, record_aggregate_counter in record_data[
+        "chimaera_aggregate_counters"
+    ].items():
+        genome_chimaera_aggregate_counters[record_aggregate_type].merge(
+            record_aggregate_counter
+        )
+
+    merge_aggregation_counter_dicts(
+        genome_all_isoforms_aggregate_counters,
+        record_data["all_isoforms_aggregate_counters"],
+    )
+
+    # Update the genome's by-parent-type aggregate counters
+    for (parent_type, aggregate_type), record_aggregate_counter in record_data[
+        "longest_isoform_aggregate_counters_by_parent_type"
+    ].items():
+        genome_longest_isoform_aggregate_counters_by_parent_type[(parent_type, aggregate_type)].merge(
+            record_aggregate_counter
+        )
+
+    for (parent_type, aggregate_type), record_aggregate_counter in record_data[
+        "all_isoforms_aggregate_counters_by_parent_type"
+    ].items():
+        genome_all_isoforms_aggregate_counters_by_parent_type[(parent_type, aggregate_type)].merge(
+            record_aggregate_counter
+        )
+
+    for (parent_type, aggregate_type), record_aggregate_counter in record_data[
+        "chimaera_aggregate_counters_by_parent_type"
+    ].items():
+        genome_chimaera_aggregate_counters_by_parent_type[(parent_type, aggregate_type)].merge(
+            record_aggregate_counter
+        )
+
+    # Update the genome's total counter from the record data total counter
+    genome_total_counter.merge(record_data["total_counter"])
+    
+    # Clear record_data counters to free memory immediately after merging
+    record_data["chimaera_aggregate_counters"].clear()
+    record_data["longest_isoform_aggregate_counters"].clear()
+    record_data["all_isoforms_aggregate_counters"].clear()
+    record_data["chimaera_aggregate_counters_by_parent_type"].clear()
+    record_data["longest_isoform_aggregate_counters_by_parent_type"].clear()
+    record_data["all_isoforms_aggregate_counters_by_parent_type"].clear()
+    
+    return None
 
 
 def main():
@@ -882,24 +1010,26 @@ def main():
         args.output + "_aggregates.tsv" if args.output else "aggregates.tsv"
     )
 
+    # Determine reader factory based on format
+    match args.format:
+        case "reditools2":
+            reader_factory = Reditools2Reader
+        case "reditools3":
+            reader_factory = Reditools3Reader
+        case "jacusa2":
+            reader_factory = Jacusa2Reader
+        case _:
+            raise Exception(f'Unimplemented format "{args.format}"')
+
     with (
         open(args.gff) as gff_handle,
         open(feature_output_filename, "w") as feature_output_handle,
         open(aggregate_output_filename, "w") as aggregate_output_handle,
     ):
-        match args.format:
-            case "reditools2":
-                reader_factory = Reditools2Reader
-            case "reditools3":
-                reader_factory = Reditools3Reader
-            case "jacusa2":
-                reader_factory = Jacusa2Reader
-            case _:
-                raise Exception(f'Unimplemented format "{args.format}"')
-
         logging.info("Parsing GFF3 file...")
         records: Generator[SeqRecord, None, None] = GFF.parse(gff_handle)
 
+        # Initialize genome-level counters (only these will be kept in memory)
         genome_filter: SiteFilter = SiteFilter(
             cov_threshold=args.cov, edit_threshold=args.edit_threshold
         )
@@ -926,84 +1056,70 @@ def main():
             lambda: MultiCounter(genome_filter)
         )
 
+        # Write headers once at the beginning
         feature_writer: FeatureFileWriter = FeatureFileWriter(feature_output_handle)
         aggregate_writer: AggregateFileWriter = AggregateFileWriter(aggregate_output_handle)
-
         feature_writer.write_header()
         aggregate_writer.write_header()
 
-        with multiprocessing.Pool(processes=args.threads, initializer=init_worker, initargs=(args, reader_factory)) as pool:
-            # Run the jobs and save the result of each record in a dict stored in the `record_data` list
-            record_data_list: list[dict[str, Any]] = pool.map(run_job, records)
-
-        # Sort record results in "natural" order
-        record_data_list = natsorted(record_data_list, key=lambda x: x["record_id"])
-
-    with (
-        open(feature_output_filename, "a") as feature_output_handle,
-        open(aggregate_output_filename, "a") as aggregate_output_handle,
-    ):
-        for record_data in record_data_list:
-            logging.info(f"Record {record_data['record_id']} · Merging temporary output files...")
-
-            with open(record_data["tmp_feature_output_file"]) as tmp_output_handle:
-                feature_output_handle.write(tmp_output_handle.read())
-            remove(record_data["tmp_feature_output_file"])
-
-            with open(record_data["tmp_aggregate_output_file"]) as tmp_output_handle:
-                aggregate_output_handle.write(tmp_output_handle.read())
-            remove(record_data["tmp_aggregate_output_file"])
-
-            # Update the genome's aggregate counters from the record data aggregate counters
-            for record_aggregate_type, record_aggregate_counter in record_data[
-                "longest_isoform_aggregate_counters"
-            ].items():
-                genome_aggregate_counter: MultiCounter = genome_longest_isoform_aggregate_counters[
-                    record_aggregate_type
-                ]
-                genome_aggregate_counter.merge(record_aggregate_counter)
-
-            for record_aggregate_type, record_aggregate_counter in record_data[
-                "chimaera_aggregate_counters"
-            ].items():
-                genome_aggregate_counter: MultiCounter = genome_chimaera_aggregate_counters[
-                    record_aggregate_type
-                ]
-                genome_aggregate_counter.merge(record_aggregate_counter)
-
-            merge_aggregation_counter_dicts(
-                genome_all_isoforms_aggregate_counters,
-                record_data["all_isoforms_aggregate_counters"],
-            )
-
-            # Update the genome's by-parent-type aggregate counters
-            for (parent_type, aggregate_type), record_aggregate_counter in record_data[
-                "longest_isoform_aggregate_counters_by_parent_type"
-            ].items():
-                genome_longest_isoform_aggregate_counters_by_parent_type[(parent_type, aggregate_type)].merge(
-                    record_aggregate_counter
+        # Process records and write output immediately
+        if args.threads > 1:
+            # Parallel processing: use imap (ordered) to maintain chromosome order
+            # imap returns results in the same order as input, allowing immediate writing
+            logging.info(f"Processing records with {args.threads} threads...")
+            with multiprocessing.Pool(processes=args.threads, initializer=init_worker, initargs=(args, reader_factory)) as pool:
+                # imap (not imap_unordered) processes records in order
+                # Results are yielded as soon as they're ready, maintaining input order
+                record_data_iterator = pool.imap(run_job, records, chunksize=1)
+                
+                # Write each result immediately as it comes (no accumulation!)
+                for record_data in record_data_iterator:
+                    process_and_write_record_data(
+                        record_data,
+                        feature_output_handle,
+                        aggregate_output_handle,
+                        genome_longest_isoform_aggregate_counters,
+                        genome_all_isoforms_aggregate_counters,
+                        genome_chimaera_aggregate_counters,
+                        genome_longest_isoform_aggregate_counters_by_parent_type,
+                        genome_all_isoforms_aggregate_counters_by_parent_type,
+                        genome_chimaera_aggregate_counters_by_parent_type,
+                        genome_total_counter,
+                    )
+                    # Force flush to disk after each chromosome
+                    feature_output_handle.flush()
+                    aggregate_output_handle.flush()
+            
+        else:
+            # Sequential processing: write immediately without storing results
+            logging.info("Processing records sequentially...")
+            for record in records:
+                record_data = run_job(record)
+                
+                # Write output and merge totals immediately (no accumulation)
+                process_and_write_record_data(
+                    record_data,
+                    feature_output_handle,
+                    aggregate_output_handle,
+                    genome_longest_isoform_aggregate_counters,
+                    genome_all_isoforms_aggregate_counters,
+                    genome_chimaera_aggregate_counters,
+                    genome_longest_isoform_aggregate_counters_by_parent_type,
+                    genome_all_isoforms_aggregate_counters_by_parent_type,
+                    genome_chimaera_aggregate_counters_by_parent_type,
+                    genome_total_counter,
                 )
+                
+                # Force flush to disk after each chromosome
+                feature_output_handle.flush()
+                aggregate_output_handle.flush()
+                
+                # Explicitly delete the record to free memory
+                del record
+                del record_data
 
-            for (parent_type, aggregate_type), record_aggregate_counter in record_data[
-                "all_isoforms_aggregate_counters_by_parent_type"
-            ].items():
-                genome_all_isoforms_aggregate_counters_by_parent_type[(parent_type, aggregate_type)].merge(
-                    record_aggregate_counter
-                )
-
-            for (parent_type, aggregate_type), record_aggregate_counter in record_data[
-                "chimaera_aggregate_counters_by_parent_type"
-            ].items():
-                genome_chimaera_aggregate_counters_by_parent_type[(parent_type, aggregate_type)].merge(
-                    record_aggregate_counter
-                )
-
-            # Update the genome's total counter from the record data total counter
-            genome_total_counter.merge(record_data["total_counter"])
-
+        # Write genome-level totals at the end (only genome totals are kept in memory)
         logging.info("Writing genome totals...")
-
-        aggregate_writer: AggregateFileWriter = AggregateFileWriter(aggregate_output_handle)
 
         # Write genomic counts
         aggregate_writer.write_rows_with_data(
