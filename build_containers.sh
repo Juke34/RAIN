@@ -129,7 +129,6 @@ if [ "$build_docker" = true ]; then
     image_list=( )
     
     for dir in containers/docker/*; do 
-        cd "${dir}"
         imgname=$(echo $dir | rev | cut -d/ -f1 | rev)
         image_list+=(${imgname})
 
@@ -146,10 +145,8 @@ if [ "$build_docker" = true ]; then
             fi
         fi
 
-        docker build ${docker_arch_option} -t ${imgname} .
-        
-        # Back to the original working directory
-        cd "$wd"
+        # Use containers/ as build context so shared files (e.g. env_*.yml) are accessible
+        docker build ${docker_arch_option} -f "${dir}/Dockerfile" -t ${imgname} containers/
     done
 
     if [[ ${github_action_mode} == 'github_action' ]]; then
