@@ -640,7 +640,7 @@ class RecordCountingContext:
         A new multicounter is created if no matching ID is found.
         """
         for feature_key, feature in self.active_features.items():
-            if feature.location.strand == site_data.strand:
+            if site_data.strand == 0 or feature.location.strand == 0 or feature.location.strand == site_data.strand:
                 counter: MultiCounter = self.counters[feature_key]
                 counter.update(site_data)
 
