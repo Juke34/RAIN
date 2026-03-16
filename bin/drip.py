@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import pandas as pd
+import numpy as np
 import sys
 from pathlib import Path
 
@@ -10,7 +11,7 @@ def print_help():
 DRIP - RNA Editing Analysis Tool
 
 DESCRIPTION:
-    This script analyzes RNA editing from standardized puviometer files. It calculates
+    This script analyzes RNA editing from standardized pluviometer files. It calculates
     two key metrics for all 16 genome-variant base pair combinations across multiple 
     samples and combines them into a unified matrix format.
 
@@ -24,7 +25,17 @@ ARGUMENTS:
                      Input file path, group name, sample name, and replicate ID
                      separated by colons. All four components are required.
     --with-file-id   Include file ID in column names (default: omit file ID)
+    --min-cov N      Minimum read coverage threshold (default: 1). Positions with a
+                     denominator (genome base count for espf, read count for espr)
+                     strictly below this value are reported as NA instead of 0.
     --help, -h       Display this help message
+
+NA BEHAVIOR: 
+| Source du NA                      |	Mécanisme	              | Résultat
+| Couverture = 0 dans sampleA	    | np.where(mask, ..., np.nan) |	NA ✅
+| Couverture < min_cov dans sampleA	| même masque                 |	NA ✅
+| Ligne absente de sampleB	        | how='outer' → NaN           |	NA ✅
+| Couverture OK, 0 éditions	        | ratio = 0.0	              | 0.0 ✅
 
 INPUT FILE FORMAT:
     The input files must be TSV files with the following columns:
@@ -115,7 +126,7 @@ AUTHORS:
     print(help_text)
     sys.exit(0)
 
-def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, include_file_id=False):
+def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, include_file_id=False, min_cov=1):
     """Parse a single TSV file and extract editing metrics for all base pair combinations."""
     df = pd.read_csv(filepath, sep='\t')
     
@@ -152,16 +163,15 @@ def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, includ
         genome_base = bp[0]  # First letter is the genome base
         
         # Calculate espf: XY_sites / X_count
+        # NA when genome base count < min_cov (position not covered or not in feature)
         espf_col = f'{col_prefix}::{bp}::espf'
-        df[espf_col] = df.apply(
-            lambda row: row[f'{bp}_sites'] / row[f'{genome_base}_count'] 
-                        if row[f'{genome_base}_count'] > 0 else 0,
-            axis=1
-        )
+        denom_espf = df[f'{genome_base}_count']
+        mask_espf = denom_espf >= min_cov
+        df[espf_col] = np.where(mask_espf, df[f'{bp}_sites'] / denom_espf.where(mask_espf, 1), np.nan)
         result_cols.append(espf_col)
         
         # Calculate espr: XY_reads / (XA + XC + XG + XT)
-        # Calculate total reads for this genome base
+        # NA when total read coverage < min_cov (position not sequenced)
         total_reads_col = f'{genome_base}_total_reads'
         if total_reads_col not in df.columns:
             df[total_reads_col] = (
@@ -172,11 +182,9 @@ def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, includ
             )
         
         espr_col = f'{col_prefix}::{bp}::espr'
-        df[espr_col] = df.apply(
-            lambda row: row[f'{bp}_reads'] / row[total_reads_col] 
-                        if row[total_reads_col] > 0 else 0,
-            axis=1
-        )
+        denom_espr = df[total_reads_col]
+        mask_espr = denom_espr >= min_cov
+        df[espr_col] = np.where(mask_espr, df[f'{bp}_reads'] / denom_espr.where(mask_espr, 1), np.nan)
         result_cols.append(espr_col)
     
     # Return dataframe with metadata and all metrics
@@ -184,7 +192,7 @@ def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, includ
     
     return result
 
-def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id=False):
+def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id=False, min_cov=1):
     """Merge data from multiple samples and create output matrices - one file per base pair combination."""
     
     all_data = []
@@ -202,7 +210,7 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
         filename_stem = Path(filepath).stem
         file_id = '_'.join(filename_stem.split('_')[:-1])
         print(f"Processing {group_name}::{sample_name} (replicate {replicate}) from {filepath} (file_id: {file_id})...")
-        data = parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, include_file_id)
+        data = parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, include_file_id, min_cov)
         all_data.append(data)
         file_id_list.append(file_id)
         group_name_list.append(group_name)
@@ -215,8 +223,8 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
     for data in all_data[1:]:
         merged = merged.merge(data, on=metadata_cols, how='outer')
     
-    # Fill NA values with 0 for metrics
-    merged = merged.fillna(0)
+    # Do NOT fill NA with 0: NA means the position was not covered (or below min_cov),
+    # which is distinct from 0 (position covered but no editing observed)
     
     # Sort by SeqID, then ParentIDs, then Mode
     merged = merged.sort_values(['SeqID', 'ParentIDs', 'Mode'])
@@ -256,7 +264,7 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
         
         # Save to file
         output_file = f"{output_prefix}_{bp}.tsv"
-        bp_result.to_csv(output_file, sep='\t', index=False)
+        bp_result.to_csv(output_file, sep='\t', index=False, na_rep='NA')
         output_files.append(output_file)
     
     print(f"\nOutput files created:")
@@ -286,13 +294,33 @@ if __name__ == "__main__":
     file_group_sample_replicate_dict = {}
     group_sample_rep_counts = {}
     include_file_id = False  # Default: omit file_id from column names
-    
-    for arg in sys.argv[2:]:
+    min_cov = 1  # Default: NA when denominator is 0; treat 0 coverage as non-observed
+
+    args_iter = iter(range(2, len(sys.argv)))
+    for i in args_iter:
+        arg = sys.argv[i]
         # Check for --with-file-id flag
         if arg == '--with-file-id':
             include_file_id = True
             continue
-            
+
+        # Check for --min-cov flag (supports both --min-cov=N and --min-cov N)
+        if arg.startswith('--min-cov'):
+            if '=' in arg:
+                try:
+                    min_cov = int(arg.split('=', 1)[1])
+                except ValueError:
+                    print(f"ERROR: --min-cov requires an integer value", file=sys.stderr)
+                    sys.exit(1)
+            else:
+                try:
+                    next_i = next(args_iter)
+                    min_cov = int(sys.argv[next_i])
+                except (StopIteration, ValueError):
+                    print(f"ERROR: --min-cov requires an integer value", file=sys.stderr)
+                    sys.exit(1)
+            continue
+
         if ':' not in arg:
             print(f"ERROR: Invalid argument format '{arg}'", file=sys.stderr)
             print("Expected format: FILE:GROUP:SAMPLE:REPLICATE", file=sys.stderr)
@@ -326,6 +354,6 @@ if __name__ == "__main__":
         file_group_sample_replicate_dict[filepath] = (group_name, sample_name, replicate)
     
     # Process all samples
-    result = merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id)
+    result = merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id, min_cov)
     
     print("\nAnalysis complete!")
