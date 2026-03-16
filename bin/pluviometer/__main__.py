@@ -24,6 +24,7 @@ import tempfile
 import argparse
 import logging
 import math
+import gc
 
 logger = logging.getLogger(__name__)
 
@@ -770,6 +771,12 @@ def parse_cli_input() -> argparse.Namespace:
     parser.add_argument(
         "--progress", action="store_true", default=False, help="Display progress bar"
     )
+    parser.add_argument(
+        "--gff_feature_types",
+        type=str,
+        default=None,
+        help="Comma-separated list of GFF feature types to load (e.g., 'gene,mRNA,exon,CDS'). Reduces memory usage by filtering during parsing. Leave empty to load all types.",
+    )
 
     return parser.parse_args()
 
@@ -1027,7 +1034,16 @@ def main():
         open(aggregate_output_filename, "w") as aggregate_output_handle,
     ):
         logging.info("Parsing GFF3 file...")
-        records: Generator[SeqRecord, None, None] = GFF.parse(gff_handle)
+        
+        # Configure BCBio GFF parser with memory-efficient options
+        limit_info = None
+        if args.gff_feature_types:
+            feature_types = [t.strip() for t in args.gff_feature_types.split(',')]
+            limit_info = {"gff_type": feature_types}
+            logging.info(f"Filtering GFF to load only these feature types: {feature_types}")
+            logging.info("This will reduce memory usage significantly!")
+        
+        records: Generator[SeqRecord, None, None] = GFF.parse(gff_handle, limit_info=limit_info)
 
         # Initialize genome-level counters (only these will be kept in memory)
         genome_filter: SiteFilter = SiteFilter(
@@ -1089,6 +1105,9 @@ def main():
                     # Force flush to disk after each chromosome
                     feature_output_handle.flush()
                     aggregate_output_handle.flush()
+                    
+                    # Force garbage collection to free memory immediately
+                    gc.collect()
             
         else:
             # Sequential processing: write immediately without storing results
@@ -1117,6 +1136,9 @@ def main():
                 # Explicitly delete the record to free memory
                 del record
                 del record_data
+                
+                # Force garbage collection to free memory immediately
+                gc.collect()
 
         # Write genome-level totals at the end (only genome totals are kept in memory)
         logging.info("Writing genome totals...")
