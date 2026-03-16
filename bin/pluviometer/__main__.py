@@ -6,8 +6,8 @@ from .SeqFeature_extensions import SeqFeature
 from collections import deque, defaultdict
 from dataclasses import dataclass, field
 from .multi_counter import MultiCounter
-from Bio.SeqRecord import SeqRecord
 from .site_filter import SiteFilter
+from types import SimpleNamespace
 from .rna_site_variant_readers import (
     RNASiteVariantReader,
     Reditools2Reader,
@@ -17,7 +17,6 @@ from .rna_site_variant_readers import (
 from .utils import RNASiteVariantData
 from natsort import natsorted
 import multiprocessing
-from BCBio import GFF
 from os import remove
 import progressbar
 import tempfile
@@ -183,7 +182,7 @@ class RecordCountingContext:
 
         return None
 
-    def set_record(self, record: SeqRecord) -> None:
+    def set_record(self, record: Any) -> None:
         """
         Assign a specific record to the RecordCountingContext.
         If the context was already assigned to another record, the queues and counters are cleared before proceeding (this was used in a previous version that recycled the record counting context, but it isn't used since parallelization was implemented).
@@ -204,7 +203,7 @@ class RecordCountingContext:
             self.action_queue.clear()
         self.counters.clear()
 
-        self.record: SeqRecord = record
+        self.record: Any = record
 
         # Map positions to activation feature and deactivation actions
         logging.info("Pre-processing features")
@@ -798,7 +797,7 @@ def init_worker(args_value, reader_factory_value):
     reader_factory = reader_factory_value
 
 
-def run_job(record: SeqRecord) -> dict[str, Any]:
+def run_job(record: Any) -> dict[str, Any]:
     """
     A wrapper function for performing counting parallelized by record. The return value is a dict containing all the information needed for integrating
     the output of all records after the computations are finished.
@@ -995,7 +994,86 @@ def process_and_write_record_data(
     
     return None
 
+def parse_gff3_streaming(file_handle: TextIO) -> Generator[Any, None, None]:
+    """
+    Memory-efficient streaming GFF3 parser. Processes one chromosome at a time,
+    loading only the current chromosome's features into memory.
 
+    Replaces BCBio GFF.parse() to eliminate SQLite overhead and per-feature qualifier
+    storage. Only retains the minimal data needed: ID, type, location, and parent-child
+    relationships.
+
+    Assumptions:
+    - The GFF3 file is grouped by chromosome (all features of one chromosome are contiguous).
+    - Parents appear before their children within each group (normalized GFF3).
+    """
+    current_seqid: Optional[str] = None
+    features_by_id: dict[str, SeqFeature] = {}
+    top_level: list[SeqFeature] = []
+
+    for raw_line in file_handle:
+        # Skip directive lines (##...) and comment lines (#...)
+        if raw_line[0] == '#' or raw_line == '\n':
+            continue
+
+        cols = raw_line.rstrip('\n').split('\t')
+        if len(cols) < 9:
+            continue
+
+        seqid  = cols[0]
+        ftype  = cols[2]
+        strand_ch = cols[6]
+        attrs  = cols[8]
+
+        # Extract only ID and Parent from the attributes column
+        feature_id: Optional[str] = None
+        parent_ids: list[str] = []
+        for attr in attrs.split(';'):
+            if attr.startswith('ID='):
+                feature_id = attr[3:].strip()
+            elif attr.startswith('Parent='):
+                parent_ids = attr[7:].strip().split(',')
+
+        if feature_id is None:
+            continue  # Features without ID cannot be referenced as parents — skip
+
+        # New chromosome: yield the completed previous record
+        if seqid != current_seqid:
+            if current_seqid is not None and top_level:
+                yield SimpleNamespace(id=current_seqid, features=top_level)
+            features_by_id = {}
+            top_level = []
+            current_seqid = seqid
+
+        strand_int: int = 1 if strand_ch == '+' else (-1 if strand_ch == '-' else 0)
+        location = SimpleLocation(int(cols[3]) - 1, int(cols[4]), strand=strand_int)
+
+        feature = SeqFeature(
+            location=location,
+            id=feature_id,
+            type=ftype,
+            qualifiers={'ID': [feature_id]},  # Only the ID qualifier is needed
+        )
+        feature.sub_features = []
+        features_by_id[feature_id] = feature
+
+        if not parent_ids:
+            top_level.append(feature)
+        else:
+            for pid in parent_ids:
+                parent = features_by_id.get(pid)
+                if parent is not None:
+                    parent.sub_features.append(feature)
+                else:
+                    logging.warning(
+                        f"GFF3 parser: parent '{pid}' not found for '{feature_id}' "
+                        f"— file may not be normalized (parents before children). Skipping feature."
+                    )
+
+    # Yield the final chromosome
+    if current_seqid is not None and top_level:
+        yield SimpleNamespace(id=current_seqid, features=top_level)
+        
 def main():
     global args
     global reader_factory
@@ -1027,7 +1105,7 @@ def main():
         open(aggregate_output_filename, "w") as aggregate_output_handle,
     ):
         logging.info("Parsing GFF3 file...")
-        records: Generator[SeqRecord, None, None] = GFF.parse(gff_handle)
+        records: Generator[Any, None, None] = parse_gff3_streaming(gff_handle)
 
         # Initialize genome-level counters (only these will be kept in memory)
         genome_filter: SiteFilter = SiteFilter(
