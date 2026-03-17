@@ -23,6 +23,7 @@ import progressbar
 import tempfile
 import argparse
 import logging
+import pickle
 import math
 import gc
 
@@ -916,8 +917,15 @@ def run_job(record: SeqRecord) -> dict[str, Any]:
     if hasattr(record, 'features'):
         record.features.clear()
     del record
-    
-    return result
+
+    # Serialize result to a temp pickle file so the worker frees RAM immediately.
+    # Only the tiny file path is sent back through the IPC channel.
+    tmp_pickle_fd, tmp_pickle_path = tempfile.mkstemp(suffix='.pkl')
+    with open(tmp_pickle_fd, 'wb') as f:
+        pickle.dump(result, f)
+    del result
+
+    return tmp_pickle_path
 
 
 def process_and_write_record_data(
@@ -1080,34 +1088,47 @@ def main():
 
         # Process records and write output immediately
         if args.threads > 1:
-            # Parallel processing: use imap (ordered) to maintain chromosome order
-            # imap returns results in the same order as input, allowing immediate writing
+            # Parallel processing: use imap_unordered so each worker's result is
+            # written to a pickle temp file as soon as it is ready, regardless of
+            # chromosome order.  Only the tiny file paths cross the IPC channel,
+            # keeping the main process RAM near zero while workers are running.
             logging.info(f"Processing records with {args.threads} threads...")
+            pickle_paths: list[str] = []
             with multiprocessing.Pool(processes=args.threads, initializer=init_worker, initargs=(args, reader_factory)) as pool:
-                # imap (not imap_unordered) processes records in order
-                # Results are yielded as soon as they're ready, maintaining input order
-                record_data_iterator = pool.imap(run_job, records, chunksize=1)
-                
-                # Write each result immediately as it comes (no accumulation!)
-                for record_data in record_data_iterator:
-                    process_and_write_record_data(
-                        record_data,
-                        feature_output_handle,
-                        aggregate_output_handle,
-                        genome_longest_isoform_aggregate_counters,
-                        genome_all_isoforms_aggregate_counters,
-                        genome_chimaera_aggregate_counters,
-                        genome_longest_isoform_aggregate_counters_by_parent_type,
-                        genome_all_isoforms_aggregate_counters_by_parent_type,
-                        genome_chimaera_aggregate_counters_by_parent_type,
-                        genome_total_counter,
-                    )
-                    # Force flush to disk after each chromosome
-                    feature_output_handle.flush()
-                    aggregate_output_handle.flush()
-                    
-                    # Force garbage collection to free memory immediately
-                    gc.collect()
+                for pickle_path in pool.imap_unordered(run_job, records, chunksize=1):
+                    pickle_paths.append(pickle_path)
+
+            # Sort pickle files by their record_id (natural chromosome order)
+            def _record_id_from_pickle(path: str) -> str:
+                with open(path, 'rb') as _f:
+                    return pickle.load(_f)['record_id']
+
+            pickle_paths = natsorted(pickle_paths, key=_record_id_from_pickle)
+
+            # Process in natural order: unpickle → write → delete → GC
+            for pickle_path in pickle_paths:
+                with open(pickle_path, 'rb') as f:
+                    record_data = pickle.load(f)
+                remove(pickle_path)
+                process_and_write_record_data(
+                    record_data,
+                    feature_output_handle,
+                    aggregate_output_handle,
+                    genome_longest_isoform_aggregate_counters,
+                    genome_all_isoforms_aggregate_counters,
+                    genome_chimaera_aggregate_counters,
+                    genome_longest_isoform_aggregate_counters_by_parent_type,
+                    genome_all_isoforms_aggregate_counters_by_parent_type,
+                    genome_chimaera_aggregate_counters_by_parent_type,
+                    genome_total_counter,
+                )
+                del record_data
+                # Force flush to disk after each chromosome
+                feature_output_handle.flush()
+                aggregate_output_handle.flush()
+
+                # Force garbage collection to free memory immediately
+                gc.collect()
             
         else:
             # Sequential processing: write immediately without storing results
