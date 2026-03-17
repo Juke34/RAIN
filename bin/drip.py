@@ -3,6 +3,7 @@
 import pandas as pd
 import numpy as np
 import sys
+import gc
 from pathlib import Path
 
 def print_help():
@@ -190,56 +191,49 @@ def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, includ
         df[espr_col] = np.where(mask_espr, df[f'{bp}_reads'] / denom_espr.where(mask_espr, 1), np.nan)
         result_cols.append(espr_col)
     
-    # Return dataframe with metadata and all metrics
-    result = df[result_cols].copy()
-    
+    # Select only needed columns — list indexing creates a new DataFrame,
+    # so we can free the large intermediate df immediately.
+    result = df[result_cols]
+    del df
     return result
 
 def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id=False, min_cov=1):
     """Merge data from multiple samples and create output matrices - one file per base pair combination."""
-    
-    all_data = []
-    file_id_list = []
-    group_name_list = []
-    sample_name_list = []
-    replicate_list = []
-    
-    # Base pair combinations in order
-    base_pairs = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT', 
+
+    base_pairs = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT',
                   'GA', 'GC', 'GG', 'GT', 'TA', 'TC', 'TG', 'TT']
-    
+    metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type', 'Ctype', 'Mode', 'Start', 'End', 'Strand']
+
+    # Collect sample metadata without loading data yet
+    sample_info = []  # (filepath, group_name, sample_name, replicate, file_id)
     for filepath, (group_name, sample_name, replicate) in file_group_sample_replicate_dict.items():
-        # Extract file ID (everything before the last underscore in filename)
         filename_stem = Path(filepath).stem
         file_id = '_'.join(filename_stem.split('_')[:-1])
+        sample_info.append((filepath, group_name, sample_name, replicate, file_id))
+
+    # Incremental merge: load one sample at a time and free it immediately after merging.
+    # Peak RAM = merged_so_far + one_new_sample  (instead of N samples simultaneously).
+    merged = None
+    for filepath, group_name, sample_name, replicate, file_id in sample_info:
         print(f"Processing {group_name}::{sample_name} (replicate {replicate}) from {filepath} (file_id: {file_id})...")
         data = parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, include_file_id, min_cov)
-        all_data.append(data)
-        file_id_list.append(file_id)
-        group_name_list.append(group_name)
-        sample_name_list.append(sample_name)
-        replicate_list.append(replicate)
-    
-    # Merge all samples based on metadata columns
-    metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type', 'Ctype', 'Mode', 'Start', 'End', 'Strand']
-    merged = all_data[0]
-    for data in all_data[1:]:
-        merged = merged.merge(data, on=metadata_cols, how='outer')
-    
-    # Do NOT fill NA with 0: NA means the position was not covered (or below min_cov),
-    # which is distinct from 0 (position covered but no editing observed)
-    
-    # Sort by SeqID, then ParentIDs, then Mode
+        if merged is None:
+            merged = data
+        else:
+            merged = merged.merge(data, on=metadata_cols, how='outer')
+            del data
+            gc.collect()
+
+    # Do NOT fill NA with 0: NA means not covered / below min_cov,
+    # which is distinct from 0 (covered but no editing observed).
     merged = merged.sort_values(['SeqID', 'ParentIDs', 'Mode'])
-    
-    metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type', 'Ctype', 'Mode', 'Start', 'End', 'Strand']
-    
-    # Create one file per base pair combination
+
+    # Write one file per base pair combination — no intermediate copy, rename in-place.
     output_files = []
     for bp in base_pairs:
-        # Select columns for this base pair combination
         bp_cols = metadata_cols.copy()
-        for group_name, sample_name, replicate, file_id in zip(group_name_list, sample_name_list, replicate_list, file_id_list):
+        rename_dict = {}
+        for _, group_name, sample_name, replicate, file_id in sample_info:
             if include_file_id:
                 col_prefix = f'{group_name}::{sample_name}::{replicate}::{file_id}'
             else:
@@ -248,35 +242,26 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
             espr_col = f'{col_prefix}::{bp}::espr'
             if espf_col in merged.columns:
                 bp_cols.append(espf_col)
+                rename_dict[espf_col] = f'{col_prefix}::espf'
             if espr_col in merged.columns:
                 bp_cols.append(espr_col)
-        
-        # Create result for this base pair
-        bp_result = merged[bp_cols].copy()
-        
-        # Rename columns to remove the bp suffix (cleaner output)
-        rename_dict = {}
-        for group_name, sample_name, replicate, file_id in zip(group_name_list, sample_name_list, replicate_list, file_id_list):
-            if include_file_id:
-                col_prefix = f'{group_name}::{sample_name}::{replicate}::{file_id}'
-            else:
-                col_prefix = f'{group_name}::{sample_name}::{replicate}'
-            rename_dict[f'{col_prefix}::{bp}::espf'] = f'{col_prefix}::espf'
-            rename_dict[f'{col_prefix}::{bp}::espr'] = f'{col_prefix}::espr'
-        bp_result = bp_result.rename(columns=rename_dict)
-        
-        # Save to file
+                rename_dict[espr_col] = f'{col_prefix}::espr'
+
         output_file = f"{output_prefix}_{bp}.tsv"
-        bp_result.to_csv(output_file, sep='\t', index=False, na_rep='NA')
+        # Column selection already creates a new DataFrame; rename + write without extra copy.
+        merged[bp_cols].rename(columns=rename_dict).to_csv(
+            output_file, sep='\t', index=False, na_rep='NA'
+        )
         output_files.append(output_file)
-    
+        gc.collect()
+
     print(f"\nOutput files created:")
     for output_file in output_files:
         print(f"  - {output_file}")
     print(f"  - {len(merged)} aggregates per file")
-    print(f"  - {len(sample_name_list)} samples: {', '.join(sample_name_list)}")
+    print(f"  - {len(sample_info)} samples: {', '.join(si[2] for si in sample_info)}")
     print(f"  - {len(base_pairs)} files (one per base pair combination)")
-    
+
     return merged
 
 # Example usage
