@@ -26,5 +26,6 @@ process pluviometer {
             --threads ${task.cpus} \
             --aggregation_mode ${params.aggregation_mode} \
             --output "${meta.uid}_${tool_format}"  
+            
         """
 }

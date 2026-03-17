@@ -67,7 +67,7 @@ def make_chimaeras(self: SeqFeature, record_id: str) -> None:
         chimaera: SeqFeature = SeqFeature(
             location=location,
             id=f"{self.id}-{key}-chimaera",
-            type=key+"-chimaera",
+            type=key,
             qualifiers={"Parent": self.id}
         )
 
