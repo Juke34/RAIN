@@ -128,7 +128,10 @@ AUTHORS:
 
 def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, include_file_id=False, min_cov=1):
     """Parse a single TSV file and extract editing metrics for all base pair combinations."""
-    df = pd.read_csv(filepath, sep='\t')
+    # SeqID, Start, End, Strand contain mixed values ("." and actual numbers/strings)
+    # → force them to string to avoid DtypeWarning and preserve "." as-is
+    mixed_cols = {'SeqID': str, 'Start': str, 'End': str, 'Strand': str}
+    df = pd.read_csv(filepath, sep='\t', dtype=mixed_cols)
     
     # DO NOT filter out rows where ID is '.' 
     # These are special aggregate rows (e.g., all_sites) that should be kept
