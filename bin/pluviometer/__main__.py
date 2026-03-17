@@ -20,11 +20,13 @@ import multiprocessing
 from BCBio import GFF
 from os import remove
 import progressbar
+import subprocess
 import tempfile
 import argparse
 import logging
 import pickle
 import math
+import io
 import gc
 
 logger = logging.getLogger(__name__)
@@ -806,13 +808,79 @@ def init_worker(args_value, reader_factory_value):
     reader_factory = reader_factory_value
 
 
-def run_job(record: SeqRecord) -> dict[str, Any]:
+def _scan_gff_record_ids(gff_path: str) -> list[str]:
+    """Return a natsorted list of unique sequence IDs present in the GFF file.
+
+    For bgzip+tabix files (.gz) uses ``tabix -l`` (fast, no decompression of
+    data lines).  For plain-text files falls back to a lightweight linear scan.
     """
-    A wrapper function for performing counting parallelized by record. The return value is a dict containing all the information needed for integrating
-    the output of all records after the computations are finished.
+    if gff_path.endswith('.gz'):
+        result = subprocess.run(
+            ['tabix', '-l', gff_path],
+            capture_output=True, text=True, check=True,
+        )
+        return natsorted(result.stdout.splitlines())
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    with open(gff_path) as fh:
+        for line in fh:
+            if not line or line[0] == '#':
+                continue
+            fields = line.split('\t', 2)
+            if len(fields) < 2:
+                # Not a GFF data line (e.g. FASTA section, wrapped attribute line)
+                continue
+            seqid = fields[0]
+            if seqid not in seen:
+                seen.add(seqid)
+                ordered.append(seqid)
+    return natsorted(ordered)
+
+
+def _open_gff_for_record(
+    gff_path: str,
+    record_id: str,
+    gff_limit: Optional[dict],
+) -> Optional[SeqRecord]:
+    """Load a single chromosome from a GFF3 file and return its SeqRecord.
+
+    Strategy differs by file type:
+
+    * **bgzip+tabix (.gz)**: call ``tabix gff_path record_id`` to extract only
+      the relevant lines and feed them to BCBio via an ``io.StringIO`` buffer
+      (which is seekable, so BCBio can do its two-pass parent-child resolution).
+      We intentionally do *not* pass a ``gff_id`` filter here — the stream
+      already contains only the target chromosome, so there is nothing to
+      filter.  The ``gff_id`` filter in BCBio can bypass the two-pass logic,
+      causing "parent not found" warnings for out-of-order features.
+
+    * **Plain text**: use BCBio's ``gff_id`` filter on the open (seekable) file
+      handle so BCBio can seek back for its second pass when needed.
     """
-    assert record.id  # Stupid assertion for pylance
-    logging.info(f"Record {record.id} · Record parsed. Counting beings.")
+    if gff_path.endswith('.gz'):
+        proc = subprocess.run(
+            ['tabix', gff_path, record_id],
+            capture_output=True, text=True, check=True,
+        )
+        gff_stream = io.StringIO('##gff-version 3\n' + proc.stdout)
+        return next(GFF.parse(gff_stream, limit_info=gff_limit), None)
+
+    # Plain text: seekable file handle → BCBio two-pass works
+    limit: dict = {'gff_id': [record_id]}
+    if gff_limit:
+        limit.update(gff_limit)
+    with open(gff_path) as gff_handle:
+        return next(GFF.parse(gff_handle, limit_info=limit), None)
+
+
+def _do_counting(record: SeqRecord) -> dict[str, Any]:
+    """
+    Core counting logic for a single SeqRecord. Returns the result dict.
+    Called directly in sequential mode and via run_job in parallel mode.
+    """
+    assert record.id  # Placate pylance
+    logging.info(f"Record {record.id} · Counting begins.")
 
     tmp_feature_output_file: str = tempfile.mkstemp()[1]
     tmp_aggregate_output_file: str = tempfile.mkstemp()[1]
@@ -909,17 +977,34 @@ def run_job(record: SeqRecord) -> dict[str, Any]:
         "all_isoforms_aggregate_counters_by_parent_type": record_ctx.all_isoforms_aggregate_counters_by_parent_type.copy(),
         "total_counter": record_ctx.total_counter,
     }
-    
+
     # Clean up record context to free memory immediately
     record_ctx.cleanup()
-    
-    # Clear record features to help garbage collection
-    if hasattr(record, 'features'):
-        record.features.clear()
+
+    return result
+
+
+def run_job(record_id: str) -> str:
+    """
+    Worker entry point for parallel processing. Loads only the chromosome matching
+    record_id from the GFF (minimal RAM footprint per worker), performs counting,
+    serializes the result dict to a pickle temp file and returns its path.
+    Only a tiny string crosses the IPC channel.
+    """
+    gff_limit: Optional[dict] = None
+    if args.gff_feature_types:
+        gff_limit = {'gff_type': [t.strip() for t in args.gff_feature_types.split(',')]}
+
+    logging.info(f"Record {record_id} · Loading GFF features.")
+    record: Optional[SeqRecord] = _open_gff_for_record(args.gff, record_id, gff_limit)
+
+    if record is None:
+        raise RuntimeError(f"Record '{record_id}' not found in {args.gff}")
+
+    result = _do_counting(record)
+    record.features.clear()
     del record
 
-    # Serialize result to a temp pickle file so the worker frees RAM immediately.
-    # Only the tiny file path is sent back through the IPC channel.
     tmp_pickle_fd, tmp_pickle_path = tempfile.mkstemp(suffix='.pkl')
     with open(tmp_pickle_fd, 'wb') as f:
         pickle.dump(result, f)
@@ -1037,22 +1122,9 @@ def main():
             raise Exception(f'Unimplemented format "{args.format}"')
 
     with (
-        open(args.gff) as gff_handle,
         open(feature_output_filename, "w") as feature_output_handle,
         open(aggregate_output_filename, "w") as aggregate_output_handle,
     ):
-        logging.info("Parsing GFF3 file...")
-        
-        # Configure BCBio GFF parser with memory-efficient options
-        limit_info = None
-        if args.gff_feature_types:
-            feature_types = [t.strip() for t in args.gff_feature_types.split(',')]
-            limit_info = {"gff_type": feature_types}
-            logging.info(f"Filtering GFF to load only these feature types: {feature_types}")
-            logging.info("This will reduce memory usage significantly!")
-        
-        records: Generator[SeqRecord, None, None] = GFF.parse(gff_handle, limit_info=limit_info)
-
         # Initialize genome-level counters (only these will be kept in memory)
         genome_filter: SiteFilter = SiteFilter(
             cov_threshold=args.cov, edit_threshold=args.edit_threshold
@@ -1092,10 +1164,11 @@ def main():
             # written to a pickle temp file as soon as it is ready, regardless of
             # chromosome order.  Only the tiny file paths cross the IPC channel,
             # keeping the main process RAM near zero while workers are running.
-            logging.info(f"Processing records with {args.threads} threads...")
+            record_ids: list[str] = _scan_gff_record_ids(args.gff)
+            logging.info(f"Processing {len(record_ids)} records with {args.threads} threads...")
             pickle_paths: list[str] = []
             with multiprocessing.Pool(processes=args.threads, initializer=init_worker, initargs=(args, reader_factory)) as pool:
-                for pickle_path in pool.imap_unordered(run_job, records, chunksize=1):
+                for pickle_path in pool.imap_unordered(run_job, record_ids, chunksize=1):
                     pickle_paths.append(pickle_path)
 
             # Sort pickle files by their record_id (natural chromosome order)
@@ -1131,14 +1204,23 @@ def main():
                 gc.collect()
             
         else:
-            # Sequential processing: write immediately without storing results
+            # Sequential processing: load one chromosome at a time, write immediately.
+            # Uses the same _open_gff_for_record helper as the parallel mode so that
+            # both plain and tabix-indexed files are handled identically.
             logging.info("Processing records sequentially...")
-            for record in records:
-                record_data = run_job(record)
-                
-                # Write output and merge totals immediately (no accumulation)
+            gff_limit: Optional[dict] = None
+            if args.gff_feature_types:
+                gff_limit = {'gff_type': [t.strip() for t in args.gff_feature_types.split(',')]}
+            for record_id in _scan_gff_record_ids(args.gff):
+                record = _open_gff_for_record(args.gff, record_id, gff_limit)
+                if record is None:
+                    logging.warning(f"No features found for record '{record_id}', skipping.")
+                    continue
+                result = _do_counting(record)
+                record.features.clear()
+                del record
                 process_and_write_record_data(
-                    record_data,
+                    result,
                     feature_output_handle,
                     aggregate_output_handle,
                     genome_longest_isoform_aggregate_counters,
@@ -1149,16 +1231,9 @@ def main():
                     genome_chimaera_aggregate_counters_by_parent_type,
                     genome_total_counter,
                 )
-                
-                # Force flush to disk after each chromosome
+                del result
                 feature_output_handle.flush()
                 aggregate_output_handle.flush()
-                
-                # Explicitly delete the record to free memory
-                del record
-                del record_data
-                
-                # Force garbage collection to free memory immediately
                 gc.collect()
 
         # Write genome-level totals at the end (only genome totals are kept in memory)
