@@ -16,16 +16,14 @@ process pluviometer {
     script:
         base_name = site_edits.BaseName
         """
-
         pluviometer_wrapper.py \
             --sites ${site_edits} \
             --gff ${gff} \
             --format ${tool_format} \
-            --cov 1 \
+            --cov ${params.cov_threshold} \
             --edit_threshold ${params.edit_threshold} \
             --threads ${task.cpus} \
             --aggregation_mode ${params.aggregation_mode} \
-            --output "${meta.uid}_${tool_format}"  
-            
+            --output "${meta.uid}_${tool_format}"
         """
 }

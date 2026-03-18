@@ -22,7 +22,8 @@ params.clean_duplicate  = true
 // Edit counting params
 edit_site_tools = ["reditools2", "reditools3", "jacusa2", "sapin"]
 params.edit_site_tool = "reditools3"
-params.edit_threshold = 1
+params.edit_threshold = 1 // Minimal number of edited reads to count a site as edited
+params.cov_threshold = 10 // Minimal coverage to consider a site for editing detection
 params.aggregation_mode = "all"
 params.skip_hyper_editing = false // Skip hyper-editing detection
 // Report params
@@ -128,6 +129,7 @@ def helpMSG() {
     --aligner                   Aligner to use [default: $params.aligner]
     --clean_duplicate           Remove PCR duplicates from BAM files using GATK MarkDuplicates. [default: $params.clean_duplicate]
     --clip_overlap              Clip overlapping sequences in read pairs to avoid double counting. [default: $params.clipoverlap]
+    --cov_threshold             Minimal coverage to consider a site for editing detection [default: $params.cov_threshold]
     --debug                     Enable debug output for troubleshooting. [default: $params.debug]
     --edit_site_tool            Tool used for detecting edited sites. [default: $params.edit_site_tool]
     --edit_threshold            Minimal number of edited reads to count a site as edited [default: $params.edit_threshold]
@@ -160,6 +162,7 @@ Alignment Parameters
     
 
 Edited Site Detection Parameters
+    cov_threshold              : ${params.cov_threshold}
     edit_site_tool             : ${params.edit_site_tool}
     edit_threshold             : ${params.edit_threshold}
     region                     : ${params.region} 
