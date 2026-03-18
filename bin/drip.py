@@ -145,7 +145,7 @@ AUTHORS:
     print(help_text)
     sys.exit(0)
 
-def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, include_file_id=False, min_cov=1):
+def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, include_file_id=False, min_cov=1, decimals=4):
     """Parse a single TSV file and extract editing metrics for all base pair combinations."""
     # SeqID, Start, End, Strand contain mixed values ("." and actual numbers/strings)
     # → force them to string to avoid DtypeWarning and preserve "." as-is
@@ -190,6 +190,8 @@ def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, includ
         denom_espf = df[f'{genome_base}_count']
         mask_espf = denom_espf >= min_cov
         df[espf_col] = np.where(mask_espf, df[f'{bp}_sites'] / denom_espf.where(mask_espf, 1), np.nan)
+        # Round immediately to reduce RAM footprint during merge
+        df[espf_col] = df[espf_col].round(decimals)
         result_cols.append(espf_col)
         
         # Calculate espr: XY_reads / (XA + XC + XG + XT)
@@ -207,6 +209,8 @@ def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, includ
         denom_espr = df[total_reads_col]
         mask_espr = denom_espr >= min_cov
         df[espr_col] = np.where(mask_espr, df[f'{bp}_reads'] / denom_espr.where(mask_espr, 1), np.nan)
+        # Round immediately to reduce RAM footprint during merge
+        df[espr_col] = df[espr_col].round(decimals)
         result_cols.append(espr_col)
     
     # Select only needed columns — list indexing creates a new DataFrame,
@@ -215,14 +219,14 @@ def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, includ
     del df
     return result
 
-def write_base_pair_file(merged, bp, metadata_cols, sample_info, output_prefix, include_file_id, decimals):
+def write_base_pair_file(merged, bp, metadata_cols, sample_info, output_prefix, include_file_id):
     """Worker function to write a single base pair combination file.
     
     This function is designed to be called in parallel for each base pair.
+    Note: Values are already rounded in parse_tsv_file() to reduce RAM usage.
     """
     bp_cols = metadata_cols.copy()
     rename_dict = {}
-    metric_cols = []  # Track metric columns to round
     for _, group_name, sample_name, replicate, file_id in sample_info:
         if include_file_id:
             col_prefix = f'{group_name}::{sample_name}::{replicate}::{file_id}'
@@ -233,18 +237,13 @@ def write_base_pair_file(merged, bp, metadata_cols, sample_info, output_prefix, 
         if espf_col in merged.columns:
             bp_cols.append(espf_col)
             rename_dict[espf_col] = f'{col_prefix}::espf'
-            metric_cols.append(espf_col)
         if espr_col in merged.columns:
             bp_cols.append(espr_col)
             rename_dict[espr_col] = f'{col_prefix}::espr'
-            metric_cols.append(espr_col)
 
     output_file = f"{output_prefix}_{bp}.tsv"
-    # Select columns, round metric columns, rename, and write
-    bp_df = merged[bp_cols].copy()
-    for col in metric_cols:
-        bp_df[col] = bp_df[col].round(decimals)
-    bp_df.rename(columns=rename_dict).to_csv(
+    # Values are already rounded, just select, rename and write
+    merged[bp_cols].rename(columns=rename_dict).to_csv(
         output_file, sep='\t', index=False, na_rep='NA'
     )
     return output_file
@@ -268,7 +267,7 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
     merged = None
     for filepath, group_name, sample_name, replicate, file_id in sample_info:
         print(f"Processing {group_name}::{sample_name} (replicate {replicate}) from {filepath} (file_id: {file_id})...")
-        data = parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, include_file_id, min_cov)
+        data = parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, include_file_id, min_cov, decimals)
         if merged is None:
             merged = data
         else:
@@ -282,16 +281,17 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
 
     # Write one file per base pair combination.
     # Parallelize if threads > 1: each base pair file is written by a separate worker.
+    # Note: values are already rounded in parse_tsv_file() to reduce RAM during merge.
     if threads > 1:
         print(f"Writing {len(base_pairs)} output files using {threads} threads...")
         with multiprocessing.Pool(processes=threads) as pool:
-            args = [(merged, bp, metadata_cols, sample_info, output_prefix, include_file_id, decimals) for bp in base_pairs]
+            args = [(merged, bp, metadata_cols, sample_info, output_prefix, include_file_id) for bp in base_pairs]
             output_files = pool.starmap(write_base_pair_file, args)
     else:
         print(f"Writing {len(base_pairs)} output files sequentially...")
         output_files = []
         for bp in base_pairs:
-            output_file = write_base_pair_file(merged, bp, metadata_cols, sample_info, output_prefix, include_file_id, decimals)
+            output_file = write_base_pair_file(merged, bp, metadata_cols, sample_info, output_prefix, include_file_id)
             output_files.append(output_file)
             gc.collect()
 
