@@ -2,6 +2,7 @@
 
 import pandas as pd
 import numpy as np
+import multiprocessing
 import sys
 import gc
 from pathlib import Path
@@ -29,6 +30,9 @@ ARGUMENTS:
     --min-cov N      Minimum read coverage threshold (default: 1). Positions with a
                      denominator (genome base count for espf, read count for espr)
                      strictly below this value are reported as NA instead of 0.
+    --threads N, -t N
+                     Number of parallel threads to use for writing output files
+                     (default: 1, sequential). Max useful value is 16 (one per base pair).
     --help, -h       Display this help message
 
 NA BEHAVIOR: 
@@ -197,7 +201,34 @@ def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, includ
     del df
     return result
 
-def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id=False, min_cov=1):
+def write_base_pair_file(merged, bp, metadata_cols, sample_info, output_prefix, include_file_id):
+    """Worker function to write a single base pair combination file.
+    
+    This function is designed to be called in parallel for each base pair.
+    """
+    bp_cols = metadata_cols.copy()
+    rename_dict = {}
+    for _, group_name, sample_name, replicate, file_id in sample_info:
+        if include_file_id:
+            col_prefix = f'{group_name}::{sample_name}::{replicate}::{file_id}'
+        else:
+            col_prefix = f'{group_name}::{sample_name}::{replicate}'
+        espf_col = f'{col_prefix}::{bp}::espf'
+        espr_col = f'{col_prefix}::{bp}::espr'
+        if espf_col in merged.columns:
+            bp_cols.append(espf_col)
+            rename_dict[espf_col] = f'{col_prefix}::espf'
+        if espr_col in merged.columns:
+            bp_cols.append(espr_col)
+            rename_dict[espr_col] = f'{col_prefix}::espr'
+
+    output_file = f"{output_prefix}_{bp}.tsv"
+    merged[bp_cols].rename(columns=rename_dict).to_csv(
+        output_file, sep='\t', index=False, na_rep='NA'
+    )
+    return output_file
+
+def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id=False, min_cov=1, threads=1):
     """Merge data from multiple samples and create output matrices - one file per base pair combination."""
 
     base_pairs = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT',
@@ -228,32 +259,20 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
     # which is distinct from 0 (covered but no editing observed).
     merged = merged.sort_values(['SeqID', 'ParentIDs', 'Mode'])
 
-    # Write one file per base pair combination — no intermediate copy, rename in-place.
-    output_files = []
-    for bp in base_pairs:
-        bp_cols = metadata_cols.copy()
-        rename_dict = {}
-        for _, group_name, sample_name, replicate, file_id in sample_info:
-            if include_file_id:
-                col_prefix = f'{group_name}::{sample_name}::{replicate}::{file_id}'
-            else:
-                col_prefix = f'{group_name}::{sample_name}::{replicate}'
-            espf_col = f'{col_prefix}::{bp}::espf'
-            espr_col = f'{col_prefix}::{bp}::espr'
-            if espf_col in merged.columns:
-                bp_cols.append(espf_col)
-                rename_dict[espf_col] = f'{col_prefix}::espf'
-            if espr_col in merged.columns:
-                bp_cols.append(espr_col)
-                rename_dict[espr_col] = f'{col_prefix}::espr'
-
-        output_file = f"{output_prefix}_{bp}.tsv"
-        # Column selection already creates a new DataFrame; rename + write without extra copy.
-        merged[bp_cols].rename(columns=rename_dict).to_csv(
-            output_file, sep='\t', index=False, na_rep='NA'
-        )
-        output_files.append(output_file)
-        gc.collect()
+    # Write one file per base pair combination.
+    # Parallelize if threads > 1: each base pair file is written by a separate worker.
+    if threads > 1:
+        print(f"Writing {len(base_pairs)} output files using {threads} threads...")
+        with multiprocessing.Pool(processes=threads) as pool:
+            args = [(merged, bp, metadata_cols, sample_info, output_prefix, include_file_id) for bp in base_pairs]
+            output_files = pool.starmap(write_base_pair_file, args)
+    else:
+        print(f"Writing {len(base_pairs)} output files sequentially...")
+        output_files = []
+        for bp in base_pairs:
+            output_file = write_base_pair_file(merged, bp, metadata_cols, sample_info, output_prefix, include_file_id)
+            output_files.append(output_file)
+            gc.collect()
 
     print(f"\nOutput files created:")
     for output_file in output_files:
@@ -283,6 +302,7 @@ if __name__ == "__main__":
     group_sample_rep_counts = {}
     include_file_id = False  # Default: omit file_id from column names
     min_cov = 1  # Default: NA when denominator is 0; treat 0 coverage as non-observed
+    threads = 1  # Default: sequential writing
 
     args_iter = iter(range(2, len(sys.argv)))
     for i in args_iter:
@@ -307,6 +327,26 @@ if __name__ == "__main__":
                 except (StopIteration, ValueError):
                     print(f"ERROR: --min-cov requires an integer value", file=sys.stderr)
                     sys.exit(1)
+            continue
+
+        # Check for --threads/-t flag (supports --threads=N, --threads N, -t N)
+        if arg.startswith('--threads') or arg == '-t':
+            if arg.startswith('--threads') and '=' in arg:
+                try:
+                    threads = int(arg.split('=', 1)[1])
+                except ValueError:
+                    print(f"ERROR: --threads requires an integer value", file=sys.stderr)
+                    sys.exit(1)
+            else:
+                try:
+                    next_i = next(args_iter)
+                    threads = int(sys.argv[next_i])
+                except (StopIteration, ValueError):
+                    print(f"ERROR: --threads/-t requires an integer value", file=sys.stderr)
+                    sys.exit(1)
+            if threads < 1:
+                print(f"ERROR: --threads must be at least 1", file=sys.stderr)
+                sys.exit(1)
             continue
 
         if ':' not in arg:
@@ -342,6 +382,6 @@ if __name__ == "__main__":
         file_group_sample_replicate_dict[filepath] = (group_name, sample_name, replicate)
     
     # Process all samples
-    result = merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id, min_cov)
+    result = merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id, min_cov, threads)
     
     print("\nAnalysis complete!")

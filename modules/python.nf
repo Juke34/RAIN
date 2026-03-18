@@ -56,6 +56,7 @@ process drip {
         def args_str = args.join(" ")
 
         """
-        drip.py drip_${prefix} ${args_str}
+        
+        drip.py --threads ${task.cpu} drip_${prefix} ${args_str}
         """
 }
