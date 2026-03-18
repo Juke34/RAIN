@@ -355,3 +355,9 @@ Jacques Dainat  (@Juke34)
 ## Contributing
 
 Contributions from the community are welcome ! See the [Contributing guidelines](https://github.com/Juke34/rain/blob/main/CONTRIBUTING.md)
+
+## TODO
+
+update pluviometer to set NA for start end and strand instead of . to be  able to use column as int64 in drip and barometer e.g. dtype={"SeqID": str, "Start": "Int64", "End": "Int64", "Strand": str} 
+
+Le feature type seq_agg must be called sequence_agg. Maybe _agg can be removed because know by another column.
