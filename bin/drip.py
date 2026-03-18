@@ -1,9 +1,20 @@
 #!/usr/bin/env python3
 
+import os
+import sys
+
+# Limit implicit BLAS/LAPACK multi-threading to respect SLURM CPU allocation.
+# Will be set to 1 by default and updated based on --threads CLI argument.
+# This ensures total CPU usage = implicit threads + explicit Pool threads <= allocated CPUs.
+os.environ.setdefault('OMP_NUM_THREADS', '1')
+os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+os.environ.setdefault('MKL_NUM_THREADS', '1')
+os.environ.setdefault('VECLIB_MAXIMUM_THREADS', '1')
+os.environ.setdefault('NUMEXPR_NUM_THREADS', '1')
+
 import pandas as pd
 import numpy as np
 import multiprocessing
-import sys
 import gc
 from pathlib import Path
 
