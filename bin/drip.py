@@ -29,11 +29,13 @@ DESCRIPTION:
     samples and combines them into a unified matrix format.
 
 USAGE:
-    ./drip.py OUTPUT_PREFIX FILE1:GROUP1:SAMPLE1:REP1 FILE2:GROUP2:SAMPLE2:REP2 [...] [--with-file-id]
+    ./drip.py --output OUTPUT_PREFIX FILE1:GROUP1:SAMPLE1:REP1 FILE2:GROUP2:SAMPLE2:REP2 [...]
     ./drip.py --help | -h
 
 ARGUMENTS:
-    OUTPUT_PREFIX    Prefix for the output TSV file (will create OUTPUT_PREFIX.tsv)
+    --output OUTPUT_PREFIX, -o OUTPUT_PREFIX
+                     Prefix for the output TSV files (required).
+                     Will create OUTPUT_PREFIX_AA.tsv, OUTPUT_PREFIX_AC.tsv, etc.
     FILEn:GROUPn:SAMPLEn:REPn  
                      Input file path, group name, sample name, and replicate ID
                      separated by colons. All four components are required.
@@ -113,7 +115,7 @@ OUTPUT FORMAT:
     - The '::' separator allows easy splitting to retrieve all components
 
 EXAMPLE:
-    ./drip.py results \\
+    ./drip.py --output results \\
         sample1_aggregates.tsv:control:sample1:rep1 \\
         sample2_aggregates.tsv:control:sample2:rep2 \\
         sample3_aggregates.tsv:treated:sample1:rep1
@@ -311,14 +313,14 @@ if __name__ == "__main__":
         print_help()
     
     # Validate arguments
-    if len(sys.argv) < 3:
+    if len(sys.argv) < 2:
         print("ERROR: Insufficient arguments provided.\n", file=sys.stderr)
-        print("Usage: ./drip.py OUTPUT_PREFIX FILE1:SAMPLE1 FILE2:SAMPLE2 [...]\n", file=sys.stderr)
+        print("Usage: ./drip.py --output OUTPUT_PREFIX FILE1:GROUP1:SAMPLE1:REP1 [...]\n", file=sys.stderr)
         print("For detailed help, run: ./drip.py --help\n", file=sys.stderr)
         sys.exit(1)
     
     # Parse command line arguments
-    output_prefix = sys.argv[1]
+    output_prefix = None
     file_group_sample_replicate_dict = {}
     group_sample_rep_counts = {}
     include_file_id = False  # Default: omit file_id from column names
@@ -326,9 +328,23 @@ if __name__ == "__main__":
     threads = 1  # Default: sequential writing
     decimals = 4  # Default: round to 4 decimal places
 
-    args_iter = iter(range(2, len(sys.argv)))
+    args_iter = iter(range(1, len(sys.argv)))
     for i in args_iter:
-        arg = sys.argv[i]
+        arg = sys.argv[i]        # Check for --output/-o flag (supports --output=PREFIX, --output PREFIX, -o PREFIX)
+        if arg.startswith('--output') or arg == '-o':
+            if arg.startswith('--output') and '=' in arg:
+                output_prefix = arg.split('=', 1)[1]
+                if not output_prefix:
+                    print("ERROR: --output requires a value", file=sys.stderr)
+                    sys.exit(1)
+            else:
+                try:
+                    next_i = next(args_iter)
+                    output_prefix = sys.argv[next_i]
+                except StopIteration:
+                    print("ERROR: --output/-o requires a value", file=sys.stderr)
+                    sys.exit(1)
+            continue
         # Check for --with-file-id flag
         if arg == '--with-file-id':
             include_file_id = True
@@ -422,6 +438,20 @@ if __name__ == "__main__":
             group_sample_rep_counts[group_sample_rep_key] = 1
         
         file_group_sample_replicate_dict[filepath] = (group_name, sample_name, replicate)
+    
+    # Validate that output_prefix was provided
+    if output_prefix is None:
+        print("ERROR: --output/-o argument is required.\n", file=sys.stderr)
+        print("Usage: ./drip.py --output OUTPUT_PREFIX FILE1:GROUP1:SAMPLE1:REP1 [...]\n", file=sys.stderr)
+        print("For detailed help, run: ./drip.py --help\n", file=sys.stderr)
+        sys.exit(1)
+    
+    # Validate that at least one input file was provided
+    if len(file_group_sample_replicate_dict) == 0:
+        print("ERROR: At least one input file is required.\n", file=sys.stderr)
+        print("Usage: ./drip.py --output OUTPUT_PREFIX FILE1:GROUP1:SAMPLE1:REP1 [...]\n", file=sys.stderr)
+        print("For detailed help, run: ./drip.py --help\n", file=sys.stderr)
+        sys.exit(1)
     
     # Process all samples
     result = merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id, min_cov, threads, decimals)

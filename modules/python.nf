@@ -57,6 +57,6 @@ process drip {
 
         """
         
-        drip.py --threads ${task.cpu} drip_${prefix} ${args_str}
+        drip.py --threads ${task.cpus} --output drip_${prefix} ${args_str}
         """
 }
