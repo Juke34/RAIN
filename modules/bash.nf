@@ -126,7 +126,7 @@ process create_aline_csv_he {
  */
 process collect_aline_csv {
     label 'bash'
-    publishDir("${params.outdir}/${output_dir}", mode:"copy", pattern: "*.csv")
+    publishDir("${output_dir}", mode:"copy", pattern: "*.csv")
     
     input:
         val all_csv  // List of tuples (meta, fastq_files)

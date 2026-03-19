@@ -49,3 +49,9 @@ The following files have been moved from `bin/` to `bin/pluviometer/`:
 - utils.py → pluviometer/utils.py
 
 All internal imports have been converted to relative imports to function as a Python package.
+
+## Test
+
+# Call as a python module (recommended)
+cd bin
+python -m pluviometer --sites SITES --gff GFF [OPTIONS]

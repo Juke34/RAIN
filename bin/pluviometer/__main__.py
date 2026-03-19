@@ -746,7 +746,7 @@ def parse_cli_input() -> argparse.Namespace:
         "--cov",
         "-c",
         type=int,
-        default=0,
+        default=1,
         help="Site coverage threshold for counting editions",
     )
     parser.add_argument(
@@ -1105,6 +1105,17 @@ def main():
     log_filename: str = args.output + "_pluviometer.log" if args.output else "pluviometer.log"
     logging.basicConfig(filename=log_filename, level=logging.INFO, format=LOGGING_FORMAT)
     logging.info(f"Pluviometer started. Log file: {log_filename}")
+    logging.info("Options:")
+    logging.info(f"  Sites file: {args.sites}")
+    logging.info(f"  GFF file: {args.gff}")
+    logging.info(f"  Output prefix: {args.output if args.output else 'default'}")
+    logging.info(f"  Format: {args.format}")
+    logging.info(f"  Coverage threshold: {args.cov}")
+    logging.info(f"  Edit threshold: {args.edit_threshold}")
+    logging.info(f"  Aggregation mode: {args.aggregation_mode}")
+    logging.info(f"  Threads: {args.threads}")
+    logging.info(f"  Progress bar: {args.progress}")
+    logging.info(f"  GFF feature types filter: {args.gff_feature_types if args.gff_feature_types else 'none (all types)'}")
     feature_output_filename: str = args.output + "_features.tsv" if args.output else "features.tsv"
     aggregate_output_filename: str = (
         args.output + "_aggregates.tsv" if args.output else "aggregates.tsv"
