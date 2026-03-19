@@ -36,7 +36,6 @@ params.region = "" // e.g. chr21 - Used to limit the analysis to a specific regi
 params.help = null
 params.monochrome_logs = false // if true, no color in logs
 params.debug = false // Enable debug output
-params.use_slurm_for_aline = false // Whether to submit AliNe as a separate SLURM job when using an HPC environment
 
 // --------------------------------------------------
 /* ---- Params shared between RAIN and AliNe ---- */
@@ -63,7 +62,7 @@ params.trimming_fastp = false
 align_tools = [ 'bbmap', 'bowtie', 'bowtie2', 'bwaaln', 'bwamem', 'bwamem2', 'bwasw', 'dragmap', 'graphmap2', 'hisat2', 'kallisto', 'last', 'minimap2', 'novoalign', 'nucmer', 'ngmlr', 'salmon', 'star', 'subread', 'sublong' ]
 params.aligner = 'hisat2'
 // AliNe version
-params.aline_version = 'v1.6.2'
+params.aline_version = 'v1.6.3'
 //*************************************************
 // STEP 1 - HELP
 //*************************************************
@@ -211,7 +210,6 @@ else { exit 1, "No executer selected: please use a profile activating docker or 
 
 // check AliNE profile
 def aline_profile_list=[]
-def use_slurm_for_aline = params.use_slurm_for_aline
 str_list = workflow.profile.tokenize(',')
 str_list.each {
     if ( it in aline_profile_allowed ){
@@ -527,7 +525,7 @@ workflow {
 
         if ( via_csv ){
             aline_data_in_ch = recreate_csv_with_abs_paths(csv_ch)
-            aline_data_in_ch = collect_aline_csv(aline_data_in_ch.collect(), "AliNe")
+            aline_data_in_ch = collect_aline_csv(aline_data_in_ch.collect(), params.outdir)
             aline_data_in = aline_data_in_ch
         } 
         else {
@@ -596,7 +594,7 @@ workflow {
                 "--strandedness ${params.strandedness}",
                 clean_annotation,
                 workflow.workDir.resolve('Juke34/AliNe').toUriString(),
-                use_slurm_for_aline  // Pass info about whether to use slurm submission
+                params.outdir,
             )
 
             // GET TUPLE [ID, BAM] FILES
@@ -673,7 +671,6 @@ workflow {
                 samtools_split_mapped_unmapped.out.unmapped_bam,
                 genome,
                 aline_profile,
-                use_slurm_for_aline,
                 clean_annotation,
                 30,  // quality threshold
                 "${params.outdir}/hyper_editing",

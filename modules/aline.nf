@@ -1,12 +1,11 @@
 /*
 Adapted from
 from https://github.com/mahesh-panchal/nf-cascade
-Auto-detects HPC/local environment and adapts execution strategy
 */
 process AliNe {
     tag "$pipeline_name"
     label 'aline'
-    publishDir "${params.outdir}", mode: 'copy'
+    publishDir "${output_dir}", mode: 'copy'
     
     errorStrategy 'terminate' // to avoid any retry
     maxRetries 0  // Override global retry config - do not retry this process
@@ -21,116 +20,43 @@ process AliNe {
         val aligner
         val library_type
         val annotation
-        val cache_dir          // String
-        val use_slurm          // Boolean - whether parent is using slurm
+        val cache_dir          // cache directory
+        val output_dir        // output directory 
 
     when:
         task.ext.when == null || task.ext.when
 
-    script:
-        def nxf_cmd = "nextflow run ${pipeline_name} ${profile} ${config} --reads ${reads} --reference ${genome} ${read_type} ${aligner} ${library_type} --annotation ${annotation} --data_type rna --outdir \$WORK_DIR/AliNe"
-        """
-        echo "[AliNe] Process started at \$(date '+%Y-%m-%d %H:%M:%S')"
-        
-        # Save absolute work directory before changing context
-        WORK_DIR=\$(pwd)
-        
-        # Create cache directory for resume AliNe run made from different working directory
-        mkdir -p "${cache_dir}"
-        cd "${cache_dir}"
-        
-        # Save command for reference/debugging
-        echo "${nxf_cmd}" > \$WORK_DIR/nf-cmd.sh
-
-        # Detect execution environment and run AliNe accordingly
-        if ${use_slurm} && command -v sbatch >/dev/null 2>&1; then
-            echo "[AliNe] Detected HPC environment - submitting AliNe as separate SLURM job"
-            
-            # Create sbatch script for AliNe
-            cat > \$WORK_DIR/aline_job.sh <<SBATCH_EOF
-        #!/bin/bash
-        #SBATCH --job-name=rain_AliNe_pipeline
-        #SBATCH --cpus-per-task=1
-        #SBATCH --mem=4G
-        #SBATCH --constraint=infiniband
-        #SBATCH --time=2-00:00:00
-        #SBATCH --output=\$WORK_DIR/aline_%j.out
-        #SBATCH --error=\$WORK_DIR/aline_%j.err
-
-        set -euo pipefail
-
-        # Load required modules
-        module load nextflow
-        module load singularity
-        
-        echo "Starting AliNe pipeline at \$(date)"
-        ${nxf_cmd}
-        echo "AliNe pipeline completed at \$(date)"
-        SBATCH_EOF
-            
-            # Submit job and capture job ID
-            JOB_ID=\$(sbatch --parsable \$WORK_DIR/aline_job.sh)
-            echo "[AliNe] Submitted SLURM job: \$JOB_ID at \$(date '+%Y-%m-%d %H:%M:%S')" 
-            echo \$JOB_ID > \$WORK_DIR/aline_job_id.txt
-            
-            # Wait for job to appear in scheduler queue
-            # Simple wait for job to appear or to be started
-            echo "[AliNe] Waiting for job \$JOB_ID to appear in queue or to be started..."
-            while true; do
-                # Check if job is in queue
-                if squeue -j \$JOB_ID 2>/dev/null | grep -q \$JOB_ID; then
-                    echo "[AliNe] Job \$JOB_ID is now visible in queue"
-                    break
-                else
-                     echo "[AliNe] Job \$JOB_ID not yet visible in queue \$(date '+%Y-%m-%d %H:%M:%S')"
-                fi
-                # Check job state (crash test: if job has started or finished)
-                JOB_STATE=\$(sacct -j \$JOB_ID --format=State --noheader | head -1 | tr -d ' ')
-                if [[ "\$JOB_STATE" =~ ^(RUNNING|COMPLETED|FAILED|CANCELLED|TIMEOUT|PREEMPTED|NODE_FAIL|OUT_OF_MEMORY)\$ ]]; then
-                    echo "[AliNe] Job \$JOB_ID has state: \$JOB_STATE (not visible in queue, but started or finished)"
-                    break
-                fi
-                echo "[AliNe] Job not yet visible, waiting..."
-                sleep 5
-            done            # Simple wait for job to appear or to be started
-            
-            # Wait for job completion
-            echo "[AliNe] Waiting for job \$JOB_ID to complete..."
-            while squeue -j \$JOB_ID 2>/dev/null | grep -q \$JOB_ID; do
-                sleep 30
-            done
-            
-            # Check job exit status
-            JOB_STATE=\$(sacct -j \$JOB_ID --format=State --noheader | head -1 | tr -d ' ')
-            echo "[AliNe] Job \$JOB_ID finished with state: \$JOB_STATE at \$(date '+%Y-%m-%d %H:%M:%S')"
-            
-            if [[ "\$JOB_STATE" != "COMPLETED" ]]; then
-                echo "[AliNe] ERROR: Job failed with state \$JOB_STATE at \$(date '+%Y-%m-%d %H:%M:%S')" >&2
-                echo "With message (100 last lines)": >&2
-                tail -n 100  \$WORK_DIR/aline_\$JOB_ID.out >&2
-                exit 1
-            fi
-            
-            # Copy log for reference
-            if [ -f .nextflow.log ]; then
-                cp .nextflow.log \$WORK_DIR/nextflow.log
-            fi
-            echo "[AliNe] Pipeline completed successfully via SLURM at \$(date '+%Y-%m-%d %H:%M:%S')"
-        else
-            echo "[AliNe] Detected local/standard environment - running AliNe directly"
-            
-            # Run nextflow command directly
-            ${nxf_cmd} || {
-                echo "[AliNe] ERROR: Pipeline failed at \$(date '+%Y-%m-%d %H:%M:%S')" >&2
-                exit 1
-            }
-            
-            echo "[AliNe] Pipeline completed successfully (direct execution) at \$(date '+%Y-%m-%d %H:%M:%S')"
-        fi
-        
-        echo "[AliNe] Process finished at \$(date '+%Y-%m-%d %H:%M:%S')"
-"""
+    exec:
+        def cache_path = file(cache_dir)
+        assert cache_path.mkdirs()
+        // construct nextflow command
+        def nxf_cmd = [
+            'nextflow run',
+                pipeline_name,
+                profile,
+                config,
+                "--reads ${reads}",
+                "--reference ${genome}",
+                read_type,
+                aligner,
+                library_type,
+                "--annotation ${annotation}",
+                "--data_type rna",
+                "--outdir $task.workDir/AliNe",
+        ].join(" ")
+        // Copy command to shell script in work dir for reference/debugging.
+        file("$task.workDir/nf-cmd.sh").text = nxf_cmd
+        // Run nextflow command locally in cache directory
+        def process = nxf_cmd.execute(null, cache_path.toFile())
+        // Print process output to stdout and stderr
+        process.consumeProcessOutput(System.out, System.err)
+        process.waitFor()
+        stdout = process.text
+        // Copy nextflow log to work directory
+        cache_path.resolve(".nextflow.log").copyTo("${task.workDir}/nextflow.log")
+        assert process.exitValue() == 0: stdout
 
     output:
         path "AliNe"  , emit: output
+        val stdout, emit: log
 }
