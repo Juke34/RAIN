@@ -323,16 +323,19 @@ class RecordCountingContext:
         visited_positions: int = 0
 
         while (
-            len(self.action_queue) > 0 and self.action_queue[0][0] < new_position
-        ):  # Use < instead of <= because of Python's right-exclusive indfgexing
+            len(self.action_queue) > 0 and self.action_queue[0][0] <= new_position
+        ):  # Use <= to process actions at the current position before updating counters
             _, actions = self.action_queue.popleft()
             visited_positions += 1
 
             for feature in actions.activate:
+                logging.debug(f"Activating feature: {feature.id} (type: {feature.type}, level: {feature.level})")
                 self.active_features[feature.id] = feature
 
             for feature in actions.deactivate:
+                logging.debug(f"Deactivating feature: {feature.id} (type: {feature.type}, level: {feature.level})")
                 if feature.level == 1:
+                    logging.debug(f"Calling checkout on level-1 feature: {feature.id}")
                     self.checkout(feature, None)
 
                 self.active_features.pop(feature.id, None)
@@ -372,6 +375,12 @@ class RecordCountingContext:
         
         Checkout should be triggered after a level-1 feature is completely cleared. Aggregation of the level-1 feature and all its descentants proceeds.
         """
+        
+        logging.debug(
+            f"checkout() called: feature.id={feature.id}, feature.type={feature.type}, "
+            f"feature.level={feature.level}, is_chimaera={getattr(feature, 'is_chimaera', 'NOT_SET')}, "
+            f"has_counter={feature.id in self.counters}"
+        )
 
         # Deactivate the feature
         self.active_features.pop(feature.id, None)
@@ -384,6 +393,7 @@ class RecordCountingContext:
         if feature_counter:
             if feature.is_chimaera:
                 assert parent_feature  # A chimaera must always have a parent feature (a gene)
+                logging.debug(f"Writing chimaera with data: {feature.id}")
                 self.aggregate_writer.write_row_chimaera_with_data(
                     self.record.id, feature, parent_feature, feature_counter
                 )
@@ -391,16 +401,19 @@ class RecordCountingContext:
                 # Also track by parent_type
                 self.chimaera_aggregate_counters_by_parent_type[(parent_feature.type, feature.type)].merge(feature_counter)
             else:
+                logging.debug(f"Writing feature with data: {feature.id}, type: {feature.type}")
                 self.feature_writer.write_row_with_data(self.record.id, feature, feature_counter)
             # Explicitly delete counter after use to free memory
             del feature_counter
         else:
             if feature.is_chimaera:
                 assert parent_feature
+                logging.debug(f"Writing chimaera without data: {feature.id}")
                 self.aggregate_writer.write_row_chimaera_without_data(
                     self.record.id, feature, parent_feature
                 )
             else:
+                logging.debug(f"Writing feature without data: {feature.id}, type: {feature.type}")
                 self.feature_writer.write_row_without_data(self.record.id, feature)
 
         # all_isoforms_aggregation_counters: Optional[defaultdict[str, MultiCounter]] = None
@@ -652,7 +665,8 @@ class RecordCountingContext:
         return None
 
     def is_finished(self) -> bool:
-        return len(self.action_queue) > 0 or len(self.active_features) > 0
+        """Return True if there is no remaining work (queues are empty and no active features)"""
+        return len(self.action_queue) == 0 and len(self.active_features) == 0
 
     def launch_counting(self, reader: RNASiteVariantReader) -> None:
         next_svdata: Optional[RNASiteVariantData] = reader.seek_record(self.record.id)
@@ -779,6 +793,19 @@ def parse_cli_input() -> argparse.Namespace:
         type=str,
         default=None,
         help="Comma-separated list of GFF feature types to load (e.g., 'gene,mRNA,exon,CDS'). Reduces memory usage by filtering during parsing. Leave empty to load all types.",
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level (default: INFO). Use DEBUG to see detailed site filtering information.",
+    )
+    parser.add_argument(
+        "--log-to-console",
+        action="store_true",
+        default=False,
+        help="Output logs to console/terminal in addition to log file.",
     )
 
     return parser.parse_args()
@@ -1103,7 +1130,25 @@ def main():
     args = parse_cli_input()
     LOGGING_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
     log_filename: str = args.output + "_pluviometer.log" if args.output else "pluviometer.log"
-    logging.basicConfig(filename=log_filename, level=logging.INFO, format=LOGGING_FORMAT)
+    log_level = getattr(logging, args.log_level.upper())
+    
+    # Configure logging with file handler
+    logger = logging.getLogger()
+    logger.setLevel(log_level)
+    
+    # File handler
+    file_handler = logging.FileHandler(log_filename, mode='w')
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(logging.Formatter(LOGGING_FORMAT))
+    logger.addHandler(file_handler)
+    
+    # Console handler if requested
+    if args.log_to_console:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(log_level)
+        console_handler.setFormatter(logging.Formatter(LOGGING_FORMAT))
+        logger.addHandler(console_handler)
+    
     logging.info(f"Pluviometer started. Log file: {log_filename}")
     logging.info("Options:")
     logging.info(f"  Sites file: {args.sites}")
@@ -1116,6 +1161,7 @@ def main():
     logging.info(f"  Threads: {args.threads}")
     logging.info(f"  Progress bar: {args.progress}")
     logging.info(f"  GFF feature types filter: {args.gff_feature_types if args.gff_feature_types else 'none (all types)'}")
+    logging.info(f"  Log level: {args.log_level}")
     feature_output_filename: str = args.output + "_features.tsv" if args.output else "features.tsv"
     aggregate_output_filename: str = (
         args.output + "_aggregates.tsv" if args.output else "aggregates.tsv"
