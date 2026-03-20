@@ -86,7 +86,7 @@ class RainFileWriter:
         b += self.handle.write('\t')
         b += self.handle.write(",".join(map(str, counter.edit_site_freqs[0:4, 0:4].flat)))
         b += self.handle.write('\t')
-        b += self.handle.write(",".join(map(str, counter.edit_read_freqs[0:4, 0:4].flat)))
+        b += self.handle.write(",".join(map(str, counter.edit_filtered_read_freqs[0:4, 0:4].flat)))
         b += self.handle.write('\n')
 
         return b
@@ -110,8 +110,10 @@ class FeatureFileWriter(RainFileWriter):
         "QualifiedSites",
         "ObservedBases",
         "QualifiedBases",
-        "SiteBasePairings",
-        "ReadBasePairings"
+        "SiteBasePairingsObserved",
+        "ReadBasePairingsObserved",
+        "SiteBasePairingsQualified",
+        "ReadBasePairingsQualified"
     ]
 
     def __init__(self, handle: TextIO):
@@ -147,8 +149,10 @@ class FeatureFileWriter(RainFileWriter):
             # Use the flat attribute of the NumPy arrays to flatten the matrix row-wise to attain the desired base pairing order in the output
             ",".join(map(str, counter.genome_base_freqs[0:4].flat)),  # ObservedBases: base distribution for all observations
             ",".join(map(str, counter.filtered_base_freqs[0:4].flat)),  # QualifiedBases: base distribution for qualified sites
-            ",".join(map(str, counter.edit_site_freqs[0:4, 0:4].flat)),
-            ",".join(map(str, counter.edit_read_freqs[0:4, 0:4].flat)),
+            ",".join(map(str, counter.edit_site_freqs[0:4, 0:4].flat)),  # SiteBasePairingsObserved
+            ",".join(map(str, counter.edit_filtered_read_freqs[0:4, 0:4].flat)),  # ReadBasePairingsObserved
+            ",".join(map(str, counter.edit_qualified_site_freqs[0:4, 0:4].flat)),  # SiteBasePairingsQualified
+            ",".join(map(str, counter.edit_qualified_read_freqs[0:4, 0:4].flat)),  # ReadBasePairingsQualified
         )
 
     def write_row_without_data(self, record_id: str, feature: SeqFeature) -> int:
@@ -157,7 +161,7 @@ class FeatureFileWriter(RainFileWriter):
         This is faster than creating dummy counter objects with zero observations.
         """
         return self.write_metadata(record_id, feature) + self.write_data(
-            str(len(feature.location)), "0", "0", self.STR_ZERO_BASE_FREQS, self.STR_ZERO_BASE_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS
+            str(len(feature.location)), "0", "0", self.STR_ZERO_BASE_FREQS, self.STR_ZERO_BASE_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS
         )
 
 
@@ -180,8 +184,10 @@ class AggregateFileWriter(RainFileWriter):
         "QualifiedSites",
         "ObservedBases",
         "QualifiedBases",
-        "SiteBasePairings",
-        "ReadBasePairings",
+        "SiteBasePairingsObserved",
+        "ReadBasePairingsObserved",
+        "SiteBasePairingsQualified",
+        "ReadBasePairingsQualified",
     ]
 
     def __init__(self, handle: TextIO):
@@ -267,8 +273,10 @@ class AggregateFileWriter(RainFileWriter):
                 str(aggregate_counter.filtered_sites_count),  # QualifiedSites
                 ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),  # ObservedBases
                 ",".join(map(str, aggregate_counter.filtered_base_freqs[0:4].flat)),  # QualifiedBases
-                ",".join(map(str, aggregate_counter.edit_site_freqs[0:4, 0:4].flat)),
-                ",".join(map(str, aggregate_counter.edit_read_freqs[0:4, 0:4].flat)),
+                ",".join(map(str, aggregate_counter.edit_site_freqs[0:4, 0:4].flat)),  # SiteBasePairingsObserved
+                ",".join(map(str, aggregate_counter.edit_filtered_read_freqs[0:4, 0:4].flat)),  # ReadBasePairingsObserved
+                ",".join(map(str, aggregate_counter.edit_qualified_site_freqs[0:4, 0:4].flat)),  # SiteBasePairingsQualified
+                ",".join(map(str, aggregate_counter.edit_qualified_read_freqs[0:4, 0:4].flat)),  # ReadBasePairingsQualified
             )
 
         return b
@@ -304,8 +312,10 @@ class AggregateFileWriter(RainFileWriter):
             str(counter.filtered_sites_count),  # QualifiedSites
             ",".join(map(str, counter.genome_base_freqs[0:4].flat)),  # ObservedBases
             ",".join(map(str, counter.filtered_base_freqs[0:4].flat)),  # QualifiedBases
-            ",".join(map(str, counter.edit_site_freqs[0:4, 0:4].flat)),
-            ",".join(map(str, counter.edit_read_freqs[0:4, 0:4].flat)),
+            ",".join(map(str, counter.edit_site_freqs[0:4, 0:4].flat)),  # SiteBasePairingsObserved
+            ",".join(map(str, counter.edit_filtered_read_freqs[0:4, 0:4].flat)),  # ReadBasePairingsObserved
+            ",".join(map(str, counter.edit_qualified_site_freqs[0:4, 0:4].flat)),  # SiteBasePairingsQualified
+            ",".join(map(str, counter.edit_qualified_read_freqs[0:4, 0:4].flat)),  # ReadBasePairingsQualified
         )
 
         return b
@@ -337,12 +347,12 @@ class AggregateFileWriter(RainFileWriter):
         )
         b += self.write_data(
             str(len(feature.location)) if hasattr(feature, 'location') and feature.location else ".",  # TotalSites
-            "0", "0", self.STR_ZERO_BASE_FREQS, self.STR_ZERO_BASE_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS
+            "0", "0", self.STR_ZERO_BASE_FREQS, self.STR_ZERO_BASE_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS
         )
 
         return b
 
-    # Case like that we will add empty start end strand
+    # Case like that will add empty start end strand
     # 21	.	.	gene	    exon	longest_isoform
     # 21	.	.	pseudogene	exon	longest_isoform
     # .	    .	.	pseudogene	exon	longest_isoform
@@ -383,9 +393,12 @@ class AggregateFileWriter(RainFileWriter):
                 total_sites_str,  # TotalSites: calculated from aggregate positions
                 str(aggregate_counter.genome_base_freqs.sum()),  # ObservedSites
                 str(aggregate_counter.filtered_sites_count),  # QualifiedSites
-                ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),
-                ",".join(map(str, aggregate_counter.edit_site_freqs[0:4, 0:4].flat)),
-                ",".join(map(str, aggregate_counter.edit_read_freqs[0:4, 0:4].flat)),
+                ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),  # ObservedBases
+                ",".join(map(str, aggregate_counter.filtered_base_freqs[0:4].flat)),  # QualifiedBases
+                ",".join(map(str, aggregate_counter.edit_site_freqs[0:4, 0:4].flat)),  # SiteBasePairingsObserved
+                ",".join(map(str, aggregate_counter.edit_filtered_read_freqs[0:4, 0:4].flat)),  # ReadBasePairingsObserved
+                ",".join(map(str, aggregate_counter.edit_qualified_site_freqs[0:4, 0:4].flat)),  # SiteBasePairingsQualified
+                ",".join(map(str, aggregate_counter.edit_qualified_read_freqs[0:4, 0:4].flat)),  # ReadBasePairingsQualified
             )
 
         return b

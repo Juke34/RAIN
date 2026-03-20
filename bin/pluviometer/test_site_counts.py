@@ -96,6 +96,32 @@ class TestAggregatePositions(unittest.TestCase):
 class TestMultiCounterSiteCounts(unittest.TestCase):
     """Tests pour les compteurs de sites dans MultiCounter"""
 
+    def test_site_base_pairings_counts_sites_not_reads(self):
+        """Test que SiteBasePairingsObserved compte les SITES (pas les reads) avec chaque pairing"""
+        # Reproduit le cas du test minimal:
+        # pos1: A ref, cov=10, [10,0,0,0] -> AA pairing passes (10>=5)
+        # pos2: C ref, cov=12, [0,9,0,3]  -> CC passes (9>=5), CT filtered (3<5)
+        # pos4: T ref, cov=2              -> tout filtré (cov<5)
+        filter = SiteFilter(cov_threshold=5, edit_threshold=5)
+        counter = MultiCounter(filter)
+
+        counter.update(RNASiteVariantData("21", 0, 0, 1, 10, 37.0, np.array([10,0,0,0,0], dtype=np.int32), 0.0))  # A site
+        counter.update(RNASiteVariantData("21", 1, 1, 1, 12, 37.0, np.array([0,9,0,3,0], dtype=np.int32), 0.0))  # C site
+        counter.update(RNASiteVariantData("21", 3, 3, 1,  2, 37.0, np.array([0,0,0,2,0], dtype=np.int32), 0.0))  # T site, cov<5
+
+        # SiteBasePairingsObserved: 1 site AA, 1 site CC, 0 CT (filtré), 0 TT (cov<5)
+        self.assertEqual(counter.edit_site_freqs[0, 0], 1)   # AA: 1 site
+        self.assertEqual(counter.edit_site_freqs[0, 1], 0)   # AC: 0
+        self.assertEqual(counter.edit_site_freqs[1, 1], 1)   # CC: 1 site
+        self.assertEqual(counter.edit_site_freqs[1, 3], 0)   # CT: 0 (3 reads < edit_threshold)
+        self.assertEqual(counter.edit_site_freqs[3, 3], 0)   # TT: 0 (cov < cov_threshold)
+
+        # ReadBasePairings: compte les reads bruts (non filtrés)
+        self.assertEqual(counter.edit_read_freqs[0, 0], 10)  # AA: 10 reads
+        self.assertEqual(counter.edit_read_freqs[1, 1], 9)   # CC: 9 reads
+        self.assertEqual(counter.edit_read_freqs[1, 3], 3)   # CT: 3 reads (non filtrés dans ReadBasePairings)
+        self.assertEqual(counter.edit_read_freqs[3, 3], 2)   # TT: 2 reads
+
     def test_observed_sites_count(self):
         """Test que ObservedSites compte toutes les observations"""
         filter = SiteFilter(cov_threshold=5, edit_threshold=2)
