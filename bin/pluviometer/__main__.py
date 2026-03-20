@@ -407,10 +407,11 @@ class RecordCountingContext:
         if feature_counter:
             if feature.is_chimaera:
                 assert parent_feature  # A chimaera must always have a parent feature (a gene)
-                logging.debug(f"Writing chimaera with data: {feature.id}")
-                self.aggregate_writer.write_row_chimaera_with_data(
-                    self.record.id, feature, parent_feature, feature_counter
-                )
+                if self.report_non_qualified or feature_counter.filtered_base_freqs.sum() > 0:
+                    logging.debug(f"Writing chimaera with data: {feature.id}")
+                    self.aggregate_writer.write_row_chimaera_with_data(
+                        self.record.id, feature, parent_feature, feature_counter
+                    )
                 self.chimaera_aggregate_counters[feature.type].merge(feature_counter)
                 # Also track by parent_type
                 self.chimaera_aggregate_counters_by_parent_type[(parent_feature.type, feature.type)].merge(feature_counter)
@@ -430,10 +431,11 @@ class RecordCountingContext:
         else:
             if feature.is_chimaera:
                 assert parent_feature
-                logging.debug(f"Writing chimaera without data: {feature.id}")
-                self.aggregate_writer.write_row_chimaera_without_data(
-                    self.record.id, feature, parent_feature
-                )
+                if self.report_non_qualified:
+                    logging.debug(f"Writing chimaera without data: {feature.id}")
+                    self.aggregate_writer.write_row_chimaera_without_data(
+                        self.record.id, feature, parent_feature
+                    )
             else:
                 logging.debug(f"Writing feature without data: {feature.id}, type: {feature.type}")
                 if self.report_non_qualified:
@@ -478,6 +480,8 @@ class RecordCountingContext:
                 aggregate_type,
                 aggregate_counter,
             ) in level1_longest_isoform_aggregation_counters.items():
+                if not self.report_non_qualified and aggregate_counter.filtered_base_freqs.sum() == 0:
+                    continue
                 # Get positions for this aggregate type
                 start_str, end_str, strand_str = ".", ".", "."
                 if aggregate_type in level1_longest_isoform_aggregation_positions:
@@ -512,6 +516,8 @@ class RecordCountingContext:
                 aggregate_type,
                 aggregate_counter,
             ) in level1_all_isoforms_aggregation_counters.items():
+                if not self.report_non_qualified and aggregate_counter.filtered_base_freqs.sum() == 0:
+                    continue
                 # Get positions for this aggregate type
                 start_str, end_str, strand_str = ".", ".", "."
                 if aggregate_type in level1_all_isoforms_aggregation_positions:
@@ -544,6 +550,8 @@ class RecordCountingContext:
         else:
             feature_aggregation_counters, feature_aggregation_positions = self.aggregate_children(feature)
             for aggregate_type, aggregate_counter in feature_aggregation_counters.items():
+                if not self.report_non_qualified and aggregate_counter.filtered_base_freqs.sum() == 0:
+                    continue
                 # Get positions for this aggregate type
                 start_str, end_str, strand_str = ".", ".", "."
                 if aggregate_type in feature_aggregation_positions:
@@ -1020,6 +1028,7 @@ def _do_counting(record: SeqRecord) -> dict[str, Any]:
             "longest_isoform",
             record_ctx.longest_isoform_aggregate_counters,
             record_ctx.longest_isoform_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
         aggregate_writer.write_rows_with_data(
             record.id,
@@ -1029,6 +1038,7 @@ def _do_counting(record: SeqRecord) -> dict[str, Any]:
             "all_isoforms",
             record_ctx.all_isoforms_aggregate_counters,
             record_ctx.all_isoforms_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
         aggregate_writer.write_rows_with_data(
             record.id,
@@ -1038,6 +1048,7 @@ def _do_counting(record: SeqRecord) -> dict[str, Any]:
             "chimaera",
             record_ctx.chimaera_aggregate_counters,
             record_ctx.chimaera_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
 
         # Write aggregate counter data by parent type
@@ -1048,6 +1059,7 @@ def _do_counting(record: SeqRecord) -> dict[str, Any]:
             "longest_isoform",
             record_ctx.longest_isoform_aggregate_counters_by_parent_type,
             record_ctx.longest_isoform_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
         aggregate_writer.write_rows_with_data_by_parent_type(
             record.id,
@@ -1056,6 +1068,7 @@ def _do_counting(record: SeqRecord) -> dict[str, Any]:
             "all_isoforms",
             record_ctx.all_isoforms_aggregate_counters_by_parent_type,
             record_ctx.all_isoforms_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
         aggregate_writer.write_rows_with_data_by_parent_type(
             record.id,
@@ -1064,6 +1077,7 @@ def _do_counting(record: SeqRecord) -> dict[str, Any]:
             "chimaera",
             record_ctx.chimaera_aggregate_counters_by_parent_type,
             record_ctx.chimaera_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
 
         # Write the total counter data of the record. A dummy dict needs to be created to use the `write_rows_with_data` method
@@ -1072,7 +1086,8 @@ def _do_counting(record: SeqRecord) -> dict[str, Any]:
         )
         total_counter_dict["."] = record_ctx.total_counter
         aggregate_writer.write_rows_with_data(
-            record.id, ["."], ".", ".", "all_sites", total_counter_dict
+            record.id, ["."], ".", ".", "all_sites", total_counter_dict,
+            report_non_qualified=args.report_non_qualified_features,
         )
 
     # Extract data needed for return before cleanup
@@ -1416,29 +1431,35 @@ def main():
         # Write genomic counts
         aggregate_writer.write_rows_with_data(
             ".", ["."], ".", ".", "longest_isoform", genome_longest_isoform_aggregate_counters,
-            genome_longest_isoform_aggregate_positions
+            genome_longest_isoform_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
         aggregate_writer.write_rows_with_data(
             ".", ["."], ".", ".", "all_isoforms", genome_all_isoforms_aggregate_counters,
-            genome_all_isoforms_aggregate_positions
+            genome_all_isoforms_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
         aggregate_writer.write_rows_with_data(
             ".", ["."], ".", ".", "chimaera", genome_chimaera_aggregate_counters,
-            genome_chimaera_aggregate_positions
+            genome_chimaera_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
 
         # Write genomic counts by parent type
         aggregate_writer.write_rows_with_data_by_parent_type(
             ".", ["."], ".", "longest_isoform", genome_longest_isoform_aggregate_counters_by_parent_type,
-            genome_longest_isoform_aggregate_positions
+            genome_longest_isoform_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
         aggregate_writer.write_rows_with_data_by_parent_type(
             ".", ["."], ".", "all_isoforms", genome_all_isoforms_aggregate_counters_by_parent_type,
-            genome_all_isoforms_aggregate_positions
+            genome_all_isoforms_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
         aggregate_writer.write_rows_with_data_by_parent_type(
             ".", ["."], ".", "chimaera", genome_chimaera_aggregate_counters_by_parent_type,
-            genome_chimaera_aggregate_positions
+            genome_chimaera_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
 
         # Write the genomic total. A dummy dict needs to be created to use the `write_rows_with_data` method
@@ -1447,7 +1468,8 @@ def main():
         )
         genomic_total_counter_dict["."] = genome_total_counter
         aggregate_writer.write_rows_with_data(
-            ".", ["."], ".", ".", "all_sites", genomic_total_counter_dict
+            ".", ["."], ".", ".", "all_sites", genomic_total_counter_dict,
+            report_non_qualified=args.report_non_qualified_features,
         )
 
         logging.info("Program finished")

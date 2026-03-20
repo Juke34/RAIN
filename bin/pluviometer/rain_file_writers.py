@@ -240,11 +240,14 @@ class AggregateFileWriter(RainFileWriter):
         aggregation_mode: str,
         counter_dict: defaultdict[str, MultiCounter],
         positions_dict: Optional[dict[str, 'AggregatePositions']] = None,
+        report_non_qualified: bool = True,
     ) -> int:
         """Write metadata and data fields of multiple counters of the same aggregate feature"""
         b: int = 0
 
         for aggregate_type, aggregate_counter in counter_dict.items():
+            if not report_non_qualified and aggregate_counter.filtered_base_freqs.sum() == 0:
+                continue
             b += self.write_metadata(
                 record_id,
                 make_parent_path(parent_list),
@@ -351,11 +354,14 @@ class AggregateFileWriter(RainFileWriter):
         aggregation_mode: str,
         counter_dict: defaultdict[tuple[str, str], MultiCounter],
         positions_dict: Optional[dict[str, 'AggregatePositions']] = None,
+        report_non_qualified: bool = True,
     ) -> int:
         """Write metadata and data fields of multiple counters grouped by (parent_type, aggregate_type)"""
         b: int = 0
 
         for (parent_type, aggregate_type), aggregate_counter in counter_dict.items():
+            if not report_non_qualified and aggregate_counter.filtered_base_freqs.sum() == 0:
+                continue
             b += self.write_metadata(
                 record_id,
                 make_parent_path(parent_list),
