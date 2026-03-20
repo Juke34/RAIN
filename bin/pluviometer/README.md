@@ -55,3 +55,16 @@ All internal imports have been converted to relative imports to function as a Py
 # Call as a python module (recommended)
 cd bin
 python -m pluviometer --sites SITES --gff GFF [OPTIONS]
+
+## calcul location:
+Cas gérés correctement :
+
+1. Features simples (exon, CDS) : SimpleLocation → len = longueur réelle
+2. Features parent (gene, mRNA) du GFF : SimpleLocation(start, end) → len = span complet (incluant introns)
+C'est la sémantique correcte du GFF - un gène "couvre" toute sa région
+3. Aggregates chimaera créés par le code : CompoundLocation via location_union() → len = somme des parties sans gaps ✓
+4. All sites - for ttotal site it is "." because cannot guess without fasta.
+
+To test everything goes well:
+
+PYTHONPATH=/workspaces/rain/bin python3 -m unittest pluviometer.test_site_counts -v

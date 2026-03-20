@@ -121,6 +121,16 @@ class RecordCountingContext:
         )
         """Dictionary of counters for the record-level all isoforms aggregates. Keys correspond to aggregate feature types"""
 
+        # Positions for aggregate counters
+        self.longest_isoform_aggregate_positions: dict[str, AggregatePositions] = {}
+        """Dictionary of positions for the record-level longest isoform aggregates"""
+
+        self.chimaera_aggregate_positions: dict[str, AggregatePositions] = {}
+        """Dictionary of positions for the record-level chimaeric aggregates"""
+
+        self.all_isoforms_aggregate_positions: dict[str, AggregatePositions] = {}
+        """Dictionary of positions for the record-level all isoforms aggregates"""
+
         # New: Aggregate counters by (parent_type, aggregate_type) for intermediate-level aggregation
         self.longest_isoform_aggregate_counters_by_parent_type: defaultdict[tuple[str, str], MultiCounter] = defaultdict(
             DefaultMultiCounterFactory(self.filter)
@@ -400,6 +410,13 @@ class RecordCountingContext:
                 self.chimaera_aggregate_counters[feature.type].merge(feature_counter)
                 # Also track by parent_type
                 self.chimaera_aggregate_counters_by_parent_type[(parent_feature.type, feature.type)].merge(feature_counter)
+                
+                # Track positions for chimaera
+                if feature.type not in self.chimaera_aggregate_positions:
+                    self.chimaera_aggregate_positions[feature.type] = AggregatePositions(
+                        strand=feature.location.strand if hasattr(feature.location, 'strand') else 0
+                    )
+                self.chimaera_aggregate_positions[feature.type].update_from_feature(feature)
             else:
                 logging.debug(f"Writing feature with data: {feature.id}, type: {feature.type}")
                 self.feature_writer.write_row_with_data(self.record.id, feature, feature_counter)
@@ -431,6 +448,18 @@ class RecordCountingContext:
             merge_aggregation_counter_dicts(
                 self.all_isoforms_aggregate_counters, level1_all_isoforms_aggregation_counters
             )
+            
+            # Merge positions for all_isoforms at record level
+            for aggregate_type, positions in level1_all_isoforms_aggregation_positions.items():
+                if aggregate_type not in self.all_isoforms_aggregate_positions:
+                    self.all_isoforms_aggregate_positions[aggregate_type] = AggregatePositions(strand=positions.strand)
+                self.all_isoforms_aggregate_positions[aggregate_type].merge(positions)
+            
+            # Merge positions for longest_isoform at record level
+            for aggregate_type, positions in level1_longest_isoform_aggregation_positions.items():
+                if aggregate_type not in self.longest_isoform_aggregate_positions:
+                    self.longest_isoform_aggregate_positions[aggregate_type] = AggregatePositions(strand=positions.strand)
+                self.longest_isoform_aggregate_positions[aggregate_type].merge(positions)
 
             # Also merge into by-parent-type dictionaries
             parent_type = feature.type
@@ -459,7 +488,20 @@ class RecordCountingContext:
                     end=end_str,
                     strand=strand_str,
                 )
-                self.aggregate_writer.write_counter_data(aggregate_counter)
+                # Calculate TotalSites from positions
+                total_sites_str = "."
+                if aggregate_type in level1_longest_isoform_aggregation_positions:
+                    pos = level1_longest_isoform_aggregation_positions[aggregate_type]
+                    if pos.start != float('inf') and pos.end > 0:
+                        total_sites_str = str(pos.end - pos.start)
+                self.aggregate_writer.write_data(
+                    total_sites_str,
+                    str(aggregate_counter.genome_base_freqs.sum()),
+                    str(aggregate_counter.filtered_sites_count),
+                    ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),
+                    ",".join(map(str, aggregate_counter.edit_site_freqs[0:4, 0:4].flat)),
+                    ",".join(map(str, aggregate_counter.edit_read_freqs[0:4, 0:4].flat)),
+                )
 
             for (
                 aggregate_type,
@@ -481,7 +523,20 @@ class RecordCountingContext:
                     end=end_str,
                     strand=strand_str,
                 )
-                self.aggregate_writer.write_counter_data(aggregate_counter)
+                # Calculate TotalSites from positions
+                total_sites_str = "."
+                if aggregate_type in level1_all_isoforms_aggregation_positions:
+                    pos = level1_all_isoforms_aggregation_positions[aggregate_type]
+                    if pos.start != float('inf') and pos.end > 0:
+                        total_sites_str = str(pos.end - pos.start)
+                self.aggregate_writer.write_data(
+                    total_sites_str,
+                    str(aggregate_counter.genome_base_freqs.sum()),
+                    str(aggregate_counter.filtered_sites_count),
+                    ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),
+                    ",".join(map(str, aggregate_counter.edit_site_freqs[0:4, 0:4].flat)),
+                    ",".join(map(str, aggregate_counter.edit_read_freqs[0:4, 0:4].flat)),
+                )
         else:
             feature_aggregation_counters, feature_aggregation_positions = self.aggregate_children(feature)
             for aggregate_type, aggregate_counter in feature_aggregation_counters.items():
@@ -501,7 +556,20 @@ class RecordCountingContext:
                     end=end_str,
                     strand=strand_str,
                 )
-                self.aggregate_writer.write_counter_data(aggregate_counter)
+                # Calculate TotalSites from positions
+                total_sites_str = "."
+                if aggregate_type in feature_aggregation_positions:
+                    pos = feature_aggregation_positions[aggregate_type]
+                    if pos.start != float('inf') and pos.end > 0:
+                        total_sites_str = str(pos.end - pos.start)
+                self.aggregate_writer.write_data(
+                    total_sites_str,
+                    str(aggregate_counter.genome_base_freqs.sum()),
+                    str(aggregate_counter.filtered_sites_count),
+                    ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),
+                    ",".join(map(str, aggregate_counter.edit_site_freqs[0:4, 0:4].flat)),
+                    ",".join(map(str, aggregate_counter.edit_read_freqs[0:4, 0:4].flat)),
+                )
 
         # Recursively check-out children
         for child in feature.sub_features:
@@ -941,6 +1009,7 @@ def _do_counting(record: SeqRecord) -> dict[str, Any]:
             ".",
             "longest_isoform",
             record_ctx.longest_isoform_aggregate_counters,
+            record_ctx.longest_isoform_aggregate_positions,
         )
         aggregate_writer.write_rows_with_data(
             record.id,
@@ -949,6 +1018,7 @@ def _do_counting(record: SeqRecord) -> dict[str, Any]:
             ".",
             "all_isoforms",
             record_ctx.all_isoforms_aggregate_counters,
+            record_ctx.all_isoforms_aggregate_positions,
         )
         aggregate_writer.write_rows_with_data(
             record.id,
@@ -957,6 +1027,7 @@ def _do_counting(record: SeqRecord) -> dict[str, Any]:
             ".",
             "chimaera",
             record_ctx.chimaera_aggregate_counters,
+            record_ctx.chimaera_aggregate_positions,
         )
 
         # Write aggregate counter data by parent type
@@ -966,6 +1037,7 @@ def _do_counting(record: SeqRecord) -> dict[str, Any]:
             ".",
             "longest_isoform",
             record_ctx.longest_isoform_aggregate_counters_by_parent_type,
+            record_ctx.longest_isoform_aggregate_positions,
         )
         aggregate_writer.write_rows_with_data_by_parent_type(
             record.id,
@@ -973,6 +1045,7 @@ def _do_counting(record: SeqRecord) -> dict[str, Any]:
             ".",
             "all_isoforms",
             record_ctx.all_isoforms_aggregate_counters_by_parent_type,
+            record_ctx.all_isoforms_aggregate_positions,
         )
         aggregate_writer.write_rows_with_data_by_parent_type(
             record.id,
@@ -980,6 +1053,7 @@ def _do_counting(record: SeqRecord) -> dict[str, Any]:
             ".",
             "chimaera",
             record_ctx.chimaera_aggregate_counters_by_parent_type,
+            record_ctx.chimaera_aggregate_positions,
         )
 
         # Write the total counter data of the record. A dummy dict needs to be created to use the `write_rows_with_data` method
@@ -1003,6 +1077,9 @@ def _do_counting(record: SeqRecord) -> dict[str, Any]:
         "longest_isoform_aggregate_counters_by_parent_type": record_ctx.longest_isoform_aggregate_counters_by_parent_type.copy(),
         "all_isoforms_aggregate_counters_by_parent_type": record_ctx.all_isoforms_aggregate_counters_by_parent_type.copy(),
         "total_counter": record_ctx.total_counter,
+        "longest_isoform_aggregate_positions": record_ctx.longest_isoform_aggregate_positions.copy(),
+        "all_isoforms_aggregate_positions": record_ctx.all_isoforms_aggregate_positions.copy(),
+        "chimaera_aggregate_positions": record_ctx.chimaera_aggregate_positions.copy(),
     }
 
     # Clean up record context to free memory immediately
@@ -1051,6 +1128,9 @@ def process_and_write_record_data(
     genome_all_isoforms_aggregate_counters_by_parent_type: defaultdict[tuple[str, str], MultiCounter],
     genome_chimaera_aggregate_counters_by_parent_type: defaultdict[tuple[str, str], MultiCounter],
     genome_total_counter: MultiCounter,
+    genome_longest_isoform_aggregate_positions: dict[str, AggregatePositions],
+    genome_all_isoforms_aggregate_positions: dict[str, AggregatePositions],
+    genome_chimaera_aggregate_positions: dict[str, AggregatePositions],
 ) -> None:
     """
     Process a single record's data: write its output and merge counters into genome totals.
@@ -1111,6 +1191,22 @@ def process_and_write_record_data(
 
     # Update the genome's total counter from the record data total counter
     genome_total_counter.merge(record_data["total_counter"])
+    
+    # Merge positions for aggregates
+    for aggregate_type, positions in record_data.get("longest_isoform_aggregate_positions", {}).items():
+        if aggregate_type not in genome_longest_isoform_aggregate_positions:
+            genome_longest_isoform_aggregate_positions[aggregate_type] = AggregatePositions(strand=positions.strand)
+        genome_longest_isoform_aggregate_positions[aggregate_type].merge(positions)
+    
+    for aggregate_type, positions in record_data.get("all_isoforms_aggregate_positions", {}).items():
+        if aggregate_type not in genome_all_isoforms_aggregate_positions:
+            genome_all_isoforms_aggregate_positions[aggregate_type] = AggregatePositions(strand=positions.strand)
+        genome_all_isoforms_aggregate_positions[aggregate_type].merge(positions)
+    
+    for aggregate_type, positions in record_data.get("chimaera_aggregate_positions", {}).items():
+        if aggregate_type not in genome_chimaera_aggregate_positions:
+            genome_chimaera_aggregate_positions[aggregate_type] = AggregatePositions(strand=positions.strand)
+        genome_chimaera_aggregate_positions[aggregate_type].merge(positions)
     
     # Clear record_data counters to free memory immediately after merging
     record_data["chimaera_aggregate_counters"].clear()
@@ -1197,6 +1293,11 @@ def main():
         genome_chimaera_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
             lambda: MultiCounter(genome_filter)
         )
+        
+        # Positions for genome-level aggregates
+        genome_longest_isoform_aggregate_positions: dict[str, AggregatePositions] = {}
+        genome_all_isoforms_aggregate_positions: dict[str, AggregatePositions] = {}
+        genome_chimaera_aggregate_positions: dict[str, AggregatePositions] = {}
 
         # By-parent-type genome-level aggregates
         genome_longest_isoform_aggregate_counters_by_parent_type: defaultdict[tuple[str, str], MultiCounter] = defaultdict(
@@ -1251,6 +1352,9 @@ def main():
                     genome_all_isoforms_aggregate_counters_by_parent_type,
                     genome_chimaera_aggregate_counters_by_parent_type,
                     genome_total_counter,
+                    genome_longest_isoform_aggregate_positions,
+                    genome_all_isoforms_aggregate_positions,
+                    genome_chimaera_aggregate_positions,
                 )
                 del record_data
                 # Force flush to disk after each chromosome
@@ -1287,6 +1391,9 @@ def main():
                     genome_all_isoforms_aggregate_counters_by_parent_type,
                     genome_chimaera_aggregate_counters_by_parent_type,
                     genome_total_counter,
+                    genome_longest_isoform_aggregate_positions,
+                    genome_all_isoforms_aggregate_positions,
+                    genome_chimaera_aggregate_positions,
                 )
                 del result
                 feature_output_handle.flush()
@@ -1298,24 +1405,30 @@ def main():
 
         # Write genomic counts
         aggregate_writer.write_rows_with_data(
-            ".", ["."], ".", ".", "longest_isoform", genome_longest_isoform_aggregate_counters
+            ".", ["."], ".", ".", "longest_isoform", genome_longest_isoform_aggregate_counters,
+            genome_longest_isoform_aggregate_positions
         )
         aggregate_writer.write_rows_with_data(
-            ".", ["."], ".", ".", "all_isoforms", genome_all_isoforms_aggregate_counters
+            ".", ["."], ".", ".", "all_isoforms", genome_all_isoforms_aggregate_counters,
+            genome_all_isoforms_aggregate_positions
         )
         aggregate_writer.write_rows_with_data(
-            ".", ["."], ".", ".", "chimaera", genome_chimaera_aggregate_counters
+            ".", ["."], ".", ".", "chimaera", genome_chimaera_aggregate_counters,
+            genome_chimaera_aggregate_positions
         )
 
         # Write genomic counts by parent type
         aggregate_writer.write_rows_with_data_by_parent_type(
-            ".", ["."], ".", "longest_isoform", genome_longest_isoform_aggregate_counters_by_parent_type
+            ".", ["."], ".", "longest_isoform", genome_longest_isoform_aggregate_counters_by_parent_type,
+            genome_longest_isoform_aggregate_positions
         )
         aggregate_writer.write_rows_with_data_by_parent_type(
-            ".", ["."], ".", "all_isoforms", genome_all_isoforms_aggregate_counters_by_parent_type
+            ".", ["."], ".", "all_isoforms", genome_all_isoforms_aggregate_counters_by_parent_type,
+            genome_all_isoforms_aggregate_positions
         )
         aggregate_writer.write_rows_with_data_by_parent_type(
-            ".", ["."], ".", "chimaera", genome_chimaera_aggregate_counters_by_parent_type
+            ".", ["."], ".", "chimaera", genome_chimaera_aggregate_counters_by_parent_type,
+            genome_chimaera_aggregate_positions
         )
 
         # Write the genomic total. A dummy dict needs to be created to use the `write_rows_with_data` method

@@ -18,6 +18,7 @@ class MultiCounter:
         self.edit_site_freqs: NDArray[np.int64] = np.zeros((5, 5), dtype=np.int64)
 
         self.genome_base_freqs: NDArray[np.int64] = np.zeros(5, dtype=np.int64)
+        self.filtered_sites_count: int = 0  # Number of sites that pass the coverage filter
 
         self.filter = site_filter
 
@@ -32,6 +33,10 @@ class MultiCounter:
         self.filter.apply(variant_data)
         self.edit_site_freqs[i, :] += self.filter.frequencies
 
+        # Count sites that pass the coverage filter
+        if variant_data.coverage >= self.filter.cov_threshold:
+            self.filtered_sites_count += 1
+
         self.genome_base_freqs[i] += 1
 
         return None
@@ -43,6 +48,7 @@ class MultiCounter:
         self.edit_read_freqs[:] += other_counter.edit_read_freqs
         self.edit_site_freqs[:] += other_counter.edit_site_freqs
         self.genome_base_freqs[:] += other_counter.genome_base_freqs
+        self.filtered_sites_count += other_counter.filtered_sites_count
 
         return None
 
