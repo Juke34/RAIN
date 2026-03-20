@@ -96,12 +96,16 @@ class RecordCountingContext:
         aggregate_writer: AggregateFileWriter,
         filter: SiteFilter,
         use_progress_bar: bool,
+        report_non_qualified: bool = False,
     ):
         self.aggregate_writer: AggregateFileWriter = aggregate_writer
         """Aggregate counting output is written to a temporary file through this object"""
 
         self.feature_writer: FeatureFileWriter = feature_writer
         """Feature counting output is written to a temporary file through this object"""
+
+        self.report_non_qualified: bool = report_non_qualified
+        """If True, write feature rows even when no qualified sites are found"""""
 
         self.filter: SiteFilter = filter
         """Filter applied to the reads. Filters contain a mutable state, so they should not be shared between concurrent RecordCountingContext instances"""
@@ -419,7 +423,8 @@ class RecordCountingContext:
                 self.chimaera_aggregate_positions[feature.type].update_from_feature(feature)
             else:
                 logging.debug(f"Writing feature with data: {feature.id}, type: {feature.type}")
-                self.feature_writer.write_row_with_data(self.record.id, feature, feature_counter)
+                if self.report_non_qualified or feature_counter.filtered_base_freqs.sum() > 0:
+                    self.feature_writer.write_row_with_data(self.record.id, feature, feature_counter)
             # Explicitly delete counter after use to free memory
             del feature_counter
         else:
@@ -431,7 +436,8 @@ class RecordCountingContext:
                 )
             else:
                 logging.debug(f"Writing feature without data: {feature.id}, type: {feature.type}")
-                self.feature_writer.write_row_without_data(self.record.id, feature)
+                if self.report_non_qualified:
+                    self.feature_writer.write_row_without_data(self.record.id, feature)
 
         # all_isoforms_aggregation_counters: Optional[defaultdict[str, MultiCounter]] = None
 
@@ -496,11 +502,10 @@ class RecordCountingContext:
                         total_sites_str = str(pos.end - pos.start)
                 self.aggregate_writer.write_data(
                     total_sites_str,
-                    str(aggregate_counter.genome_base_freqs.sum()),
-                    str(aggregate_counter.filtered_sites_count),
                     ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),
-                    ",".join(map(str, aggregate_counter.edit_site_freqs[0:4, 0:4].flat)),
-                    ",".join(map(str, aggregate_counter.edit_read_freqs[0:4, 0:4].flat)),
+                    ",".join(map(str, aggregate_counter.filtered_base_freqs[0:4].flat)),
+                    ",".join(map(str, aggregate_counter.edit_qualified_site_freqs[0:4, 0:4].flat)),
+                    ",".join(map(str, aggregate_counter.edit_qualified_read_freqs[0:4, 0:4].flat)),
                 )
 
             for (
@@ -531,11 +536,10 @@ class RecordCountingContext:
                         total_sites_str = str(pos.end - pos.start)
                 self.aggregate_writer.write_data(
                     total_sites_str,
-                    str(aggregate_counter.genome_base_freqs.sum()),
-                    str(aggregate_counter.filtered_sites_count),
                     ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),
-                    ",".join(map(str, aggregate_counter.edit_site_freqs[0:4, 0:4].flat)),
-                    ",".join(map(str, aggregate_counter.edit_read_freqs[0:4, 0:4].flat)),
+                    ",".join(map(str, aggregate_counter.filtered_base_freqs[0:4].flat)),
+                    ",".join(map(str, aggregate_counter.edit_qualified_site_freqs[0:4, 0:4].flat)),
+                    ",".join(map(str, aggregate_counter.edit_qualified_read_freqs[0:4, 0:4].flat)),
                 )
         else:
             feature_aggregation_counters, feature_aggregation_positions = self.aggregate_children(feature)
@@ -564,11 +568,10 @@ class RecordCountingContext:
                         total_sites_str = str(pos.end - pos.start)
                 self.aggregate_writer.write_data(
                     total_sites_str,
-                    str(aggregate_counter.genome_base_freqs.sum()),
-                    str(aggregate_counter.filtered_sites_count),
                     ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),
-                    ",".join(map(str, aggregate_counter.edit_site_freqs[0:4, 0:4].flat)),
-                    ",".join(map(str, aggregate_counter.edit_read_freqs[0:4, 0:4].flat)),
+                    ",".join(map(str, aggregate_counter.filtered_base_freqs[0:4].flat)),
+                    ",".join(map(str, aggregate_counter.edit_qualified_site_freqs[0:4, 0:4].flat)),
+                    ",".join(map(str, aggregate_counter.edit_qualified_read_freqs[0:4, 0:4].flat)),
                 )
 
         # Recursively check-out children
@@ -870,6 +873,12 @@ def parse_cli_input() -> argparse.Namespace:
         help="Logging level (default: INFO). Use DEBUG to see detailed site filtering information.",
     )
     parser.add_argument(
+        "--report-non-qualified-features",
+        action="store_true",
+        default=False,
+        help="Report features with no qualified sites (default: skip them).",
+    )
+    parser.add_argument(
         "--log-to-console",
         action="store_true",
         default=False,
@@ -993,7 +1002,8 @@ def _do_counting(record: SeqRecord) -> dict[str, Any]:
         filter: SiteFilter = SiteFilter(cov_threshold=args.cov, edit_threshold=args.edit_threshold)
 
         record_ctx: RecordCountingContext = RecordCountingContext(
-            feature_writer, aggregate_writer, filter, args.progress
+            feature_writer, aggregate_writer, filter, args.progress,
+            report_non_qualified=args.report_non_qualified_features,
         )
 
         # Count

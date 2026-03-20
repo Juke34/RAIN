@@ -178,8 +178,7 @@ Report Parameters
 //*************************************************
 include { AliNe as ALIGNMENT } from "./modules/aline.nf"
 include {normalize_gxf} from "./modules/agat.nf"
-include { extract_libtype; recreate_csv_with_abs_paths; collect_aline_csv; filter_drip_by_aggregation_mode; filter_drip_features_by_type
-        standardize_pluvio_aggregates; standardize_pluvio_features} from "./modules/bash.nf"
+include { extract_libtype; recreate_csv_with_abs_paths; collect_aline_csv; filter_drip_by_aggregation_mode; filter_drip_features_by_type} from "./modules/bash.nf"
 include {bamutil_clipoverlap} from './modules/bamutil.nf'
 include {fastp} from './modules/fastp.nf'
 include {fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from './modules/fastqc.nf'
@@ -756,13 +755,10 @@ workflow {
         if ( "reditools3" in edit_site_tool_list ){ 
                 reditools3(final_bam_for_editing, genome.collect())
                 pluviometer_reditools3(reditools3.out.tuple_sample_serial_table, clean_annotation.collect(), "reditools3")
-                // standardize the feature and aggregate output of pluviometer to be post process in a single way in down processes
-                standardize_pluvio_aggregates(pluviometer_reditools3.out.tuple_sample_aggregate)
-                standardize_pluvio_features(pluviometer_reditools3.out.tuple_sample_feature)
                 if(via_csv){
                     // drip - compute espn, espf, merge different sample in one, and output by type of mutation (AG, AC, etc..)
-                    drip_aggregates(standardize_pluvio_aggregates.out.standardized_tsv.collect(), "aggregates")
-                    drip_features(standardize_pluvio_features.out.standardized_tsv.collect(), "features")
+                    drip_aggregates(pluviometer_reditools3.out.tuple_sample_aggregate.collect(), "aggregates")
+                    drip_features(pluviometer_reditools3.out.tuple_sample_feature.collect(), "features")
                   
                     //christalize(drip_features.out.editing_ag, "AG")
 

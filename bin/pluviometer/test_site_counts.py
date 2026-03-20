@@ -96,8 +96,8 @@ class TestAggregatePositions(unittest.TestCase):
 class TestMultiCounterSiteCounts(unittest.TestCase):
     """Tests pour les compteurs de sites dans MultiCounter"""
 
-    def test_site_base_pairings_counts_sites_not_reads(self):
-        """Test que SiteBasePairingsObserved compte les SITES (pas les reads) avec chaque pairing"""
+    def test_site_base_pairings_counts_raw_reads(self):
+        """Test que edit_read_freqs compte les reads bruts (non filtrés)"""
         # Reproduit le cas du test minimal:
         # pos1: A ref, cov=10, [10,0,0,0] -> AA pairing passes (10>=5)
         # pos2: C ref, cov=12, [0,9,0,3]  -> CC passes (9>=5), CT filtered (3<5)
@@ -109,17 +109,10 @@ class TestMultiCounterSiteCounts(unittest.TestCase):
         counter.update(RNASiteVariantData("21", 1, 1, 1, 12, 37.0, np.array([0,9,0,3,0], dtype=np.int32), 0.0))  # C site
         counter.update(RNASiteVariantData("21", 3, 3, 1,  2, 37.0, np.array([0,0,0,2,0], dtype=np.int32), 0.0))  # T site, cov<5
 
-        # SiteBasePairingsObserved: 1 site AA, 1 site CC, 0 CT (filtré), 0 TT (cov<5)
-        self.assertEqual(counter.edit_site_freqs[0, 0], 1)   # AA: 1 site
-        self.assertEqual(counter.edit_site_freqs[0, 1], 0)   # AC: 0
-        self.assertEqual(counter.edit_site_freqs[1, 1], 1)   # CC: 1 site
-        self.assertEqual(counter.edit_site_freqs[1, 3], 0)   # CT: 0 (3 reads < edit_threshold)
-        self.assertEqual(counter.edit_site_freqs[3, 3], 0)   # TT: 0 (cov < cov_threshold)
-
-        # ReadBasePairings: compte les reads bruts (non filtrés)
+        # edit_read_freqs: compte les reads bruts (non filtrés)
         self.assertEqual(counter.edit_read_freqs[0, 0], 10)  # AA: 10 reads
         self.assertEqual(counter.edit_read_freqs[1, 1], 9)   # CC: 9 reads
-        self.assertEqual(counter.edit_read_freqs[1, 3], 3)   # CT: 3 reads (non filtrés dans ReadBasePairings)
+        self.assertEqual(counter.edit_read_freqs[1, 3], 3)   # CT: 3 reads (non filtrés)
         self.assertEqual(counter.edit_read_freqs[3, 3], 2)   # TT: 2 reads
 
     def test_observed_sites_count(self):
@@ -226,7 +219,7 @@ class TestMultiCounterSiteCounts(unittest.TestCase):
         site3 = RNASiteVariantData(
             seqid="chr1", position=30, reference=0,  # A, coverage 6 >= 5
             strand=1, coverage=6, mean_quality=30.0,
-            frequencies=np.array([5, 1, 0, 0, 0], dtype=np.int32),
+            frequencies=np.array([4, 2, 0, 0, 0], dtype=np.int32),
             score=0.0
         )
         counter2.update(site2)
@@ -265,6 +258,12 @@ class TestMultiCounterSiteCounts(unittest.TestCase):
         ]
         
         for ref, cov in sites:
+            # Use frequencies with 2 non-ref reads so edit_threshold=2 is met when cov >= 5
+            non_ref = 2 if cov >= 5 else 0
+            freqs = np.zeros(5, dtype=np.int32)
+            freqs[ref] = cov - non_ref
+            # Add a non-ref pairing at index (ref+1)%4
+            freqs[(ref + 1) % 4] = non_ref
             site = RNASiteVariantData(
                 seqid="chr1",
                 position=0,
@@ -272,7 +271,7 @@ class TestMultiCounterSiteCounts(unittest.TestCase):
                 strand=1,
                 coverage=cov,
                 mean_quality=30.0,
-                frequencies=np.array([1, 0, 0, 0, 0], dtype=np.int32),
+                frequencies=freqs,
                 score=0.0
             )
             counter.update(site)
@@ -404,7 +403,7 @@ class TestIntegrationSiteCounts(unittest.TestCase):
                 strand=1,
                 coverage=cov,
                 mean_quality=30.0,
-                frequencies=np.array([cov-1, 1, 0, 0, 0], dtype=np.int32),
+                frequencies=np.array([cov-2, 2, 0, 0, 0], dtype=np.int32),
                 score=0.0
             )
             counter.update(site)

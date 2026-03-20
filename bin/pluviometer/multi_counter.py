@@ -15,8 +15,6 @@ class MultiCounter:
         Row-columns corresponding to the same base (e.g. (0,0) -> (A,A)) represent reads where the base is unchanged
         """
         self.edit_read_freqs: NDArray[np.int64] = np.zeros((5, 5), dtype=np.int64)
-        self.edit_site_freqs: NDArray[np.int64] = np.zeros((5, 5), dtype=np.int64)
-        self.edit_filtered_read_freqs: NDArray[np.int64] = np.zeros((5, 5), dtype=np.int64)  # Reads filtered by cov + edit thresholds
         self.edit_qualified_site_freqs: NDArray[np.int64] = np.zeros((5, 5), dtype=np.int64)  # Non-ref sites passing cov + edit thresholds
         self.edit_qualified_read_freqs: NDArray[np.int64] = np.zeros((5, 5), dtype=np.int64)  # Non-ref reads passing cov + edit thresholds
 
@@ -35,23 +33,16 @@ class MultiCounter:
         self.edit_read_freqs[i, :] += variant_data.frequencies
 
         self.filter.apply(variant_data)
-        # edit_site_freqs counts the number of SITES where each pairing is found (not reads):
-        # add 1 for each pairing that passes the filter at this site
-        self.edit_site_freqs[i, :] += (self.filter.frequencies > 0).astype(np.int64)
-        # edit_filtered_read_freqs counts reads filtered by both cov_threshold and edit_threshold
-        self.edit_filtered_read_freqs[i, :] += self.filter.frequencies
+        # The edit_threshold is not applied to the self-pairing (X→X): coverage alone is sufficient.
+        if variant_data.coverage >= self.filter.cov_threshold:
+            self.filter.frequencies[i] = variant_data.frequencies[i]
 
-        # Qualified: non-reference pairings only (mask out self-pairing i→i)
-        non_ref_filtered = self.filter.frequencies.copy()
-        non_ref_filtered[i] = 0
-        self.edit_qualified_site_freqs[i, :] += (non_ref_filtered > 0).astype(np.int64)
-        self.edit_qualified_read_freqs[i, :] += non_ref_filtered
-
-        # Count sites and bases that are qualified: at least one NON-REFERENCE base
-        # must pass both cov_threshold and edit_threshold
-        if non_ref_filtered.any():
+            # A site qualifies if it passes the coverage threshold.
+            # Self-pairings are included unconditionally; non-ref pairings only if they also pass edit_threshold.
             self.filtered_sites_count += 1
             self.filtered_base_freqs[i] += 1
+            self.edit_qualified_site_freqs[i, :] += (self.filter.frequencies > 0).astype(np.int64)
+            self.edit_qualified_read_freqs[i, :] += self.filter.frequencies
 
         self.genome_base_freqs[i] += 1
 
@@ -62,8 +53,6 @@ class MultiCounter:
         Add to this counter the values of another.
         """
         self.edit_read_freqs[:] += other_counter.edit_read_freqs
-        self.edit_site_freqs[:] += other_counter.edit_site_freqs
-        self.edit_filtered_read_freqs[:] += other_counter.edit_filtered_read_freqs
         self.edit_qualified_site_freqs[:] += other_counter.edit_qualified_site_freqs
         self.edit_qualified_read_freqs[:] += other_counter.edit_qualified_read_freqs
         self.genome_base_freqs[:] += other_counter.genome_base_freqs

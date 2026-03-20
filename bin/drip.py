@@ -60,10 +60,10 @@ NA BEHAVIOR:
 
 INPUT FILE FORMAT:
     The input files must be TSV files with the following columns:
-    - GenomeBases: Frequencies of bases in the reference genome (order: A, C, G, T)
-    - SiteBasePairings: Number of sites with each genome-variant base pairing 
+    - ObservedBases: Frequencies of bases in the reference genome (order: A, C, G, T)
+    - SiteBasePairingsQualified: Number of sites with each genome-variant base pairing (qualified, filtered by cov + edit thresholds)
                         (order: AA, AC, AG, AT, CA, CC, CG, CT, GA, GC, GG, GT, TA, TC, TG, TT)
-    - ReadBasePairings: Frequencies of genome-variant base pairings in reads
+    - ReadBasePairingsQualified: Frequencies of genome-variant base pairings in reads (filtered by cov + edit thresholds)
                         (order: AA, AC, AG, AT, CA, CC, CG, CT, GA, GC, GG, GT, TA, TC, TG, TT)
 
 CALCULATED METRICS:
@@ -72,7 +72,7 @@ CALCULATED METRICS:
     For each combination XY (where X = genome base, Y = read base):
     
     1. XY_espf (edited_sites_proportion_feature) - Proportion of XY sites in the DNA feature:
-       Formula: XY_SiteBasePairings / X_GenomeBases
+       Formula: XY_SiteBasePairingsQualified / X_ObservedBases
        This represents the proportion of genomic X positions that show X-to-Y variation in the feature.
     
     2. XY_espr (edited_sites_proportion_reads) - Proportion of XY pairing in reads:
@@ -161,17 +161,17 @@ def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, includ
                   'GA', 'GC', 'GG', 'GT', 'TA', 'TC', 'TG', 'TT']
     bases = ['A', 'C', 'G', 'T']
     
-    # Parse GenomeBases (order: A, C, G, T)
+    # Parse ObservedBases (order: A, C, G, T)
     for i, base in enumerate(bases):
-        df[f'{base}_count'] = df['GenomeBases'].str.split(',').str[i].astype(int)
+        df[f'{base}_count'] = df['ObservedBases'].str.split(',').str[i].astype(int)
 
-    # Parse SiteBasePairings (all 16 combinations)
+    # Parse SiteBasePairingsQualified (all 16 combinations)
     for i, bp in enumerate(base_pairs):
-        df[f'{bp}_sites'] = df['SiteBasePairings'].str.split(',').str[i].astype(int)
+        df[f'{bp}_sites'] = df['SiteBasePairingsQualified'].str.split(',').str[i].astype(int)
     
-    # Parse ReadBasePairings (all 16 combinations)
+    # Parse ReadBasePairingsQualified (all 16 combinations)
     for i, bp in enumerate(base_pairs):
-        df[f'{bp}_reads'] = df['ReadBasePairings'].str.split(',').str[i].astype(int)
+        df[f'{bp}_reads'] = df['ReadBasePairingsQualified'].str.split(',').str[i].astype(int)
     
     # Calculate metrics for each base pair combination
     metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type', 'Ctype', 'Mode', 'Start', 'End', 'Strand']

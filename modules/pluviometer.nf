@@ -1,6 +1,6 @@
 process pluviometer {
     label "pluviometer"
-    publishDir("${params.outdir}/pluviometer/${tool_format}/raw", mode: "copy")
+    publishDir("${params.outdir}/pluviometer/${tool_format}/", mode: "copy")
     tag "${meta.uid}"
 
     input:
