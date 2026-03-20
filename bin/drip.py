@@ -40,6 +40,10 @@ ARGUMENTS:
                      Input file path, group name, sample name, and replicate ID
                      separated by colons. All four components are required.
     --with-file-id   Include file ID in column names (default: omit file ID)
+    --report-non-qualified-features
+                     Include rows where all metric values are NA (default: omit them).
+                     By default, rows where every sample has NA for the given base pair
+                     are skipped (not covered or not qualified in any sample).
     --min-cov N      Minimum read coverage threshold (default: 1). Positions with a
                      denominator (genome base count for espf, read count for espr)
                      strictly below this value are reported as NA instead of 0.
@@ -221,7 +225,7 @@ def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, includ
     del df
     return result
 
-def write_base_pair_file(merged, bp, metadata_cols, sample_info, output_prefix, include_file_id):
+def write_base_pair_file(merged, bp, metadata_cols, sample_info, output_prefix, include_file_id, report_non_qualified=False):
     """Worker function to write a single base pair combination file.
     
     This function is designed to be called in parallel for each base pair.
@@ -245,12 +249,14 @@ def write_base_pair_file(merged, bp, metadata_cols, sample_info, output_prefix, 
 
     output_file = f"{output_prefix}_{bp}.tsv"
     # Values are already rounded, just select, rename and write
-    merged[bp_cols].rename(columns=rename_dict).to_csv(
-        output_file, sep='\t', index=False, na_rep='NA'
-    )
+    out_df = merged[bp_cols].rename(columns=rename_dict)
+    if not report_non_qualified:
+        metric_cols = [c for c in out_df.columns if c not in metadata_cols]
+        out_df = out_df[out_df[metric_cols].notna().any(axis=1)]
+    out_df.to_csv(output_file, sep='\t', index=False, na_rep='NA')
     return output_file
 
-def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id=False, min_cov=1, threads=1, decimals=4):
+def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id=False, min_cov=1, threads=1, decimals=4, report_non_qualified=False):
     """Merge data from multiple samples and create output matrices - one file per base pair combination."""
 
     base_pairs = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT',
@@ -287,13 +293,13 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
     if threads > 1:
         print(f"Writing {len(base_pairs)} output files using {threads} threads...")
         with multiprocessing.Pool(processes=threads) as pool:
-            args = [(merged, bp, metadata_cols, sample_info, output_prefix, include_file_id) for bp in base_pairs]
+            args = [(merged, bp, metadata_cols, sample_info, output_prefix, include_file_id, report_non_qualified) for bp in base_pairs]
             output_files = pool.starmap(write_base_pair_file, args)
     else:
         print(f"Writing {len(base_pairs)} output files sequentially...")
         output_files = []
         for bp in base_pairs:
-            output_file = write_base_pair_file(merged, bp, metadata_cols, sample_info, output_prefix, include_file_id)
+            output_file = write_base_pair_file(merged, bp, metadata_cols, sample_info, output_prefix, include_file_id, report_non_qualified)
             output_files.append(output_file)
             gc.collect()
 
@@ -327,6 +333,7 @@ if __name__ == "__main__":
     min_cov = 1  # Default: NA when denominator is 0; treat 0 coverage as non-observed
     threads = 1  # Default: sequential writing
     decimals = 4  # Default: round to 4 decimal places
+    report_non_qualified = False  # Default: skip rows where all metric values are NA
 
     args_iter = iter(range(1, len(sys.argv)))
     for i in args_iter:
@@ -348,6 +355,11 @@ if __name__ == "__main__":
         # Check for --with-file-id flag
         if arg == '--with-file-id':
             include_file_id = True
+            continue
+
+        # Check for --report-non-qualified-features flag
+        if arg == '--report-non-qualified-features':
+            report_non_qualified = True
             continue
 
         # Check for --min-cov flag (supports both --min-cov=N and --min-cov N)
@@ -454,6 +466,6 @@ if __name__ == "__main__":
         sys.exit(1)
     
     # Process all samples
-    result = merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id, min_cov, threads, decimals)
+    result = merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id, min_cov, threads, decimals, report_non_qualified)
     
     print("\nAnalysis complete!")
