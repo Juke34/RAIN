@@ -195,7 +195,7 @@ class AggregateFileWriter(RainFileWriter):
         if aggregate_id not in (".", ""):
             return "feature"
         elif seq_id != ".":
-            return "chr"
+            return "sequence"
         else:
             return "global"
 
