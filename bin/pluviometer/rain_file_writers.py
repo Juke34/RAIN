@@ -193,11 +193,11 @@ class AggregateFileWriter(RainFileWriter):
     def _agg_type(seq_id: str, aggregate_id: str) -> str:
         """Compute the Type field for an aggregate row."""
         if aggregate_id not in (".", ""):
-            return "feature_agg"
+            return "feature"
         elif seq_id != ".":
-            return "chr_agg"
+            return "chr"
         else:
-            return "global_agg"
+            return "global"
 
     def write_metadata(
             self,

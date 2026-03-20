@@ -72,8 +72,8 @@ CALCULATED METRICS:
     For each combination XY (where X = genome base, Y = read base):
     
     1. XY_espf (edited_sites_proportion_feature) - Proportion of XY sites in the DNA feature:
-       Formula: XY_SiteBasePairingsQualified / X_ObservedBases
-       This represents the proportion of genomic X positions that show X-to-Y variation in the feature.
+       Formula: XY_SiteBasePairingsQualified / X_QualifiedBases
+       This represents the proportion of qualified X positions that show X-to-Y variation in the feature.
     
     2. XY_espr (edited_sites_proportion_reads) - Proportion of XY pairing in reads:
        Formula: XY_ReadBasePairings / (XA + XC + XG + XT)_ReadBasePairings
@@ -161,9 +161,9 @@ def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, includ
                   'GA', 'GC', 'GG', 'GT', 'TA', 'TC', 'TG', 'TT']
     bases = ['A', 'C', 'G', 'T']
     
-    # Parse ObservedBases (order: A, C, G, T)
+    # Parse QualifiedBases (order: A, C, G, T)
     for i, base in enumerate(bases):
-        df[f'{base}_count'] = df['ObservedBases'].str.split(',').str[i].astype(int)
+        df[f'{base}_count'] = df['QualifiedBases'].str.split(',').str[i].astype(int)
 
     # Parse SiteBasePairingsQualified (all 16 combinations)
     for i, bp in enumerate(base_pairs):
@@ -186,8 +186,8 @@ def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, includ
     for bp in base_pairs:
         genome_base = bp[0]  # First letter is the genome base
         
-        # Calculate espf: XY_sites / X_count
-        # NA when genome base count < min_cov (position not covered or not in feature)
+        # Calculate espf: XY_sites / X_count - edited sites proportion in feature
+        # NA when qualified base count < min_cov (position not covered or not qualified)
         espf_col = f'{col_prefix}::{bp}::espf'
         denom_espf = df[f'{genome_base}_count']
         mask_espf = denom_espf >= min_cov
@@ -196,7 +196,7 @@ def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, includ
         df[espf_col] = df[espf_col].round(decimals)
         result_cols.append(espf_col)
         
-        # Calculate espr: XY_reads / (XA + XC + XG + XT)
+        # Calculate espr: XY_reads / (XA + XC + XG + XT) - edited sites proportion in reads
         # NA when total read coverage < min_cov (position not sequenced)
         total_reads_col = f'{genome_base}_total_reads'
         if total_reads_col not in df.columns:

@@ -346,6 +346,19 @@ $$
 AG\ editing\ level = \sum_{i=0}^{n} \dfrac{AG_i}{AA_i + AC_i + AG_i + AT_i}
 $$
 
+
+## Drip
+
+### espf (edited sites proportion in feature):
+
+denom_espf = df[f'{genome_base}_count']          # X_QualifiedBases (e.g. C_count)
+df[espf_col] = df[f'{bp}_sites'] / denom_espf    # XY_SiteBasePairingsQualified / X_QualifiedBases
+
+### espr (edited sites proportion in reads):
+
+df[total_reads_col] = XA_reads + XC_reads + XG_reads + XT_reads   # all reads at X positions
+df[espr_col] = df[f'{bp}_reads'] / df[total_reads_col]             # XY_reads / sum(X*_reads)
+
 </details>
 
 
