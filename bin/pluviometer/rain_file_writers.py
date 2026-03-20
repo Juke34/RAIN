@@ -108,7 +108,8 @@ class FeatureFileWriter(RainFileWriter):
         "TotalSites",
         "ObservedSites",
         "QualifiedSites",
-        "GenomeBases",
+        "ObservedBases",
+        "QualifiedBases",
         "SiteBasePairings",
         "ReadBasePairings"
     ]
@@ -144,7 +145,8 @@ class FeatureFileWriter(RainFileWriter):
             str(counter.filtered_sites_count),  # QualifiedSites: sites passing coverage filter
             # Subindexing is used below because counter matrices are 5x5 because they contain pairings with N, which we don't print
             # Use the flat attribute of the NumPy arrays to flatten the matrix row-wise to attain the desired base pairing order in the output
-            ",".join(map(str, counter.genome_base_freqs[0:4].flat)),
+            ",".join(map(str, counter.genome_base_freqs[0:4].flat)),  # ObservedBases: base distribution for all observations
+            ",".join(map(str, counter.filtered_base_freqs[0:4].flat)),  # QualifiedBases: base distribution for qualified sites
             ",".join(map(str, counter.edit_site_freqs[0:4, 0:4].flat)),
             ",".join(map(str, counter.edit_read_freqs[0:4, 0:4].flat)),
         )
@@ -155,7 +157,7 @@ class FeatureFileWriter(RainFileWriter):
         This is faster than creating dummy counter objects with zero observations.
         """
         return self.write_metadata(record_id, feature) + self.write_data(
-            str(len(feature.location)), "0", "0", self.STR_ZERO_BASE_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS
+            str(len(feature.location)), "0", "0", self.STR_ZERO_BASE_FREQS, self.STR_ZERO_BASE_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS
         )
 
 
@@ -176,7 +178,8 @@ class AggregateFileWriter(RainFileWriter):
         "TotalSites",
         "ObservedSites",
         "QualifiedSites",
-        "GenomeBases",
+        "ObservedBases",
+        "QualifiedBases",
         "SiteBasePairings",
         "ReadBasePairings",
     ]
@@ -262,7 +265,8 @@ class AggregateFileWriter(RainFileWriter):
                 total_sites_str,  # TotalSites: calculated from aggregate positions
                 str(aggregate_counter.genome_base_freqs.sum()),  # ObservedSites
                 str(aggregate_counter.filtered_sites_count),  # QualifiedSites
-                ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),
+                ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),  # ObservedBases
+                ",".join(map(str, aggregate_counter.filtered_base_freqs[0:4].flat)),  # QualifiedBases
                 ",".join(map(str, aggregate_counter.edit_site_freqs[0:4, 0:4].flat)),
                 ",".join(map(str, aggregate_counter.edit_read_freqs[0:4, 0:4].flat)),
             )
@@ -298,7 +302,8 @@ class AggregateFileWriter(RainFileWriter):
             str(len(feature.location)) if hasattr(feature, 'location') and feature.location else ".",  # TotalSites
             str(counter.genome_base_freqs.sum()),  # ObservedSites
             str(counter.filtered_sites_count),  # QualifiedSites
-            ",".join(map(str, counter.genome_base_freqs[0:4].flat)),
+            ",".join(map(str, counter.genome_base_freqs[0:4].flat)),  # ObservedBases
+            ",".join(map(str, counter.filtered_base_freqs[0:4].flat)),  # QualifiedBases
             ",".join(map(str, counter.edit_site_freqs[0:4, 0:4].flat)),
             ",".join(map(str, counter.edit_read_freqs[0:4, 0:4].flat)),
         )
@@ -332,7 +337,7 @@ class AggregateFileWriter(RainFileWriter):
         )
         b += self.write_data(
             str(len(feature.location)) if hasattr(feature, 'location') and feature.location else ".",  # TotalSites
-            "0", "0", self.STR_ZERO_BASE_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS
+            "0", "0", self.STR_ZERO_BASE_FREQS, self.STR_ZERO_BASE_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS
         )
 
         return b
