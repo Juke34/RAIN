@@ -359,6 +359,8 @@ df[espf_col] = df[f'{bp}_sites'] / denom_espf    # XY_SiteBasePairingsQualified 
 df[total_reads_col] = XA_reads + XC_reads + XG_reads + XT_reads   # all reads at X positions
 df[espr_col] = df[f'{bp}_reads'] / df[total_reads_col]             # XY_reads / sum(X*_reads)
 
+Drip retains a line only if at least one metric value is neither NA nor zero (i.e., at least one edit has been detected somewhere). Lines containing only NA values, only 0.0 values, or a mix of both are removed by default.
+
 </details>
 
 

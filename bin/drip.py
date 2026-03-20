@@ -252,7 +252,7 @@ def write_base_pair_file(merged, bp, metadata_cols, sample_info, output_prefix, 
     out_df = merged[bp_cols].rename(columns=rename_dict)
     if not report_non_qualified:
         metric_cols = [c for c in out_df.columns if c not in metadata_cols]
-        out_df = out_df[out_df[metric_cols].notna().any(axis=1)]
+        out_df = out_df[(out_df[metric_cols].notna() & (out_df[metric_cols] != 0)).any(axis=1)]
     out_df.to_csv(output_file, sep='\t', index=False, na_rep='NA')
     return output_file
 
