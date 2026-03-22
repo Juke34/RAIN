@@ -186,7 +186,7 @@ include {gatk_markduplicates } from './modules/gatk.nf'
 include {jacusa2} from "./modules/jacusa2.nf"
 include {multiqc} from './modules/multiqc.nf'
 include {fasta_unzip} from "$baseDir/modules/pigz.nf"
-include {samtools_index; samtools_fasta_index; samtools_sort_bam as samtools_sort_bam_raw; samtools_sort_bam as samtools_sort_bam_merged; samtools_split_mapped_unmapped; samtools_merge_bams} from './modules/samtools.nf'
+include {samtools_index; samtools_fasta_index; samtools_sort_bam as samtools_sort_bam_raw; samtools_sort_bam as samtools_sort_bam_merged; samtools_split_mapped_unmapped; samtools_merge_bams; samtools_calmd} from './modules/samtools.nf'
 include {reditools2} from "./modules/reditools2.nf"
 include {reditools3} from "./modules/reditools3.nf"
 include {pluviometer as pluviometer_jacusa2; pluviometer as pluviometer_reditools2; pluviometer as pluviometer_reditools3; pluviometer as pluviometer_sapin} from "./modules/pluviometer.nf"
@@ -719,7 +719,7 @@ workflow {
 
         // Clip overlap
         if (params.clip_overlap) {
-            bamutil_clipoverlap(gatk_markduplicates.out.tuple_sample_dedupbam)
+            bamutil_clipoverlap(all_bam_sorted_dedup)
             all_bam_sorted_dedup_clip = bamutil_clipoverlap.out.tuple_sample_clipoverbam
             // stat on bam with overlap clipped
             if(params.fastqc){
@@ -727,11 +727,19 @@ workflow {
                 logs.concat(fastqc_clip.out).set{logs} // save log
             }
         } else {
-            all_bam_sorted_dedup_clip = gatk_markduplicates.out.tuple_sample_dedupbam
+            all_bam_sorted_dedup_clip = all_bam_sorted_dedup
         }
         
+        // Recompute MD tag 
+        if (params.clip_overlap || params.clean_duplicate) {
+            samtools_calmd(all_bam_sorted_dedup_clip, genome.collect())
+            all_bam_sorted_dedup_clip_md = samtools_calmd.out.tuple_sample_bam_with_md
+        } else {
+            all_bam_sorted_dedup_clip_md = all_bam_sorted_dedup_clip
+        }
+            
         // index mapped bam
-        samtools_index(all_bam_sorted_dedup_clip)
+        samtools_index(all_bam_sorted_dedup_clip_md)
         final_bam_for_editing = samtools_index.out.tuple_sample_bam_bamindex
 
 // -------------------------------------------------------
