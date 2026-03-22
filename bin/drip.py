@@ -151,166 +151,207 @@ AUTHORS:
     print(help_text)
     sys.exit(0)
 
-def parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, include_file_id=False, min_cov=1, decimals=4):
-    """Parse a single TSV file and extract editing metrics for all base pair combinations."""
-    # SeqID, Start, End, Strand contain mixed values ("." and actual numbers/strings)
-    # → force them to string to avoid DtypeWarning and preserve "." as-is
-    mixed_cols = {'SeqID': str, 'Start': str, 'End': str, 'Strand': str}
-    df = pd.read_csv(filepath, sep='\t', dtype=mixed_cols)
-    
-    # DO NOT filter out rows where ID is '.' 
-    # These are special aggregate rows (e.g., all_sites) that should be kept
-    # Base pair combinations in order
-    base_pairs = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT', 
-                  'GA', 'GC', 'GG', 'GT', 'TA', 'TC', 'TG', 'TT']
-    bases = ['A', 'C', 'G', 'T']
-    
-    # Parse QualifiedBases (order: A, C, G, T)
-    for i, base in enumerate(bases):
-        df[f'{base}_count'] = df['QualifiedBases'].str.split(',').str[i].astype(int)
+def _parse_comma_col_at(series, idx):
+    """Extract the integer at comma-based index `idx` from a packed string column."""
+    return series.str.split(',', expand=True)[idx].astype(np.int64)
 
-    # Parse SiteBasePairingsQualified (all 16 combinations)
-    for i, bp in enumerate(base_pairs):
-        df[f'{bp}_sites'] = df['SiteBasePairingsQualified'].str.split(',').str[i].astype(int)
-    
-    # Parse ReadBasePairingsQualified (all 16 combinations)
-    for i, bp in enumerate(base_pairs):
-        df[f'{bp}_reads'] = df['ReadBasePairingsQualified'].str.split(',').str[i].astype(int)
-    
-    # Calculate metrics for each base pair combination
-    metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type', 'Ctype', 'Mode', 'Start', 'End', 'Strand']
-    result_cols = metadata_cols.copy()
-    
-    # Create column prefix with group::sample::replicate::file_id or group::sample::replicate
-    if include_file_id:
-        col_prefix = f'{group_name}::{sample_name}::{replicate}::{file_id}'
-    else:
-        col_prefix = f'{group_name}::{sample_name}::{replicate}'
-    
-    for bp in base_pairs:
-        genome_base = bp[0]  # First letter is the genome base
-        
-        # Calculate espf: XY_sites / X_count - edited sites proportion in feature
-        # NA when qualified base count < min_cov (position not covered or not qualified)
-        espf_col = f'{col_prefix}::{bp}::espf'
-        denom_espf = df[f'{genome_base}_count']
-        mask_espf = denom_espf >= min_cov
-        df[espf_col] = np.where(mask_espf, df[f'{bp}_sites'] / denom_espf.where(mask_espf, 1), np.nan)
-        # Round immediately to reduce RAM footprint during merge
-        df[espf_col] = df[espf_col].round(decimals)
-        result_cols.append(espf_col)
-        
-        # Calculate espr: XY_reads / (XA + XC + XG + XT) - edited sites proportion in reads
-        # NA when total read coverage < min_cov (position not sequenced)
-        total_reads_col = f'{genome_base}_total_reads'
-        if total_reads_col not in df.columns:
-            df[total_reads_col] = (
-                df[f'{genome_base}A_reads'] + 
-                df[f'{genome_base}C_reads'] + 
-                df[f'{genome_base}G_reads'] + 
-                df[f'{genome_base}T_reads']
-            )
-        
-        espr_col = f'{col_prefix}::{bp}::espr'
-        denom_espr = df[total_reads_col]
-        mask_espr = denom_espr >= min_cov
-        df[espr_col] = np.where(mask_espr, df[f'{bp}_reads'] / denom_espr.where(mask_espr, 1), np.nan)
-        # Round immediately to reduce RAM footprint during merge
-        df[espr_col] = df[espr_col].round(decimals)
-        result_cols.append(espr_col)
-    
-    # Select only needed columns — list indexing creates a new DataFrame,
-    # so we can free the large intermediate df immediately.
-    result = df[result_cols]
+
+def parse_tsv_file_for_bp(filepath, bp, group_name, sample_name, replicate, file_id,
+                          include_file_id=False, min_cov=1, decimals=4):
+    """Parse one TSV file and compute espf/espr for a single base pair `bp` only.
+
+    Loads only the three packed data columns + metadata (via usecols) and discards
+    them immediately after extracting the two needed integer vectors.  Returns a
+    slim DataFrame with 11 metadata columns + 2 float metric columns.
+    Peak RAM per call ≈ raw CSV in memory + a few integer Series.
+    """
+    ALL_BPS = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT',
+               'GA', 'GC', 'GG', 'GT', 'TA', 'TC', 'TG', 'TT']
+    BASES = ['A', 'C', 'G', 'T']
+
+    genome_base = bp[0]
+    bp_idx    = ALL_BPS.index(bp)
+    gb_idx    = BASES.index(genome_base)  # 0–3
+    gb_offset = gb_idx * 4               # first XA/XC/XG/XT index in 16-value vector
+
+    metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type',
+                     'Ctype', 'Mode', 'Start', 'End', 'Strand']
+    needed_cols  = metadata_cols + ['QualifiedBases',
+                                    'SiteBasePairingsQualified',
+                                    'ReadBasePairingsQualified']
+    mixed_dtypes = {'SeqID': str, 'Start': str, 'End': str, 'Strand': str}
+
+    df = pd.read_csv(filepath, sep='\t', dtype=mixed_dtypes, usecols=needed_cols)
+
+    # espf numerator / denominator
+    bp_sites = _parse_comma_col_at(df['SiteBasePairingsQualified'], bp_idx)
+    x_count  = _parse_comma_col_at(df['QualifiedBases'], gb_idx)
+
+    # espr: expand ReadBasePairingsQualified once, pick 5 values, discard the rest
+    reads_split = df['ReadBasePairingsQualified'].str.split(',', expand=True)
+    bp_reads    = reads_split[bp_idx].astype(np.int64)
+    total_reads = (reads_split[gb_offset    ].astype(np.int64)
+                 + reads_split[gb_offset + 1].astype(np.int64)
+                 + reads_split[gb_offset + 2].astype(np.int64)
+                 + reads_split[gb_offset + 3].astype(np.int64))
+    del reads_split
+
+    # Keep only metadata columns; drop the three packed columns now
+    result = df[metadata_cols].copy()
     del df
+
+    col_prefix = (f'{group_name}::{sample_name}::{replicate}::{file_id}'
+                  if include_file_id
+                  else f'{group_name}::{sample_name}::{replicate}')
+
+    mask_f = x_count >= min_cov
+    result[f'{col_prefix}::espf'] = np.where(
+        mask_f, bp_sites / x_count.where(mask_f, 1), np.nan
+    )
+    result[f'{col_prefix}::espf'] = result[f'{col_prefix}::espf'].round(decimals)
+
+    mask_r = total_reads >= min_cov
+    result[f'{col_prefix}::espr'] = np.where(
+        mask_r, bp_reads / total_reads.where(mask_r, 1), np.nan
+    )
+    result[f'{col_prefix}::espr'] = result[f'{col_prefix}::espr'].round(decimals)
+
     return result
 
-def write_base_pair_file(merged, bp, metadata_cols, sample_info, output_prefix, include_file_id, report_non_qualified=False):
-    """Worker function to write a single base pair combination file.
-    
-    This function is designed to be called in parallel for each base pair.
-    Note: Values are already rounded in parse_tsv_file() to reduce RAM usage.
-    """
-    bp_cols = metadata_cols.copy()
-    rename_dict = {}
-    for _, group_name, sample_name, replicate, file_id in sample_info:
-        if include_file_id:
-            col_prefix = f'{group_name}::{sample_name}::{replicate}::{file_id}'
-        else:
-            col_prefix = f'{group_name}::{sample_name}::{replicate}'
-        espf_col = f'{col_prefix}::{bp}::espf'
-        espr_col = f'{col_prefix}::{bp}::espr'
-        if espf_col in merged.columns:
-            bp_cols.append(espf_col)
-            rename_dict[espf_col] = f'{col_prefix}::espf'
-        if espr_col in merged.columns:
-            bp_cols.append(espr_col)
-            rename_dict[espr_col] = f'{col_prefix}::espr'
 
-    output_file = f"{output_prefix}_{bp}.tsv"
-    # Values are already rounded, just select, rename and write
-    out_df = merged[bp_cols].rename(columns=rename_dict)
+def _compute_bp_from_df(df, bp, bp_idx, gb_idx, gb_offset, col_prefix, min_cov, decimals):
+    """Compute espf/espr for one BP from an already-loaded DataFrame.
+
+    Returns a slim DataFrame (11 metadata cols + 2 metric cols).
+    `df` must already contain the pre-parsed columns:
+      SiteBasePairingsQualified, QualifiedBases, ReadBasePairingsQualified
+    as well as the 11 metadata columns.
+    """
+    metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type',
+                     'Ctype', 'Mode', 'Start', 'End', 'Strand']
+
+    bp_sites = _parse_comma_col_at(df['SiteBasePairingsQualified'], bp_idx)
+    x_count  = _parse_comma_col_at(df['QualifiedBases'], gb_idx)
+
+    reads_split = df['ReadBasePairingsQualified'].str.split(',', expand=True)
+    bp_reads    = reads_split[bp_idx].astype(np.int64)
+    total_reads = (reads_split[gb_offset    ].astype(np.int64)
+                 + reads_split[gb_offset + 1].astype(np.int64)
+                 + reads_split[gb_offset + 2].astype(np.int64)
+                 + reads_split[gb_offset + 3].astype(np.int64))
+    del reads_split
+
+    result = df[metadata_cols].copy()
+
+    mask_f = x_count >= min_cov
+    result[f'{col_prefix}::espf'] = np.where(
+        mask_f, bp_sites / x_count.where(mask_f, 1), np.nan
+    ).round(decimals)
+
+    mask_r = total_reads >= min_cov
+    result[f'{col_prefix}::espr'] = np.where(
+        mask_r, bp_reads / total_reads.where(mask_r, 1), np.nan
+    ).round(decimals)
+
+    return result
+
+
+def _write_one_bp(bp, accumulated, output_prefix, metadata_cols, report_non_qualified):
+    """Sort, filter and write the accumulated DataFrame for one BP."""
+    merged = accumulated.sort_values(['SeqID', 'ParentIDs', 'Mode'])
+
     if not report_non_qualified:
-        metric_cols = [c for c in out_df.columns if c not in metadata_cols]
-        out_df = out_df[(out_df[metric_cols].notna() & (out_df[metric_cols] != 0)).any(axis=1)]
-    out_df.to_csv(output_file, sep='\t', index=False, na_rep='NA')
+        metric_cols = [c for c in merged.columns if c not in metadata_cols]
+        merged = merged[
+            (merged[metric_cols].notna() & (merged[metric_cols] != 0)).any(axis=1)
+        ]
+
+    output_file = f'{output_prefix}_{bp}.tsv'
+    merged.to_csv(output_file, sep='\t', index=False, na_rep='NA')
+    n_rows = len(merged)
+    del merged
+    gc.collect()
+    print(f'  {output_file}  ({n_rows} rows)')
     return output_file
 
-def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id=False, min_cov=1, threads=1, decimals=4, report_non_qualified=False):
-    """Merge data from multiple samples and create output matrices - one file per base pair combination."""
+def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id=False,
+                  min_cov=1, threads=1, decimals=4, report_non_qualified=False):
+    """Produce one output file per base pair combination.
 
-    base_pairs = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT',
-                  'GA', 'GC', 'GG', 'GT', 'TA', 'TC', 'TG', 'TT']
-    metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type', 'Ctype', 'Mode', 'Start', 'End', 'Strand']
+    Memory strategy: each input file is read exactly once.  All 16 BP
+    accumulators are updated in a single pass over the inputs, so peak RAM is:
+        one raw input file  +  16 × (11 + 2·N cols) × nrows
+    vs the old approach which was one huge (11 + 32·N cols) DF picklied 16×.
+    After accumulation the 16 output files are written (optionally in parallel)
+    and each accumulator is freed immediately.
+    """
+    ALL_BPS = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT',
+               'GA', 'GC', 'GG', 'GT', 'TA', 'TC', 'TG', 'TT']
+    BASES = ['A', 'C', 'G', 'T']
+    metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type',
+                     'Ctype', 'Mode', 'Start', 'End', 'Strand']
+    needed_cols = metadata_cols + ['QualifiedBases',
+                                   'SiteBasePairingsQualified',
+                                   'ReadBasePairingsQualified']
+    mixed_dtypes = {'SeqID': str, 'Start': str, 'End': str, 'Strand': str}
 
-    # Collect sample metadata without loading data yet
-    sample_info = []  # (filepath, group_name, sample_name, replicate, file_id)
+    # Pre-compute per-BP constants once
+    bp_meta = []
+    for bp in ALL_BPS:
+        gb_idx    = BASES.index(bp[0])
+        bp_meta.append((ALL_BPS.index(bp), gb_idx, gb_idx * 4))
+
+    sample_info = []
     for filepath, (group_name, sample_name, replicate) in file_group_sample_replicate_dict.items():
         filename_stem = Path(filepath).stem
         file_id = '_'.join(filename_stem.split('_')[:-1])
-        sample_info.append((filepath, group_name, sample_name, replicate, file_id))
+        col_prefix = (f'{group_name}::{sample_name}::{replicate}::{file_id}'
+                      if include_file_id
+                      else f'{group_name}::{sample_name}::{replicate}')
+        sample_info.append((filepath, col_prefix))
 
-    # Incremental merge: load one sample at a time and free it immediately after merging.
-    # Peak RAM = merged_so_far + one_new_sample  (instead of N samples simultaneously).
-    merged = None
-    for filepath, group_name, sample_name, replicate, file_id in sample_info:
-        print(f"Processing {group_name}::{sample_name} (replicate {replicate}) from {filepath} (file_id: {file_id})...")
-        data = parse_tsv_file(filepath, group_name, sample_name, replicate, file_id, include_file_id, min_cov, decimals)
-        if merged is None:
-            merged = data
-        else:
-            merged = merged.merge(data, on=metadata_cols, how='outer')
-            del data
-            gc.collect()
+    # One pass: read each file once, accumulate into 16 BP DataFrames
+    accumulators = [None] * len(ALL_BPS)
 
-    # Do NOT fill NA with 0: NA means not covered / below min_cov,
-    # which is distinct from 0 (covered but no editing observed).
-    merged = merged.sort_values(['SeqID', 'ParentIDs', 'Mode'])
+    for filepath, col_prefix in sample_info:
+        print(f'Reading {filepath}...')
+        df = pd.read_csv(filepath, sep='\t', dtype=mixed_dtypes, usecols=needed_cols)
 
-    # Write one file per base pair combination.
-    # Parallelize if threads > 1: each base pair file is written by a separate worker.
-    # Note: values are already rounded in parse_tsv_file() to reduce RAM during merge.
+        for i, bp in enumerate(ALL_BPS):
+            bp_idx, gb_idx, gb_offset = bp_meta[i]
+            bp_data = _compute_bp_from_df(
+                df, bp, bp_idx, gb_idx, gb_offset, col_prefix, min_cov, decimals
+            )
+            if accumulators[i] is None:
+                accumulators[i] = bp_data
+            else:
+                accumulators[i] = accumulators[i].merge(bp_data, on=metadata_cols, how='outer')
+                del bp_data
+
+        del df
+        gc.collect()
+
+    print(f'\nWriting {len(ALL_BPS)} output files...')
+    write_args = [
+        (ALL_BPS[i], accumulators[i], output_prefix, metadata_cols, report_non_qualified)
+        for i in range(len(ALL_BPS))
+    ]
+
     if threads > 1:
-        print(f"Writing {len(base_pairs)} output files using {threads} threads...")
-        with multiprocessing.Pool(processes=threads) as pool:
-            args = [(merged, bp, metadata_cols, sample_info, output_prefix, include_file_id, report_non_qualified) for bp in base_pairs]
-            output_files = pool.starmap(write_base_pair_file, args)
+        n_workers = min(threads, len(ALL_BPS))
+        with multiprocessing.Pool(processes=n_workers) as pool:
+            output_files = pool.starmap(_write_one_bp, write_args)
     else:
-        print(f"Writing {len(base_pairs)} output files sequentially...")
-        output_files = []
-        for bp in base_pairs:
-            output_file = write_base_pair_file(merged, bp, metadata_cols, sample_info, output_prefix, include_file_id, report_non_qualified)
-            output_files.append(output_file)
-            gc.collect()
+        output_files = [_write_one_bp(*a) for a in write_args]
 
-    print(f"\nOutput files created:")
-    for output_file in output_files:
-        print(f"  - {output_file}")
-    print(f"  - {len(merged)} aggregates per file")
-    print(f"  - {len(sample_info)} samples: {', '.join(si[2] for si in sample_info)}")
-    print(f"  - {len(base_pairs)} files (one per base pair combination)")
+    # Free accumulators after writing
+    for i in range(len(ALL_BPS)):
+        accumulators[i] = None
+    gc.collect()
 
-    return merged
+    print(f'\nDone.')
+    print(f'  {len(sample_info)} samples processed.')
+    print(f'  {len(ALL_BPS)} output files written.')
 
 # Example usage
 if __name__ == "__main__":
