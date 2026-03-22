@@ -32,6 +32,33 @@ process reditools3 {
         base_name = bam.BaseName
 
         """
-        python -m reditools analyze ${bam} --reference ${genome} --strand ${strand_orientation} --output-file ${base_name}.site_edits_reditools3.txt --threads ${task.cpus} --verbose &> ${base_name}.reditools3.log
+        # Trap and catch up to avoid reditools not stopping properly
+        # [ERROR] (<class 'ValueError'>) MD tag not present
+        # [ERROR] Killing job
+        
+        trap "kill 0" EXIT
+
+        LOG=${base_name}.reditools3.log
+        OUT=${base_name}.site_edits_reditools3.txt
+
+        python -m reditools analyze ${bam} \
+            --reference ${genome} \
+            --strand ${strand_orientation} \
+            --output-file \$OUT \
+            --threads ${task.cpus} \
+            --verbose \
+            &> \$LOG  || exit 1
+
+        # 🔥 Détection erreurs silencieuses REDItools
+        if grep -qE "\\[ERROR\\]|Killing job" \$LOG; then
+            echo "REDItools a échoué pour $bam"
+            exit 1
+        fi
+
+        # 🔍 Vérification output non vide (optionnel mais recommandé)
+        if [ ! -s "\$OUT" ]; then
+            echo "Output vide → erreur probable"
+            exit 1
+        fi
         """
 }
