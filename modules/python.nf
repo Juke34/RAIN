@@ -59,7 +59,7 @@ process drip {
         
         def args_str = args.join(" ")
 
-        """
+        """ 
         drip.py --threads ${task.cpus} --min-samples-pct ${samples_pct} --min-group-pct ${group_pct} --output drip_${prefix} ${args_str} 
         """
 }
