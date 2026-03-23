@@ -34,6 +34,8 @@ process drip {
     input:
         val(meta_tsv)
         val prefix
+        val samples_pct
+        val group_pct
 
     output:
         path("*_AG.tsv"), emit: editing_ag
@@ -57,6 +59,6 @@ process drip {
 
         """
          
-        drip.py --threads ${task.cpus} --output drip_${prefix} ${args_str} 
+        drip.py --threads ${task.cpus} --min-samples-pct ${samples_pct} --min-group-pct ${group_pct} --output drip_${prefix} ${args_str} 
         """
 }
