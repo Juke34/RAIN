@@ -38,8 +38,10 @@ process drip {
         val group_pct
 
     output:
-        path("*_AG.tsv"), emit: editing_ag
-        path("*.tsv"), emit: editing_all
+        path("*_espr/*_AG.tsv"), emit: editing_ag_espr
+        path("*_espr/*.tsv"), emit: editing_all_espr
+        path("*_espf/*_AG.tsv"), emit: editing_ag_espf
+        path("*_espf/*.tsv"), emit: editing_all_espf
 
     script:
         def list = meta_tsv
@@ -58,7 +60,6 @@ process drip {
         def args_str = args.join(" ")
 
         """
-         
         drip.py --threads ${task.cpus} --min-samples-pct ${samples_pct} --min-group-pct ${group_pct} --output drip_${prefix} ${args_str} 
         """
 }

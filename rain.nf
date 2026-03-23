@@ -24,9 +24,10 @@ edit_site_tools = ["reditools2", "reditools3", "jacusa2", "sapin"]
 params.edit_site_tool = "reditools3"
 params.edit_threshold = 1 // Minimal number of edited reads to count a site as edited
 params.cov_threshold = 10 // Minimal coverage to consider a site for editing detection
+// When both flags below are provided → OR: keep if either condition is satisfied independently.
 params.min_samples_pct = 50 // Minimal percentage of samples in which a site must be edited to be kept in the analysis (drip filtering)
 params.min_group_pct = 75 // Minimal percentage of groups in which a site must be edited to be kept in the analysis (drip filtering)
-params.aggregation_mode = "all"
+params.aggregation_mode = "all" // used by pluviometer
 params.skip_hyper_editing = false // Skip hyper-editing detection
 // Report params
 params.multiqc_config = "$baseDir/config/multiqc_config.yaml" // MultiQC config file
@@ -770,7 +771,7 @@ workflow {
                     drip_aggregates(pluviometer_reditools3.out.tuple_sample_aggregate.collect(), "aggregates", params.min_samples_pct, params.min_group_pct)
                     drip_features(pluviometer_reditools3.out.tuple_sample_feature.collect(), "features", params.min_samples_pct, params.min_group_pct)
                   
-                    //christalize(drip_features.out.editing_ag, "AG")
+                    //barometer (drip_features.out.editing_ag_espr, "AG")
 
                 }
         }

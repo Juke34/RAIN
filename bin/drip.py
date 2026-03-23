@@ -28,7 +28,7 @@ DRIP - RNA Editing Analysis Tool
 
 DESCRIPTION:
     This script analyzes RNA editing from standardized pluviometer files. It calculates
-    two key metrics for all 16 genome-variant base pair combinations across multiple 
+    two key metrics for all 12 genome-variant base pair combinations across multiple 
     samples and combines them into a unified matrix format.
 
 USAGE:
@@ -39,7 +39,7 @@ ARGUMENTS:
     --output OUTPUT_PREFIX, -o OUTPUT_PREFIX
                      Prefix for the output directories (required).
                      Creates OUTPUT_PREFIX_espf/ and OUTPUT_PREFIX_espr/,
-                     each containing 16 TSV files (AA.tsv, AC.tsv, …, TT.tsv).
+                     each containing 12 TSV files (AA.tsv, AC.tsv, …, TT.tsv).
     FILEn:GROUPn:SAMPLEn:REPn  
                      Input file path, group name, sample name, and replicate ID
                      separated by colons. All four components are required.
@@ -64,7 +64,7 @@ ARGUMENTS:
                      strictly below this value are reported as NA instead of 0.
     --threads N, -t N
                      Number of parallel threads to use for writing output files
-                     (default: 1, sequential). Max useful value is 16 (one per base pair).
+                     (default: 1, sequential). Max useful value is 12 (one per base pair).
     --decimals N, -d N
                      Number of decimal places for output values (default: 4).
                      Reduces file size by rounding espf/espr metrics.
@@ -86,7 +86,7 @@ INPUT FILE FORMAT:
                         (order: AA, AC, AG, AT, CA, CC, CG, CT, GA, GC, GG, GT, TA, TC, TG, TT)
 
 CALCULATED METRICS:
-    For each line, the script calculates metrics for all 16 base pair combinations:
+    For each line, the script calculates metrics for all 12 base pair combinations:
     
     For each combination XY (where X = genome base, Y = read base):
     
@@ -98,10 +98,10 @@ CALCULATED METRICS:
        Formula: XY_ReadBasePairings / (XA + XC + XG + XT)_ReadBasePairings
        This represents the proportion of X-position reads that show Y in the reads.
     
-    All 16 combinations are calculated: AA, AC, AG, AT, CA, CC, CG, CT, GA, GC, GG, GT, TA, TC, TG, TT
+    All 12 combinations are calculated: AC, AG, AT, CA, CG, CT, GA, GC, GT, TA, TC, TG
 
 OUTPUT FORMAT:
-    Two output directories, one per metric type, each containing 16 TSV files
+    Two output directories, one per metric type, each containing 12 TSV files
     (one per base pair combination).  Row filtering (--min-samples-pct, etc.)
     is applied independently per metric: a row may appear in the espf output
     but not in the espr output and vice versa.
@@ -110,7 +110,7 @@ OUTPUT FORMAT:
     - OUTPUT_PREFIX_espf/   espf metric (proportion of edited sites in feature)
     - OUTPUT_PREFIX_espr/   espr metric (proportion of edited reads)
 
-    Files in each directory (16 per metric):
+    Files in each directory (12 per metric):
     - AA.tsv, AC.tsv, AG.tsv, AT.tsv
     - CA.tsv, CC.tsv, CG.tsv, CT.tsv
     - GA.tsv, GC.tsv, GG.tsv, GT.tsv
@@ -191,7 +191,7 @@ def parse_tsv_file_for_bp(filepath, bp, group_name, sample_name, replicate, file
     genome_base = bp[0]
     bp_idx    = ALL_BPS.index(bp)
     gb_idx    = BASES.index(genome_base)  # 0–3
-    gb_offset = gb_idx * 4               # first XA/XC/XG/XT index in 16-value vector
+    gb_offset = gb_idx * 4               # first XA/XC/XG/XT index in 12-value vector
 
     metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type',
                      'Ctype', 'Mode', 'Start', 'End', 'Strand']
@@ -320,7 +320,7 @@ def _split_file_by_seqid(filepath, temp_dir, sample_idx, needed_cols, mixed_dtyp
 def _process_seqid_chunk(seqid, chunk_paths_by_sample, col_prefixes, temp_out_dir,
                          metadata_cols, bp_meta, all_bps, min_cov, decimals,
                          report_non_qualified, min_samples_pct=None, min_group_pct=None):
-    """Compute 16 BPs for one SeqID and write 16 per-BP chunk files.
+    """Compute 12 BPs for one SeqID and write 12 per-BP chunk files.
 
     Each element in chunk_paths_by_sample is a path (str) or None when that
     sample has no rows for this SeqID — the outer join fills NaN for it.
@@ -408,7 +408,7 @@ def _process_seqid_chunk(seqid, chunk_paths_by_sample, col_prefixes, temp_out_di
                 acc_metric = acc_metric[keep]
 
             if len(acc_metric) > 0:
-                out_path = os.path.join(temp_out_dir, metric, f'{bp}_{safe}.tsv')
+                out_path = os.path.join(temp_out_dir, metric, f'{metric}_{bp}_{safe}.tsv')
                 acc_metric.to_csv(out_path, sep='\t', index=False, na_rep='NA')
                 out_paths[(bp, metric)] = out_path
 
@@ -426,15 +426,15 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
     Memory strategy — three phases:
       Phase 1 (Split):   each input file is read once and split by SeqID into
                          temporary chunk files.  Peak RAM = one full input file.
-      Phase 2 (Process): each SeqID is processed independently (all 16 BPs,
+      Phase 2 (Process): each SeqID is processed independently (all 12 BPs,
                          across all samples) and results written to temp chunks.
                          Peak RAM per worker ≈ num_samples × one-SeqID slice.
                          Workers run in parallel when threads > 1.
       Phase 3 (Concat):  per-SeqID temp chunks are appended in order to the
-                         16 final output files.  Peak RAM = one chunk at a time.
+                         12 final output files.  Peak RAM = one chunk at a time.
     """
-    ALL_BPS = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT',
-               'GA', 'GC', 'GG', 'GT', 'TA', 'TC', 'TG', 'TT']
+    ALL_BPS = ['AC', 'AG', 'AT', 'CA', 'CG', 'CT',
+               'GA', 'GC', 'GT', 'TA', 'TC', 'TG']
     BASES = ['A', 'C', 'G', 'T']
     metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type',
                      'Ctype', 'Mode', 'Start', 'End', 'Strand']
@@ -509,7 +509,7 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
         results.sort(key=lambda r: seqid_order[r[0]])
 
         # ── Phase 3: concatenate per-SeqID chunks into final output files ─────────
-        # Two output directories (one per metric type), each with 16 BP files.
+        # Two output directories (one per metric type), each with 12 BP files.
         print('Phase 3/3 — Writing final output files...')
         output_files = []
         for metric in ('espf', 'espr'):
@@ -524,7 +524,7 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
                 if not bp_chunks:
                     continue
 
-                out_path = os.path.join(out_dir, f'{bp}.tsv')
+                out_path = os.path.join(out_dir, f'{metric}_{bp}.tsv')
                 with open(out_path, 'w') as fout:
                     with open(bp_chunks[0]) as first:
                         shutil.copyfileobj(first, fout)   # includes header
