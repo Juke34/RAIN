@@ -524,7 +524,7 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
                 if not bp_chunks:
                     continue
 
-                out_path = os.path.join(out_dir, f'{metric}_{bp}.tsv')
+                out_path = os.path.join(out_dir, f'{output_prefix}_{metric}_{bp}.tsv')
                 with open(out_path, 'w') as fout:
                     with open(bp_chunks[0]) as first:
                         shutil.copyfileobj(first, fout)   # includes header
