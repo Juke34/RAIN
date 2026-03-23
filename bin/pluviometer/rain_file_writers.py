@@ -212,13 +212,30 @@ class AggregateFileWriter(RainFileWriter):
             strand: str = "."
     ) -> int:
         """Write metadata fields of an aggregate"""
+        
+        # Determine the Type field before modifying aggregate_id
+        original_aggregate_id = aggregate_id
+        agg_type = self._agg_type(seq_id, original_aggregate_id)
+        
+        # Create a dynamic ID for aggregates without explicit IDs (sequence/global level)
+        if aggregate_id == ".":
+            # Build ID as Type_Ptype_Ctype_Mode, omitting Ptype and/or Ctype if they are "."
+            id_parts = [agg_type]  # "sequence" or "global"
+            if parent_type != ".":
+                id_parts.append(parent_type)
+            if aggregate_type != ".":
+                id_parts.append(aggregate_type)
+            id_parts.append(aggregation_mode)
+            
+            aggregate_id = "_".join(id_parts)
+        
         return super().write_metadata(
             seq_id,
             parent_ids,
             aggregate_id,
             "aggregate",
             parent_type,
-            self._agg_type(seq_id, aggregate_id),
+            agg_type,  # Use the pre-computed Type instead of recalculating it
             aggregate_type,
             aggregation_mode,
             start,
