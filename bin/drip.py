@@ -37,8 +37,9 @@ USAGE:
 
 ARGUMENTS:
     --output OUTPUT_PREFIX, -o OUTPUT_PREFIX
-                     Prefix for the output TSV files (required).
-                     Will create OUTPUT_PREFIX_AA.tsv, OUTPUT_PREFIX_AC.tsv, etc.
+                     Prefix for the output directories (required).
+                     Creates OUTPUT_PREFIX_espf/ and OUTPUT_PREFIX_espr/,
+                     each containing 16 TSV files (AA.tsv, AC.tsv, …, TT.tsv).
     FILEn:GROUPn:SAMPLEn:REPn  
                      Input file path, group name, sample name, and replicate ID
                      separated by colons. All four components are required.
@@ -100,31 +101,38 @@ CALCULATED METRICS:
     All 16 combinations are calculated: AA, AC, AG, AT, CA, CC, CG, CT, GA, GC, GG, GT, TA, TC, TG, TT
 
 OUTPUT FORMAT:
-    Multiple TSV files (one per base pair combination) with aggregates as rows:
-    - OUTPUT_PREFIX_AA.tsv
-    - OUTPUT_PREFIX_AC.tsv
-    - OUTPUT_PREFIX_AG.tsv
-    - ... (16 files total, one for each XY combination)
-    
+    Two output directories, one per metric type, each containing 16 TSV files
+    (one per base pair combination).  Row filtering (--min-samples-pct, etc.)
+    is applied independently per metric: a row may appear in the espf output
+    but not in the espr output and vice versa.
+
+    Directories created:
+    - OUTPUT_PREFIX_espf/   espf metric (proportion of edited sites in feature)
+    - OUTPUT_PREFIX_espr/   espr metric (proportion of edited reads)
+
+    Files in each directory (16 per metric):
+    - AA.tsv, AC.tsv, AG.tsv, AT.tsv
+    - CA.tsv, CC.tsv, CG.tsv, CT.tsv
+    - GA.tsv, GC.tsv, GG.tsv, GT.tsv
+    - TA.tsv, TC.tsv, TG.tsv, TT.tsv
+
     Each file contains:
-    
-    Metadata columns (first 6 columns):
+
+    Metadata columns:
     - SeqID: Sequence/chromosome identifier
     - ParentIDs: Parent feature identifiers
     - ID: Unique identifier
+    - Mtype: Type of feature
     - Ptype: Type of Parent feature
-    - Type: Type of feature
+    - Type: Aggregate type (feature / sequence / global)
     - Ctype: Type of Children feature
-    - Mode: Mode of aggregation used if any (e.g., 'all_sites', 'edited_sites', 'edited_reads')
-    
-    Metric columns (for each sample):
-    - GROUP::SAMPLE::REPLICATE::espf: XY sites proportion in feature (XY sites / X bases)
-    - GROUP::SAMPLE::REPLICATE::espr: XY sites proportion in reads (XY reads / all X reads)
-    
-    Or with --with-file-id option:
-    - GROUP::SAMPLE::REPLICATE::FILE_ID::espf
-    - GROUP::SAMPLE::REPLICATE::FILE_ID::espr
-    
+    - Mode: Mode of aggregation (e.g., 'all_sites', 'edited_sites', 'edited_reads')
+    - Start, End, Strand
+
+    Metric columns (one per sample):
+    - GROUP::SAMPLE::REPLICATE::<metric>            (without --with-file-id)
+    - GROUP::SAMPLE::REPLICATE::FILE_ID::<metric>  (with --with-file-id)
+
     Where:
     - GROUP: Group/condition name provided in arguments
     - SAMPLE: Sample name provided in arguments
@@ -138,24 +146,21 @@ EXAMPLE:
         sample2_aggregates.tsv:control:sample2:rep2 \\
         sample3_aggregates.tsv:treated:sample1:rep1
 
-    This creates 16 files (one per base pair combination):
-    - results_AA.tsv, results_AC.tsv, results_AG.tsv, results_AT.tsv,
-    - results_CA.tsv, results_CC.tsv, results_CG.tsv, results_CT.tsv,
-    - results_GA.tsv, results_GC.tsv, results_GG.tsv, results_GT.tsv,
-    - results_TA.tsv, results_TC.tsv, results_TG.tsv, results_TT.tsv
-    
-    Each file has columns:
-    SeqID, ParentIDs, ID, Ptype, Ctype, Mode,
-    control::sample1::rep1::rain_sample1::espf, control::sample1::rep1::rain_sample1::espr,
-    control::sample2::rep2::rain_sample2::espf, control::sample2::rep2::rain_sample2::espr,
-    treated::sample1::rep1::rain_sample3::espf, treated::sample1::rep1::rain_sample3::espr
-    
-    Column headers use format: GROUP::SAMPLE::REPLICATE::FILE_ID::METRIC
+    Creates two directories:
+    - results_espf/  with  AA.tsv, AC.tsv, …, TT.tsv  (espf metric)
+    - results_espr/  with  AA.tsv, AC.tsv, …, TT.tsv  (espr metric)
+
+    Example columns in results_espf/AG.tsv:
+    SeqID, ParentIDs, ID, Mtype, Ptype, Type, Ctype, Mode, Start, End, Strand,
+    control::sample1::rep1::espf,
+    control::sample2::rep2::espf,
+    treated::sample1::rep1::espf
+
+    Column headers use format: GROUP::SAMPLE::REPLICATE::METRIC
     - GROUP: The group/condition name provided
     - SAMPLE: The sample name provided
     - REPLICATE: Replicate ID (rep1, rep2, etc.)
-    - FILE_ID: Input filename without extension and last '_' suffix
-    - METRIC: espf or espr
+    - METRIC: espf or espr (same for all columns in a given file)
     - Separator '::' allows easy splitting to retrieve all components
 
 AUTHORS:
@@ -350,40 +355,63 @@ def _process_seqid_chunk(seqid, chunk_paths_by_sample, col_prefixes, temp_out_di
         if acc is None:
             continue
         acc = acc.sort_values(['ParentIDs', 'Mode'])
-        if not report_non_qualified:
-            metric_cols = [c for c in acc.columns if c not in metadata_cols]
-            if metric_cols:
-                has_value = acc[metric_cols].notna() & (acc[metric_cols] != 0)
-                # One boolean column per sample (pair espf/espr → any of the two)
-                sample_prefixes = sorted(set(c.rsplit('::', 1)[0] for c in metric_cols))
-                sample_hv = pd.DataFrame(
-                    {p: has_value[
-                            [c for c in metric_cols if c.rsplit('::', 1)[0] == p]
-                        ].any(axis=1)
-                     for p in sample_prefixes},
-                    index=acc.index,
-                )
+
+        # Process espf and espr independently: separate output files, separate
+        # row-filtering.  A row that passes the espf threshold but not the espr
+        # threshold (or vice versa) will appear in only one of the two outputs.
+        for metric in ('espf', 'espr'):
+            # Each column for this metric type maps 1:1 to one sample.
+            metric_cols = [c for c in acc.columns
+                           if c not in metadata_cols and c.endswith(f'::{metric}')]
+            if not metric_cols:
+                continue
+            acc_metric = acc[metadata_cols + metric_cols]
+
+            if not report_non_qualified:
+                # Step 1 — cell-level: "has a value" = non-NA AND non-zero.
+                #   NA means the position was not covered (or below min_cov, or
+                #   absent from this sample via the outer join).
+                #   0.0 means covered but no editing event observed.
+                has_value = acc_metric[metric_cols].notna() & (acc_metric[metric_cols] != 0)
+
+                # Step 2 — row-level decision, applied independently per metric
+                #   type (espf rows and espr rows are filtered separately):
+                #
+                #   Default: keep if ANY sample has a value for this metric.
+                #
+                #   --min-samples-pct X: keep if proportion of samples with a
+                #     value >= X/100 (across all samples globally).
+                #     Example: 3/5 samples with espf > 0 → 60%; X=50 → keep.
+                #
+                #   --min-group-pct Y: keep if at least one group has >= Y/100
+                #     of its samples with a value.  Groups are identified by
+                #     the first :: component of the column name (GROUP name).
+                #     Example: "ctrl" group has 2/3 espf values → 67%; Y=60 → keep.
+                #
+                #   Both flags → OR: keep if either condition is satisfied.
                 if min_samples_pct is None and min_group_pct is None:
-                    keep = sample_hv.any(axis=1)
+                    keep = has_value.any(axis=1)
                 else:
-                    keep = pd.Series(False, index=acc.index)
+                    keep = pd.Series(False, index=acc_metric.index)
                     if min_samples_pct is not None:
-                        n = len(sample_prefixes)
-                        keep |= sample_hv.sum(axis=1) / n >= min_samples_pct / 100.0
+                        n = len(metric_cols)
+                        keep |= has_value.sum(axis=1) / n >= min_samples_pct / 100.0
                     if min_group_pct is not None:
                         groups: dict[str, list[str]] = {}
-                        for p in sample_prefixes:
-                            groups.setdefault(p.split('::')[0], []).append(p)
+                        for c in metric_cols:
+                            groups.setdefault(c.split('::')[0], []).append(c)
                         for g_cols in groups.values():
                             keep |= (
-                                sample_hv[g_cols].sum(axis=1) / len(g_cols)
+                                has_value[g_cols].sum(axis=1) / len(g_cols)
                                 >= min_group_pct / 100.0
                             )
-                acc = acc[keep]
-        if len(acc) > 0:
-            out_path = os.path.join(temp_out_dir, f'{bp}_{safe}.tsv')
-            acc.to_csv(out_path, sep='\t', index=False, na_rep='NA')
-            out_paths[bp] = out_path
+                acc_metric = acc_metric[keep]
+
+            if len(acc_metric) > 0:
+                out_path = os.path.join(temp_out_dir, metric, f'{bp}_{safe}.tsv')
+                acc_metric.to_csv(out_path, sep='\t', index=False, na_rep='NA')
+                out_paths[(bp, metric)] = out_path
+
         bp_accumulators[i] = None
 
     gc.collect()
@@ -431,6 +459,8 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
         temp_out_dir   = os.path.join(temp_dir, 'out')
         os.makedirs(temp_split_dir)
         os.makedirs(temp_out_dir)
+        os.makedirs(os.path.join(temp_out_dir, 'espf'))
+        os.makedirs(os.path.join(temp_out_dir, 'espr'))
 
         # ── Phase 1: split each file by SeqID ─────────────────────────────────
         print('Phase 1/3 — Splitting input files by SeqID...')
@@ -478,31 +508,36 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
         seqid_order = {s: i for i, s in enumerate(all_seqids)}
         results.sort(key=lambda r: seqid_order[r[0]])
 
-        # ── Phase 3: concatenate per-SeqID chunks into 16 final files ──────────
+        # ── Phase 3: concatenate per-SeqID chunks into final output files ─────────
+        # Two output directories (one per metric type), each with 16 BP files.
         print('Phase 3/3 — Writing final output files...')
         output_files = []
-        for bp in ALL_BPS:
-            bp_chunks = [
-                out_paths[bp]
-                for _, out_paths in results
-                if bp in out_paths
-            ]
-            if not bp_chunks:
-                continue
+        for metric in ('espf', 'espr'):
+            out_dir = f'{output_prefix}_{metric}'
+            os.makedirs(out_dir, exist_ok=True)
+            for bp in ALL_BPS:
+                bp_chunks = [
+                    out_paths[(bp, metric)]
+                    for _, out_paths in results
+                    if (bp, metric) in out_paths
+                ]
+                if not bp_chunks:
+                    continue
 
-            out_path = f'{output_prefix}_{bp}.tsv'
-            with open(out_path, 'w') as fout:
-                with open(bp_chunks[0]) as first:
-                    shutil.copyfileobj(first, fout)   # includes header
-                for chunk_path in bp_chunks[1:]:
-                    with open(chunk_path) as f:
-                        next(f)  # skip header
-                        shutil.copyfileobj(f, fout)
-            output_files.append(out_path)
-            print(f'  {out_path}')
+                out_path = os.path.join(out_dir, f'{bp}.tsv')
+                with open(out_path, 'w') as fout:
+                    with open(bp_chunks[0]) as first:
+                        shutil.copyfileobj(first, fout)   # includes header
+                    for chunk_path in bp_chunks[1:]:
+                        with open(chunk_path) as f:
+                            next(f)  # skip header
+                            shutil.copyfileobj(f, fout)
+                output_files.append(out_path)
+                print(f'  {out_path}')
 
     print(f'\nDone. {len(sample_info)} samples, {len(all_seqids)} SeqIDs, '
-          f'{len(output_files)} output files written.')
+          f'{len(output_files)} output files written '
+          f'in {output_prefix}_espf/ and {output_prefix}_espr/.')
 
 
 # Example usage
