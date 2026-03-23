@@ -29,7 +29,7 @@ process restore_original_sequences {
 process drip {
     label "pluviometer"
     tag "drip"
-    publishDir("${params.outdir}/drip/${prefix}", mode:"copy", pattern: "*")
+    publishDir("${params.outdir}/drip/${prefix}", mode:"copy", pattern: "*/*")
     
     input:
         val(meta_tsv)
