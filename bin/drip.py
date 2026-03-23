@@ -17,6 +17,9 @@ import numpy as np
 import multiprocessing
 import gc
 from pathlib import Path
+import shutil
+import tempfile
+import re
 
 def print_help():
     """Print help message explaining the script usage and calculations."""
@@ -219,30 +222,46 @@ def parse_tsv_file_for_bp(filepath, bp, group_name, sample_name, replicate, file
     return result
 
 
-def _process_one_bp(bp, sample_info, output_prefix, metadata_cols,
-                    include_file_id, min_cov, decimals, report_non_qualified):
-    """Load, merge, filter and write the output file for one base-pair combination.
+def _compute_bp_from_df(df, bp, bp_idx, gb_idx, gb_offset, col_prefix, min_cov, decimals):
+    """Compute espf/espr for one BP from an already-loaded DataFrame.
 
-    Memory model: at most one raw input file + the cumulative merged result
-    (11 + 2·N columns) live in RAM simultaneously.  The previous approach kept
-    11 + 32·N columns in RAM across all base pairs before writing any file.
-    In parallel mode each worker runs this function independently — no shared
-    DataFrame is pickled across processes.
+    Returns a slim DataFrame (11 metadata cols + 2 metric cols).
+    `df` must already contain the pre-parsed columns:
+      SiteBasePairingsQualified, QualifiedBases, ReadBasePairingsQualified
+    as well as the 11 metadata columns.
     """
-    merged = None
-    for filepath, group_name, sample_name, replicate, file_id in sample_info:
-        data = parse_tsv_file_for_bp(
-            filepath, bp, group_name, sample_name, replicate,
-            file_id, include_file_id, min_cov, decimals
-        )
-        if merged is None:
-            merged = data
-        else:
-            merged = merged.merge(data, on=metadata_cols, how='outer')
-            del data
-            gc.collect()
+    metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type',
+                     'Ctype', 'Mode', 'Start', 'End', 'Strand']
 
-    merged = merged.sort_values(['SeqID', 'ParentIDs', 'Mode'])
+    bp_sites = _parse_comma_col_at(df['SiteBasePairingsQualified'], bp_idx)
+    x_count  = _parse_comma_col_at(df['QualifiedBases'], gb_idx)
+
+    reads_split = df['ReadBasePairingsQualified'].str.split(',', expand=True)
+    bp_reads    = reads_split[bp_idx].astype(np.int64)
+    total_reads = (reads_split[gb_offset    ].astype(np.int64)
+                 + reads_split[gb_offset + 1].astype(np.int64)
+                 + reads_split[gb_offset + 2].astype(np.int64)
+                 + reads_split[gb_offset + 3].astype(np.int64))
+    del reads_split
+
+    result = df[metadata_cols].copy()
+
+    mask_f = x_count >= min_cov
+    result[f'{col_prefix}::espf'] = np.where(
+        mask_f, bp_sites / x_count.where(mask_f, 1), np.nan
+    ).round(decimals)
+
+    mask_r = total_reads >= min_cov
+    result[f'{col_prefix}::espr'] = np.where(
+        mask_r, bp_reads / total_reads.where(mask_r, 1), np.nan
+    ).round(decimals)
+
+    return result
+
+
+def _write_one_bp(bp, accumulated, output_prefix, metadata_cols, report_non_qualified):
+    """Sort, filter and write the accumulated DataFrame for one BP."""
+    merged = accumulated.sort_values(['SeqID', 'ParentIDs', 'Mode'])
 
     if not report_non_qualified:
         metric_cols = [c for c in merged.columns if c not in metadata_cols]
@@ -258,45 +277,196 @@ def _process_one_bp(bp, sample_info, output_prefix, metadata_cols,
     print(f'  {output_file}  ({n_rows} rows)')
     return output_file
 
+def _safe_seqid(seqid: str) -> str:
+    """Convert a SeqID to a filesystem-safe directory name."""
+    return re.sub(r'[^A-Za-z0-9._-]', '_', seqid) or 'EMPTY'
+
+
+def _split_file_by_seqid(filepath, temp_dir, sample_idx, needed_cols, mixed_dtypes):
+    """Read one TSV file once and write per-SeqID chunk files.
+
+    Returns a dict {seqid: chunk_file_path}.  Each chunk file contains the
+    same columns as the original (needed_cols), filtered to one SeqID.
+    """
+    df = pd.read_csv(filepath, sep='\t', dtype=mixed_dtypes, usecols=needed_cols)
+    seqid_to_path = {}
+    for seqid, group in df.groupby('SeqID', sort=False):
+        chunk_dir = os.path.join(temp_dir, _safe_seqid(seqid))
+        os.makedirs(chunk_dir, exist_ok=True)
+        path = os.path.join(chunk_dir, f'{sample_idx}.tsv')
+        group.to_csv(path, sep='\t', index=False)
+        seqid_to_path[seqid] = path
+    del df
+    gc.collect()
+    return seqid_to_path
+
+
+def _process_seqid_chunk(seqid, chunk_paths_by_sample, col_prefixes, temp_out_dir,
+                         metadata_cols, bp_meta, all_bps, min_cov, decimals,
+                         report_non_qualified):
+    """Compute 16 BPs for one SeqID and write 16 per-BP chunk files.
+
+    Each element in chunk_paths_by_sample is a path (str) or None when that
+    sample has no rows for this SeqID — the outer join fills NaN for it.
+    Returns (seqid, {bp: out_path, ...}) — only BPs with at least one row.
+    """
+    mixed_dtypes_local = {'SeqID': str, 'Start': str, 'End': str, 'Strand': str}
+    bp_accumulators = [None] * len(all_bps)
+
+    for col_prefix, chunk_path in zip(col_prefixes, chunk_paths_by_sample):
+        if chunk_path is None:
+            continue
+        df = pd.read_csv(chunk_path, sep='\t', dtype=mixed_dtypes_local)
+        for i in range(len(all_bps)):
+            bp_idx, gb_idx, gb_offset = bp_meta[i]
+            bp_data = _compute_bp_from_df(
+                df, all_bps[i], bp_idx, gb_idx, gb_offset, col_prefix, min_cov, decimals
+            )
+            if bp_accumulators[i] is None:
+                bp_accumulators[i] = bp_data
+            else:
+                bp_accumulators[i] = bp_accumulators[i].merge(
+                    bp_data, on=metadata_cols, how='outer'
+                )
+                del bp_data
+        del df
+        gc.collect()
+
+    out_paths = {}
+    safe = _safe_seqid(seqid)
+    for i, bp in enumerate(all_bps):
+        acc = bp_accumulators[i]
+        if acc is None:
+            continue
+        acc = acc.sort_values(['ParentIDs', 'Mode'])
+        if not report_non_qualified:
+            metric_cols = [c for c in acc.columns if c not in metadata_cols]
+            if metric_cols:
+                acc = acc[
+                    (acc[metric_cols].notna() & (acc[metric_cols] != 0)).any(axis=1)
+                ]
+        if len(acc) > 0:
+            out_path = os.path.join(temp_out_dir, f'{bp}_{safe}.tsv')
+            acc.to_csv(out_path, sep='\t', index=False, na_rep='NA')
+            out_paths[bp] = out_path
+        bp_accumulators[i] = None
+
+    gc.collect()
+    return seqid, out_paths
+
+
 def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id=False,
                   min_cov=1, threads=1, decimals=4, report_non_qualified=False):
     """Produce one output file per base pair combination.
 
-    Memory strategy: process one base pair at a time.  Each iteration reads
-    every input file once but keeps only 11 + 2·N columns in RAM (vs the old
-    11 + 32·N columns for all base pairs at once).  In parallel mode each
-    worker owns its data entirely — nothing large is pickled between processes.
-    Trade-off: input files are read 16 times instead of once.
+    Memory strategy — three phases:
+      Phase 1 (Split):   each input file is read once and split by SeqID into
+                         temporary chunk files.  Peak RAM = one full input file.
+      Phase 2 (Process): each SeqID is processed independently (all 16 BPs,
+                         across all samples) and results written to temp chunks.
+                         Peak RAM per worker ≈ num_samples × one-SeqID slice.
+                         Workers run in parallel when threads > 1.
+      Phase 3 (Concat):  per-SeqID temp chunks are appended in order to the
+                         16 final output files.  Peak RAM = one chunk at a time.
     """
-    base_pairs = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT',
-                  'GA', 'GC', 'GG', 'GT', 'TA', 'TC', 'TG', 'TT']
+    ALL_BPS = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT',
+               'GA', 'GC', 'GG', 'GT', 'TA', 'TC', 'TG', 'TT']
+    BASES = ['A', 'C', 'G', 'T']
     metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type',
                      'Ctype', 'Mode', 'Start', 'End', 'Strand']
+    needed_cols = metadata_cols + ['QualifiedBases',
+                                   'SiteBasePairingsQualified',
+                                   'ReadBasePairingsQualified']
+    mixed_dtypes = {'SeqID': str, 'Start': str, 'End': str, 'Strand': str}
+    bp_meta = [(ALL_BPS.index(bp), BASES.index(bp[0]), BASES.index(bp[0]) * 4)
+               for bp in ALL_BPS]
 
     sample_info = []
     for filepath, (group_name, sample_name, replicate) in file_group_sample_replicate_dict.items():
         filename_stem = Path(filepath).stem
         file_id = '_'.join(filename_stem.split('_')[:-1])
-        sample_info.append((filepath, group_name, sample_name, replicate, file_id))
+        col_prefix = (f'{group_name}::{sample_name}::{replicate}::{file_id}'
+                      if include_file_id
+                      else f'{group_name}::{sample_name}::{replicate}')
+        sample_info.append((filepath, col_prefix))
 
-    worker_args = [
-        (bp, sample_info, output_prefix, metadata_cols,
-         include_file_id, min_cov, decimals, report_non_qualified)
-        for bp in base_pairs
-    ]
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_split_dir = os.path.join(temp_dir, 'split')
+        temp_out_dir   = os.path.join(temp_dir, 'out')
+        os.makedirs(temp_split_dir)
+        os.makedirs(temp_out_dir)
 
-    if threads > 1:
-        n_workers = min(threads, len(base_pairs))
-        print(f'Processing {len(base_pairs)} base pairs with {n_workers} parallel workers...')
-        with multiprocessing.Pool(processes=n_workers) as pool:
-            output_files = pool.starmap(_process_one_bp, worker_args)
-    else:
-        print(f'Processing {len(base_pairs)} base pairs sequentially...')
-        output_files = [_process_one_bp(*a) for a in worker_args]
+        # ── Phase 1: split each file by SeqID ─────────────────────────────────
+        print('Phase 1/3 — Splitting input files by SeqID...')
+        all_seqids_seen: dict[str, int] = {}  # seqid → first-appearance order
+        sample_seqid_paths: list[dict[str, str]] = []
 
-    print(f'\nDone.')
-    print(f'  {len(sample_info)} samples: {chr(44)+chr(32).join(si[2] for si in sample_info)}')
-    print(f'  {len(base_pairs)} output files written.')
+        for sample_idx, (filepath, _col_prefix) in enumerate(sample_info):
+            print(f'  [{sample_idx + 1}/{len(sample_info)}] {filepath}')
+            seqid_to_path = _split_file_by_seqid(
+                filepath, temp_split_dir, sample_idx, needed_cols, mixed_dtypes
+            )
+            sample_seqid_paths.append(seqid_to_path)
+            for seqid in seqid_to_path:
+                if seqid not in all_seqids_seen:
+                    all_seqids_seen[seqid] = len(all_seqids_seen)
+
+        # Sort SeqIDs: real sequences first (lexicographic), "." (globals) last
+        all_seqids = sorted(
+            all_seqids_seen.keys(),
+            key=lambda s: (s == '.', s)
+        )
+        print(f'  Found {len(all_seqids)} unique SeqIDs across all samples.')
+
+        # ── Phase 2: process each SeqID (parallel if threads > 1) ─────────────
+        col_prefixes = [col_prefix for _, col_prefix in sample_info]
+        worker_args = [
+            (seqid,
+             [ssp.get(seqid) for ssp in sample_seqid_paths],
+             col_prefixes, temp_out_dir,
+             metadata_cols, bp_meta, ALL_BPS, min_cov, decimals, report_non_qualified)
+            for seqid in all_seqids
+        ]
+
+        mode = f'{min(threads, len(all_seqids))} workers' if threads > 1 else 'sequential'
+        print(f'Phase 2/3 — Processing {len(all_seqids)} SeqID chunks ({mode})...')
+
+        if threads > 1:
+            with multiprocessing.Pool(processes=min(threads, len(all_seqids))) as pool:
+                results = pool.starmap(_process_seqid_chunk, worker_args)
+        else:
+            results = [_process_seqid_chunk(*a) for a in worker_args]
+
+        # Restore stable SeqID order (parallel mode may return out of order)
+        seqid_order = {s: i for i, s in enumerate(all_seqids)}
+        results.sort(key=lambda r: seqid_order[r[0]])
+
+        # ── Phase 3: concatenate per-SeqID chunks into 16 final files ──────────
+        print('Phase 3/3 — Writing final output files...')
+        output_files = []
+        for bp in ALL_BPS:
+            bp_chunks = [
+                out_paths[bp]
+                for _, out_paths in results
+                if bp in out_paths
+            ]
+            if not bp_chunks:
+                continue
+
+            out_path = f'{output_prefix}_{bp}.tsv'
+            with open(out_path, 'w') as fout:
+                with open(bp_chunks[0]) as first:
+                    shutil.copyfileobj(first, fout)   # includes header
+                for chunk_path in bp_chunks[1:]:
+                    with open(chunk_path) as f:
+                        next(f)  # skip header
+                        shutil.copyfileobj(f, fout)
+            output_files.append(out_path)
+            print(f'  {out_path}')
+
+    print(f'\nDone. {len(sample_info)} samples, {len(all_seqids)} SeqIDs, '
+          f'{len(output_files)} output files written.')
+
 
 # Example usage
 if __name__ == "__main__":
