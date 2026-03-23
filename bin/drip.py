@@ -219,46 +219,30 @@ def parse_tsv_file_for_bp(filepath, bp, group_name, sample_name, replicate, file
     return result
 
 
-def _compute_bp_from_df(df, bp, bp_idx, gb_idx, gb_offset, col_prefix, min_cov, decimals):
-    """Compute espf/espr for one BP from an already-loaded DataFrame.
+def _process_one_bp(bp, sample_info, output_prefix, metadata_cols,
+                    include_file_id, min_cov, decimals, report_non_qualified):
+    """Load, merge, filter and write the output file for one base-pair combination.
 
-    Returns a slim DataFrame (11 metadata cols + 2 metric cols).
-    `df` must already contain the pre-parsed columns:
-      SiteBasePairingsQualified, QualifiedBases, ReadBasePairingsQualified
-    as well as the 11 metadata columns.
+    Memory model: at most one raw input file + the cumulative merged result
+    (11 + 2·N columns) live in RAM simultaneously.  The previous approach kept
+    11 + 32·N columns in RAM across all base pairs before writing any file.
+    In parallel mode each worker runs this function independently — no shared
+    DataFrame is pickled across processes.
     """
-    metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type',
-                     'Ctype', 'Mode', 'Start', 'End', 'Strand']
+    merged = None
+    for filepath, group_name, sample_name, replicate, file_id in sample_info:
+        data = parse_tsv_file_for_bp(
+            filepath, bp, group_name, sample_name, replicate,
+            file_id, include_file_id, min_cov, decimals
+        )
+        if merged is None:
+            merged = data
+        else:
+            merged = merged.merge(data, on=metadata_cols, how='outer')
+            del data
+            gc.collect()
 
-    bp_sites = _parse_comma_col_at(df['SiteBasePairingsQualified'], bp_idx)
-    x_count  = _parse_comma_col_at(df['QualifiedBases'], gb_idx)
-
-    reads_split = df['ReadBasePairingsQualified'].str.split(',', expand=True)
-    bp_reads    = reads_split[bp_idx].astype(np.int64)
-    total_reads = (reads_split[gb_offset    ].astype(np.int64)
-                 + reads_split[gb_offset + 1].astype(np.int64)
-                 + reads_split[gb_offset + 2].astype(np.int64)
-                 + reads_split[gb_offset + 3].astype(np.int64))
-    del reads_split
-
-    result = df[metadata_cols].copy()
-
-    mask_f = x_count >= min_cov
-    result[f'{col_prefix}::espf'] = np.where(
-        mask_f, bp_sites / x_count.where(mask_f, 1), np.nan
-    ).round(decimals)
-
-    mask_r = total_reads >= min_cov
-    result[f'{col_prefix}::espr'] = np.where(
-        mask_r, bp_reads / total_reads.where(mask_r, 1), np.nan
-    ).round(decimals)
-
-    return result
-
-
-def _write_one_bp(bp, accumulated, output_prefix, metadata_cols, report_non_qualified):
-    """Sort, filter and write the accumulated DataFrame for one BP."""
-    merged = accumulated.sort_values(['SeqID', 'ParentIDs', 'Mode'])
+    merged = merged.sort_values(['SeqID', 'ParentIDs', 'Mode'])
 
     if not report_non_qualified:
         metric_cols = [c for c in merged.columns if c not in metadata_cols]
@@ -278,80 +262,41 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
                   min_cov=1, threads=1, decimals=4, report_non_qualified=False):
     """Produce one output file per base pair combination.
 
-    Memory strategy: each input file is read exactly once.  All 16 BP
-    accumulators are updated in a single pass over the inputs, so peak RAM is:
-        one raw input file  +  16 × (11 + 2·N cols) × nrows
-    vs the old approach which was one huge (11 + 32·N cols) DF picklied 16×.
-    After accumulation the 16 output files are written (optionally in parallel)
-    and each accumulator is freed immediately.
+    Memory strategy: process one base pair at a time.  Each iteration reads
+    every input file once but keeps only 11 + 2·N columns in RAM (vs the old
+    11 + 32·N columns for all base pairs at once).  In parallel mode each
+    worker owns its data entirely — nothing large is pickled between processes.
+    Trade-off: input files are read 16 times instead of once.
     """
-    ALL_BPS = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT',
-               'GA', 'GC', 'GG', 'GT', 'TA', 'TC', 'TG', 'TT']
-    BASES = ['A', 'C', 'G', 'T']
+    base_pairs = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT',
+                  'GA', 'GC', 'GG', 'GT', 'TA', 'TC', 'TG', 'TT']
     metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type',
                      'Ctype', 'Mode', 'Start', 'End', 'Strand']
-    needed_cols = metadata_cols + ['QualifiedBases',
-                                   'SiteBasePairingsQualified',
-                                   'ReadBasePairingsQualified']
-    mixed_dtypes = {'SeqID': str, 'Start': str, 'End': str, 'Strand': str}
-
-    # Pre-compute per-BP constants once
-    bp_meta = []
-    for bp in ALL_BPS:
-        gb_idx    = BASES.index(bp[0])
-        bp_meta.append((ALL_BPS.index(bp), gb_idx, gb_idx * 4))
 
     sample_info = []
     for filepath, (group_name, sample_name, replicate) in file_group_sample_replicate_dict.items():
         filename_stem = Path(filepath).stem
         file_id = '_'.join(filename_stem.split('_')[:-1])
-        col_prefix = (f'{group_name}::{sample_name}::{replicate}::{file_id}'
-                      if include_file_id
-                      else f'{group_name}::{sample_name}::{replicate}')
-        sample_info.append((filepath, col_prefix))
+        sample_info.append((filepath, group_name, sample_name, replicate, file_id))
 
-    # One pass: read each file once, accumulate into 16 BP DataFrames
-    accumulators = [None] * len(ALL_BPS)
-
-    for filepath, col_prefix in sample_info:
-        print(f'Reading {filepath}...')
-        df = pd.read_csv(filepath, sep='\t', dtype=mixed_dtypes, usecols=needed_cols)
-
-        for i, bp in enumerate(ALL_BPS):
-            bp_idx, gb_idx, gb_offset = bp_meta[i]
-            bp_data = _compute_bp_from_df(
-                df, bp, bp_idx, gb_idx, gb_offset, col_prefix, min_cov, decimals
-            )
-            if accumulators[i] is None:
-                accumulators[i] = bp_data
-            else:
-                accumulators[i] = accumulators[i].merge(bp_data, on=metadata_cols, how='outer')
-                del bp_data
-
-        del df
-        gc.collect()
-
-    print(f'\nWriting {len(ALL_BPS)} output files...')
-    write_args = [
-        (ALL_BPS[i], accumulators[i], output_prefix, metadata_cols, report_non_qualified)
-        for i in range(len(ALL_BPS))
+    worker_args = [
+        (bp, sample_info, output_prefix, metadata_cols,
+         include_file_id, min_cov, decimals, report_non_qualified)
+        for bp in base_pairs
     ]
 
     if threads > 1:
-        n_workers = min(threads, len(ALL_BPS))
+        n_workers = min(threads, len(base_pairs))
+        print(f'Processing {len(base_pairs)} base pairs with {n_workers} parallel workers...')
         with multiprocessing.Pool(processes=n_workers) as pool:
-            output_files = pool.starmap(_write_one_bp, write_args)
+            output_files = pool.starmap(_process_one_bp, worker_args)
     else:
-        output_files = [_write_one_bp(*a) for a in write_args]
-
-    # Free accumulators after writing
-    for i in range(len(ALL_BPS)):
-        accumulators[i] = None
-    gc.collect()
+        print(f'Processing {len(base_pairs)} base pairs sequentially...')
+        output_files = [_process_one_bp(*a) for a in worker_args]
 
     print(f'\nDone.')
-    print(f'  {len(sample_info)} samples processed.')
-    print(f'  {len(ALL_BPS)} output files written.')
+    print(f'  {len(sample_info)} samples: {chr(44)+chr(32).join(si[2] for si in sample_info)}')
+    print(f'  {len(base_pairs)} output files written.')
 
 # Example usage
 if __name__ == "__main__":
