@@ -47,6 +47,17 @@ ARGUMENTS:
                      Include rows where all metric values are NA (default: omit them).
                      By default, rows where every sample has NA for the given base pair
                      are skipped (not covered or not qualified in any sample).
+    --min-samples-pct X
+                     Keep a row only if at least X% of all samples have a qualified value
+                     (non-NA, non-zero) for the base pair.  A sample "has a value" when
+                     at least one of its espf/espr metrics is non-NA and non-zero.
+                     Applied as an OR with --min-group-pct when both are provided.
+                     Ignored when --report-non-qualified-features is set.
+    --min-group-pct Y
+                     Keep a row only if at least one group has at least Y% of its
+                     samples with a qualified value.  Applied as an OR with
+                     --min-samples-pct when both are provided.
+                     Ignored when --report-non-qualified-features is set.
     --min-cov N      Minimum read coverage threshold (default: 1). Positions with a
                      denominator (genome base count for espf, read count for espr)
                      strictly below this value are reported as NA instead of 0.
@@ -303,7 +314,7 @@ def _split_file_by_seqid(filepath, temp_dir, sample_idx, needed_cols, mixed_dtyp
 
 def _process_seqid_chunk(seqid, chunk_paths_by_sample, col_prefixes, temp_out_dir,
                          metadata_cols, bp_meta, all_bps, min_cov, decimals,
-                         report_non_qualified):
+                         report_non_qualified, min_samples_pct=None, min_group_pct=None):
     """Compute 16 BPs for one SeqID and write 16 per-BP chunk files.
 
     Each element in chunk_paths_by_sample is a path (str) or None when that
@@ -342,9 +353,33 @@ def _process_seqid_chunk(seqid, chunk_paths_by_sample, col_prefixes, temp_out_di
         if not report_non_qualified:
             metric_cols = [c for c in acc.columns if c not in metadata_cols]
             if metric_cols:
-                acc = acc[
-                    (acc[metric_cols].notna() & (acc[metric_cols] != 0)).any(axis=1)
-                ]
+                has_value = acc[metric_cols].notna() & (acc[metric_cols] != 0)
+                # One boolean column per sample (pair espf/espr → any of the two)
+                sample_prefixes = sorted(set(c.rsplit('::', 1)[0] for c in metric_cols))
+                sample_hv = pd.DataFrame(
+                    {p: has_value[
+                            [c for c in metric_cols if c.rsplit('::', 1)[0] == p]
+                        ].any(axis=1)
+                     for p in sample_prefixes},
+                    index=acc.index,
+                )
+                if min_samples_pct is None and min_group_pct is None:
+                    keep = sample_hv.any(axis=1)
+                else:
+                    keep = pd.Series(False, index=acc.index)
+                    if min_samples_pct is not None:
+                        n = len(sample_prefixes)
+                        keep |= sample_hv.sum(axis=1) / n >= min_samples_pct / 100.0
+                    if min_group_pct is not None:
+                        groups: dict[str, list[str]] = {}
+                        for p in sample_prefixes:
+                            groups.setdefault(p.split('::')[0], []).append(p)
+                        for g_cols in groups.values():
+                            keep |= (
+                                sample_hv[g_cols].sum(axis=1) / len(g_cols)
+                                >= min_group_pct / 100.0
+                            )
+                acc = acc[keep]
         if len(acc) > 0:
             out_path = os.path.join(temp_out_dir, f'{bp}_{safe}.tsv')
             acc.to_csv(out_path, sep='\t', index=False, na_rep='NA')
@@ -356,7 +391,8 @@ def _process_seqid_chunk(seqid, chunk_paths_by_sample, col_prefixes, temp_out_di
 
 
 def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id=False,
-                  min_cov=1, threads=1, decimals=4, report_non_qualified=False):
+                  min_cov=1, threads=1, decimals=4, report_non_qualified=False,
+                  min_samples_pct=None, min_group_pct=None):
     """Produce one output file per base pair combination.
 
     Memory strategy — three phases:
@@ -424,7 +460,8 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
             (seqid,
              [ssp.get(seqid) for ssp in sample_seqid_paths],
              col_prefixes, temp_out_dir,
-             metadata_cols, bp_meta, ALL_BPS, min_cov, decimals, report_non_qualified)
+             metadata_cols, bp_meta, ALL_BPS, min_cov, decimals, report_non_qualified,
+             min_samples_pct, min_group_pct)
             for seqid in all_seqids
         ]
 
@@ -490,6 +527,8 @@ if __name__ == "__main__":
     threads = 1  # Default: sequential writing
     decimals = 4  # Default: round to 4 decimal places
     report_non_qualified = False  # Default: skip rows where all metric values are NA
+    min_samples_pct = None   # Default: no global-sample-% filter
+    min_group_pct   = None   # Default: no per-group-% filter
 
     args_iter = iter(range(1, len(sys.argv)))
     for i in args_iter:
@@ -516,6 +555,48 @@ if __name__ == "__main__":
         # Check for --report-non-qualified-features flag
         if arg == '--report-non-qualified-features':
             report_non_qualified = True
+            continue
+
+        # Check for --min-samples-pct flag
+        if arg.startswith('--min-samples-pct'):
+            if '=' in arg:
+                val = arg.split('=', 1)[1]
+            else:
+                try:
+                    next_i = next(args_iter)
+                    val = sys.argv[next_i]
+                except StopIteration:
+                    print('ERROR: --min-samples-pct requires a value', file=sys.stderr)
+                    sys.exit(1)
+            try:
+                min_samples_pct = float(val)
+            except ValueError:
+                print('ERROR: --min-samples-pct requires a numeric value (0–100)', file=sys.stderr)
+                sys.exit(1)
+            if not (0.0 <= min_samples_pct <= 100.0):
+                print('ERROR: --min-samples-pct must be between 0 and 100', file=sys.stderr)
+                sys.exit(1)
+            continue
+
+        # Check for --min-group-pct flag
+        if arg.startswith('--min-group-pct'):
+            if '=' in arg:
+                val = arg.split('=', 1)[1]
+            else:
+                try:
+                    next_i = next(args_iter)
+                    val = sys.argv[next_i]
+                except StopIteration:
+                    print('ERROR: --min-group-pct requires a value', file=sys.stderr)
+                    sys.exit(1)
+            try:
+                min_group_pct = float(val)
+            except ValueError:
+                print('ERROR: --min-group-pct requires a numeric value (0–100)', file=sys.stderr)
+                sys.exit(1)
+            if not (0.0 <= min_group_pct <= 100.0):
+                print('ERROR: --min-group-pct must be between 0 and 100', file=sys.stderr)
+                sys.exit(1)
             continue
 
         # Check for --min-cov flag (supports both --min-cov=N and --min-cov N)
@@ -622,6 +703,6 @@ if __name__ == "__main__":
         sys.exit(1)
     
     # Process all samples
-    result = merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id, min_cov, threads, decimals, report_non_qualified)
+    result = merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id, min_cov, threads, decimals, report_non_qualified, min_samples_pct, min_group_pct)
     
     print("\nAnalysis complete!")
