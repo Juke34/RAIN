@@ -22,8 +22,12 @@ params.clean_duplicate  = true
 // Edit counting params
 edit_site_tools = ["reditools2", "reditools3", "jacusa2", "sapin"]
 params.edit_site_tool = "reditools3"
-params.edit_threshold = 1
-params.aggregation_mode = "all"
+params.edit_threshold = 1 // Minimal number of edited reads to count a site as edited
+params.cov_threshold = 10 // Minimal coverage to consider a site for editing detection
+// When both flags below are provided → OR: keep if either condition is satisfied independently.
+params.min_samples_pct = 50 // Minimal percentage of samples in which a site must be edited to be kept in the analysis (drip filtering)
+params.min_group_pct = 75 // Minimal percentage of groups in which a site must be edited to be kept in the analysis (drip filtering)
+params.aggregation_mode = "all" // used by pluviometer
 params.skip_hyper_editing = false // Skip hyper-editing detection
 // Report params
 params.multiqc_config = "$baseDir/config/multiqc_config.yaml" // MultiQC config file
@@ -35,7 +39,6 @@ params.region = "" // e.g. chr21 - Used to limit the analysis to a specific regi
 params.help = null
 params.monochrome_logs = false // if true, no color in logs
 params.debug = false // Enable debug output
-params.use_slurm_for_aline = false // Whether to submit AliNe as a separate SLURM job when using an HPC environment
 
 // --------------------------------------------------
 /* ---- Params shared between RAIN and AliNe ---- */
@@ -62,7 +65,7 @@ params.trimming_fastp = false
 align_tools = [ 'bbmap', 'bowtie', 'bowtie2', 'bwaaln', 'bwamem', 'bwamem2', 'bwasw', 'dragmap', 'graphmap2', 'hisat2', 'kallisto', 'last', 'minimap2', 'novoalign', 'nucmer', 'ngmlr', 'salmon', 'star', 'subread', 'sublong' ]
 params.aligner = 'hisat2'
 // AliNe version
-params.aline_version = 'v1.6.2'
+params.aline_version = 'v1.6.3'
 //*************************************************
 // STEP 1 - HELP
 //*************************************************
@@ -128,6 +131,7 @@ def helpMSG() {
     --aligner                   Aligner to use [default: $params.aligner]
     --clean_duplicate           Remove PCR duplicates from BAM files using GATK MarkDuplicates. [default: $params.clean_duplicate]
     --clip_overlap              Clip overlapping sequences in read pairs to avoid double counting. [default: $params.clipoverlap]
+    --cov_threshold             Minimal coverage to consider a site for editing detection [default: $params.cov_threshold]
     --debug                     Enable debug output for troubleshooting. [default: $params.debug]
     --edit_site_tool            Tool used for detecting edited sites. [default: $params.edit_site_tool]
     --edit_threshold            Minimal number of edited reads to count a site as edited [default: $params.edit_threshold]
@@ -160,6 +164,7 @@ Alignment Parameters
     
 
 Edited Site Detection Parameters
+    cov_threshold              : ${params.cov_threshold}
     edit_site_tool             : ${params.edit_site_tool}
     edit_threshold             : ${params.edit_threshold}
     region                     : ${params.region} 
@@ -176,8 +181,7 @@ Report Parameters
 //*************************************************
 include { AliNe as ALIGNMENT } from "./modules/aline.nf"
 include {normalize_gxf} from "./modules/agat.nf"
-include { extract_libtype; recreate_csv_with_abs_paths; collect_aline_csv; filter_drip_by_aggregation_mode; filter_drip_features_by_type
-        standardize_pluvio_aggregates; standardize_pluvio_features} from "./modules/bash.nf"
+include { extract_libtype; recreate_csv_with_abs_paths; collect_aline_csv; filter_drip_by_aggregation_mode; filter_drip_features_by_type} from "./modules/bash.nf"
 include {bamutil_clipoverlap} from './modules/bamutil.nf'
 include {fastp} from './modules/fastp.nf'
 include {fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from './modules/fastqc.nf'
@@ -185,10 +189,10 @@ include {gatk_markduplicates } from './modules/gatk.nf'
 include {jacusa2} from "./modules/jacusa2.nf"
 include {multiqc} from './modules/multiqc.nf'
 include {fasta_unzip} from "$baseDir/modules/pigz.nf"
-include {samtools_index; samtools_fasta_index; samtools_sort_bam as samtools_sort_bam_raw; samtools_sort_bam as samtools_sort_bam_merged; samtools_split_mapped_unmapped; samtools_merge_bams} from './modules/samtools.nf'
+include {samtools_index; samtools_fasta_index; samtools_sort_bam as samtools_sort_bam_raw; samtools_sort_bam as samtools_sort_bam_merged; samtools_split_mapped_unmapped; samtools_merge_bams; samtools_calmd} from './modules/samtools.nf'
 include {reditools2} from "./modules/reditools2.nf"
 include {reditools3} from "./modules/reditools3.nf"
-include {pluviometer as pluviometer_jacusa2; pluviometer as pluviometer_reditools2; pluviometer as pluviometer_reditools3; pluviometer as pluviometer_sapin} from "./modules/pluviometer.nf"
+include {pluviometer} from "./modules/pluviometer.nf"
 include {drip as drip_aggregates; drip as drip_features} from "./modules/python.nf"
 include {sapin} from "./modules/sapin.nf"
 
@@ -208,7 +212,6 @@ else { exit 1, "No executer selected: please use a profile activating docker or 
 
 // check AliNE profile
 def aline_profile_list=[]
-def use_slurm_for_aline = params.use_slurm_for_aline
 str_list = workflow.profile.tokenize(',')
 str_list.each {
     if ( it in aline_profile_allowed ){
@@ -524,7 +527,7 @@ workflow {
 
         if ( via_csv ){
             aline_data_in_ch = recreate_csv_with_abs_paths(csv_ch)
-            aline_data_in_ch = collect_aline_csv(aline_data_in_ch.collect(), "AliNe")
+            aline_data_in_ch = collect_aline_csv(aline_data_in_ch.collect(), params.outdir)
             aline_data_in = aline_data_in_ch
         } 
         else {
@@ -593,7 +596,7 @@ workflow {
                 "--strandedness ${params.strandedness}",
                 clean_annotation,
                 workflow.workDir.resolve('Juke34/AliNe').toUriString(),
-                use_slurm_for_aline  // Pass info about whether to use slurm submission
+                params.outdir,
             )
 
             // GET TUPLE [ID, BAM] FILES
@@ -670,7 +673,6 @@ workflow {
                 samtools_split_mapped_unmapped.out.unmapped_bam,
                 genome,
                 aline_profile,
-                use_slurm_for_aline,
                 clean_annotation,
                 30,  // quality threshold
                 "${params.outdir}/hyper_editing",
@@ -720,7 +722,7 @@ workflow {
 
         // Clip overlap
         if (params.clip_overlap) {
-            bamutil_clipoverlap(gatk_markduplicates.out.tuple_sample_dedupbam)
+            bamutil_clipoverlap(all_bam_sorted_dedup)
             all_bam_sorted_dedup_clip = bamutil_clipoverlap.out.tuple_sample_clipoverbam
             // stat on bam with overlap clipped
             if(params.fastqc){
@@ -728,45 +730,98 @@ workflow {
                 logs.concat(fastqc_clip.out).set{logs} // save log
             }
         } else {
-            all_bam_sorted_dedup_clip = gatk_markduplicates.out.tuple_sample_dedupbam
+            all_bam_sorted_dedup_clip = all_bam_sorted_dedup
         }
         
+        // Recompute MD tag 
+        if (params.clip_overlap || params.clean_duplicate) {
+            samtools_calmd(all_bam_sorted_dedup_clip, genome.collect())
+            all_bam_sorted_dedup_clip_md = samtools_calmd.out.tuple_sample_bam_with_md
+        } else {
+            all_bam_sorted_dedup_clip_md = all_bam_sorted_dedup_clip
+        }
+            
         // index mapped bam
-        samtools_index(all_bam_sorted_dedup_clip)
+        samtools_index(all_bam_sorted_dedup_clip_md)
         final_bam_for_editing = samtools_index.out.tuple_sample_bam_bamindex
 
 // -------------------------------------------------------
 // ----------------- DETECT EDITING SITES ----------------
 // -------------------------------------------------------
-
+        Channel.empty().set{editing_analysis}
         // Select site detection tool
         if ( "jacusa2" in edit_site_tool_list ){ 
                 // Create a fasta index file of the reference genome
                 samtools_fasta_index(genome.collect())
                 jacusa2(final_bam_for_editing, samtools_fasta_index.out.tuple_fasta_fastaindex.collect())
-                pluviometer_jacusa2(jacusa2.out.tuple_sample_jacusa2_table, clean_annotation.collect(), "jacusa2")
+                editing_analysis = editing_analysis.mix(jacusa2.out.tuple_sample_jacusa2_table)
         }
         if ( "sapin" in edit_site_tool_list ){ 
                 sapin(tuple_sample_bam_processed, genome.collect())
         }
         if ( "reditools2" in edit_site_tool_list ){ 
                 reditools2(final_bam_for_editing, genome.collect(), params.region)
-                pluviometer_reditools2(reditools2.out.tuple_sample_serial_table, clean_annotation.collect(), "reditools2")
+                editing_analysis = editing_analysis.mix(reditools2.out.tuple_sample_serial_table)
         }
         if ( "reditools3" in edit_site_tool_list ){ 
                 reditools3(final_bam_for_editing, genome.collect())
-                pluviometer_reditools3(reditools3.out.tuple_sample_serial_table, clean_annotation.collect(), "reditools3")
-                // standardize the feature and aggregate output of pluviometer to be post process in a single way in down processes
-                standardize_pluvio_aggregates(pluviometer_reditools3.out.tuple_sample_aggregate)
-                standardize_pluvio_features(pluviometer_reditools3.out.tuple_sample_feature)
-                if(via_csv){
-                    // drip - compute espn, espf, merge different sample in one, and output by type of mutation (AG, AC, etc..)
-                    drip_aggregates(standardize_pluvio_aggregates.out.standardized_tsv.collect(), "aggregates")
-                    drip_features(standardize_pluvio_features.out.standardized_tsv.collect(), "features")
-                  
-                    //christalize(drip_features.out.editing_ag, "AG")
+                editing_analysis = editing_analysis.mix(reditools3.out.tuple_sample_serial_table)
+        }
+        
+        // Run pluviometer on editing analysis results to get aggregates and features values
+        pluviometer(editing_analysis, clean_annotation.collect())
 
-                }
+        if(via_csv){
+            // Collect pluviometer outputs by tool (group by element at index 1 = tool name)
+            aggregates_by_tool = pluviometer.out.tuple_sample_aggregate.map { meta, tool, file -> tuple(tool, [meta, file]) }.groupTuple()
+            features_by_tool = pluviometer.out.tuple_sample_feature.map { meta, tool, file -> tuple(tool, [meta, file]) }.groupTuple()
+
+            // drip - compute espn, espf, merge different sample in one, and output by type of mutation (AG, AC, etc..)
+            drip_aggregates(aggregates_by_tool, "aggregates", params.min_samples_pct, params.min_group_pct)
+            drip_features(features_by_tool, "features", params.min_samples_pct, params.min_group_pct)
+
+            // -------------------  ESPF JOIN AGGREGATES AND FEATURES -----------------
+            drip_aggregates.out.editing_all_espf
+                    .flatten()
+                    .map { file -> 
+                        // Extract editing type from filename (e.g., "drip_aggregates_espf_AC.tsv" -> "AC")
+                        def editType = file.baseName.tokenize('_').last()
+                        tuple(editType, file)
+                    }
+                    .join(
+                        drip_features.out.editing_all_espf
+                        .flatten()
+                        .map { file -> 
+                        // Extract editing type from filename (e.g., "drip_aggregates_espf_AC.tsv" -> "AC")
+                        def editType = file.baseName.tokenize('_').last()
+                        tuple(editType, file)
+                    }
+                    )
+                    .set { features_espf_by_edit_type }
+                    features_espf_by_edit_type.view()
+
+            // -------------------  ESPR JOIN AGGREGATES AND FEATURES -----------------
+            drip_aggregates.out.editing_all_espr
+                    .flatten()
+                    .map { file -> 
+                        // Extract editing type from filename (e.g., "drip_aggregates_espr_AC.tsv" -> "AC")
+                        def editType = file.baseName.tokenize('_').last()
+                        tuple(editType, file)
+                    }
+                    .join(
+                        drip_features.out.editing_all_espr
+                        .flatten()
+                        .map { file -> 
+                        // Extract editing type from filename (e.g., "drip_aggregates_espr_AC.tsv" -> "AC")
+                        def editType = file.baseName.tokenize('_').last()
+                        tuple(editType, file)
+                    }
+                    )
+                    .set { features_espr_by_edit_type }
+                    features_espr_by_edit_type.view()
+
+        // READY for barometer analysis
+
         }
 
         // ------------------- MULTIQC -----------------

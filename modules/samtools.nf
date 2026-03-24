@@ -152,3 +152,26 @@ process samtools_merge_bams {
         samtools merge -@ ${task.cpus} ${meta.uid}_merged.bam ${bam1} ${bam2}
         """
 }
+
+/*
+ * Calculate MD tag for BAM file
+ * The MD tag is required by some tools like REDItools
+* It encodes the reference bases that differ from the aligned read bases
+ * This tag can be missing or incorrect in BAM files that have been processed (e.g. with Picard MarkDuplicates, bamutil) and needs to be recomputed to ensure accurate editing site detection.
+ */
+process samtools_calmd {
+    label "samtools"
+    tag "${meta.uid}"
+    
+    input:
+        tuple val(meta), path(bam)
+        path(reference)
+
+    output:
+        tuple val(meta), path("*_md.bam"), emit: tuple_sample_bam_with_md
+
+    script:
+        """
+        samtools calmd -@ ${task.cpus} -b ${bam} ${reference} > ${bam.baseName}_md.bam
+        """
+}

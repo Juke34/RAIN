@@ -221,13 +221,14 @@ The two output formats are tables of comma-separated values with a header.
 | Start            | Positive integer                  | Starting position of the feature (inclusive)                                                                                                               |
 | End              | Positive integer                  | Ending position of the feature (inclusive)                                                                                                                 |
 | Strand           | `1` or `-1`                       | Whether the features is located on the positive (5'->3') or negative (3'->5') strand                                                                       |
-| CoveredSites     | Positive integer                  | Number of sites in the feature that satisfy the minimum level of coverage                                                                                  |
-| GenomeBases      | Comma-separated positive integers | Frequencies of the bases in the feature in the reference genome (order: A, C, G, T)                                                                        |
-| SiteBasePairings | Comma-separated positive integers | Number of sites in which each genome-variant base pairings is found in the feature (order: AA, AC, AG, AT, CA, CC, CG, CT, GA, GC, GG, GT, TA, TC, TG, TT) |
-| ReadBasePairings | Comma-separated positive integers | Frequencies of genome-variant base pairings in the feature  (order: AA, AC, AG, AT, CA, CC, CG, CT, GA, GC, GG, GT, TA, TC, TG, TT)                        |
+| TotalSites       | Positive integer                  | Number of sites in the feature                                                                                                                             |
+| ObservedBases    | Comma-separated positive integers | Number and type of the bases in the feature in the reference genome (order: A, C, G, T) observed. The total of the 4 values corresponds to the total observed sites (reported by the editing tools e.g. Reditools3)  |
+| QualifiedBases   | Comma-separated positive integers | Number and type of of the bases in the feature in the reference genome (order: A, C, G, T) that satisfy the minimum level of coverage and editing. The total of the 4 values corresponds to the total qualified sites (> cov) |
+| SiteBasePairingsQualified| Comma-separated positive integers | Number of sites in which each genome-variant base pairings is found at reference level in the feature (order: AA, AC, AG, AT, CA, CC, CG, CT, GA, GC, GG, GT, TA, TC, TG, TT) that satisfy the minimum level of coverage and editing |
+| ReadBasePairingsQualified | Comma-separated positive integers | Number of sites in which each genome-variant base pairings is found at reads level in the feature (order: AA, AC, AG, AT, CA, CC, CG, CT, GA, GC, GG, GT, TA, TC, TG, TT) that satisfy the minimum level of coverage and editing |
 
 > [!note]
-> The number of **CoveredSites** can be higher than the sum of **SiteBasePairings** because of the presence of ambiguous bases (e.g. N)
+> The number of **QualifiedBases** can differ from sum of AA,CC,GG,TT from **SiteBasePairingsQualified** because we can have site 100% edited that will not fall into one of these categories.
 
 An example of the feature output format is shown below, with some alterations to make the text line up in columns.
 
@@ -275,10 +276,11 @@ This hierarchical information is provided in the same manner in the aggregate fi
 | ParentType       | String                                                       | Type of the parent of the feature under which the aggregation was done                                                                                                 |
 | AggregateType    | String                                                       | Type of the features that are aggregated                                                                                                                               |
 | AggregationMode  | `all_isoforms`, `longest_isoform`, `chimaera`, `feature` or `all-sites` | Way in which the aggregation was performed                                                                                                                             |
-| CoveredSites     | Positive integer                                             | Number of sites in the aggregated features that satisfy the minimum level of coverage                                                                                  |
-| GenomeBases      | Comma-separated positive integers                            | Frequencies of the bases in the aggregated features in the reference genome (order: A, C, G, T)                                                                        |
-| SiteBasePairings | Comma-separated positive integers                            | Number of sites in which each genome-variant base pairings is found in the aggregated features (order: AA, AC, AG, AT, CA, CC, CG, CT, GA, GC, GG, GT, TA, TC, TG, TT) |
-| ReadBasePairings | Comma-separated positive integers                            | Frequencies of genome-variant base pairings in the aggregated features  (order: AA, AC, AG, AT, CA, CC, CG, CT, GA, GC, GG, GT, TA, TC, TG, TT)                        |
+| TotalSites       | Positive integer                                             | Number of sites in the aggregated features                                                                                                                             |
+| ObservedBases    | Comma-separated positive integers                            | Number and type of the bases in the aggregated features in the reference genome (order: A, C, G, T) observed. The total of the 4 values corresponds to the total observed sites (reported by the editing tools e.g. Reditools3)  |                                                           |
+| QualifiedBases   | Comma-separated positive integers                            | Number and type of of the bases in the aggregated features in the reference genome (order: A, C, G, T) that satisfy the minimum level of coverage and editing. The total of the 4 values corresponds to the total qualified sites (> cov) |          |
+| SiteBasePairingsQualifed | Comma-separated positive integers                            | Number of sites in which each genome-variant base pairings is found at reference level in the aggregated features (order: AA, AC, AG, AT, CA, CC, CG, CT, GA, GC, GG, GT, TA, TC, TG, TT) observed |
+| ReadBasePairingsQualifed | Comma-separated positive integers                            | Number of sites in which each genome-variant base pairings is found at reads level in the aggregated features  (order: AA, AC, AG, AT, CA, CC, CG, CT, GA, GC, GG, GT, TA, TC, TG, TT) that satisfy the minimum level of coverage and editing|
 
 In the output of Pluviometer, **aggregation** is the sum of counts from several features of the same type at some feature level. For instance, exons can be aggregated at transcript level, gene level, chromosome level, and genome level.
 
@@ -344,6 +346,21 @@ $$
 AG\ editing\ level = \sum_{i=0}^{n} \dfrac{AG_i}{AA_i + AC_i + AG_i + AT_i}
 $$
 
+
+## Drip
+
+### espf (edited sites proportion in feature):
+
+denom_espf = df[f'{genome_base}_count']          # X_QualifiedBases (e.g. C_count)
+df[espf_col] = df[f'{bp}_sites'] / denom_espf    # XY_SiteBasePairingsQualified / X_QualifiedBases
+
+### espr (edited sites proportion in reads):
+
+df[total_reads_col] = XA_reads + XC_reads + XG_reads + XT_reads   # all reads at X positions
+df[espr_col] = df[f'{bp}_reads'] / df[total_reads_col]             # XY_reads / sum(X*_reads)
+
+Drip retains a line only if at least one metric value is neither NA nor zero (i.e., at least one edit has been detected somewhere). Lines containing only NA values, only 0.0 values, or a mix of both are removed by default.
+
 </details>
 
 
@@ -355,3 +372,7 @@ Jacques Dainat  (@Juke34)
 ## Contributing
 
 Contributions from the community are welcome ! See the [Contributing guidelines](https://github.com/Juke34/rain/blob/main/CONTRIBUTING.md)
+
+## TODO
+
+update pluviometer to set NA for start end and strand instead of . to be  able to use column as int64 in drip and barometer e.g. dtype={"SeqID": str, "Start": "Int64", "End": "Int64", "Strand": str} 

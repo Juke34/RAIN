@@ -8,7 +8,7 @@ process jacusa2 {
         tuple(path(genome), path(fastaindex))
 
     output:
-        tuple(val(meta), path("*.site_edits_jacusa2.txt"), emit: tuple_sample_jacusa2_table)
+        tuple(val(meta), val("jacusa2"), path("*.site_edits_jacusa2.txt"), emit: tuple_sample_jacusa2_table)
         path("*.filtered")
 
     script:

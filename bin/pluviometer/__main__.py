@@ -20,10 +20,14 @@ import multiprocessing
 from BCBio import GFF
 from os import remove
 import progressbar
+import subprocess
 import tempfile
 import argparse
 import logging
+import pickle
 import math
+import io
+import gc
 
 logger = logging.getLogger(__name__)
 
@@ -92,12 +96,16 @@ class RecordCountingContext:
         aggregate_writer: AggregateFileWriter,
         filter: SiteFilter,
         use_progress_bar: bool,
+        report_non_qualified: bool = False,
     ):
         self.aggregate_writer: AggregateFileWriter = aggregate_writer
         """Aggregate counting output is written to a temporary file through this object"""
 
         self.feature_writer: FeatureFileWriter = feature_writer
         """Feature counting output is written to a temporary file through this object"""
+
+        self.report_non_qualified: bool = report_non_qualified
+        """If True, write feature rows even when no qualified sites are found"""""
 
         self.filter: SiteFilter = filter
         """Filter applied to the reads. Filters contain a mutable state, so they should not be shared between concurrent RecordCountingContext instances"""
@@ -116,6 +124,16 @@ class RecordCountingContext:
             DefaultMultiCounterFactory(self.filter)
         )
         """Dictionary of counters for the record-level all isoforms aggregates. Keys correspond to aggregate feature types"""
+
+        # Positions for aggregate counters
+        self.longest_isoform_aggregate_positions: dict[str, AggregatePositions] = {}
+        """Dictionary of positions for the record-level longest isoform aggregates"""
+
+        self.chimaera_aggregate_positions: dict[str, AggregatePositions] = {}
+        """Dictionary of positions for the record-level chimaeric aggregates"""
+
+        self.all_isoforms_aggregate_positions: dict[str, AggregatePositions] = {}
+        """Dictionary of positions for the record-level all isoforms aggregates"""
 
         # New: Aggregate counters by (parent_type, aggregate_type) for intermediate-level aggregation
         self.longest_isoform_aggregate_counters_by_parent_type: defaultdict[tuple[str, str], MultiCounter] = defaultdict(
@@ -319,16 +337,19 @@ class RecordCountingContext:
         visited_positions: int = 0
 
         while (
-            len(self.action_queue) > 0 and self.action_queue[0][0] < new_position
-        ):  # Use < instead of <= because of Python's right-exclusive indfgexing
+            len(self.action_queue) > 0 and self.action_queue[0][0] <= new_position
+        ):  # Use <= to process actions at the current position before updating counters
             _, actions = self.action_queue.popleft()
             visited_positions += 1
 
             for feature in actions.activate:
+                logging.debug(f"Activating feature: {feature.id} (type: {feature.type}, level: {feature.level})")
                 self.active_features[feature.id] = feature
 
             for feature in actions.deactivate:
+                logging.debug(f"Deactivating feature: {feature.id} (type: {feature.type}, level: {feature.level})")
                 if feature.level == 1:
+                    logging.debug(f"Calling checkout on level-1 feature: {feature.id}")
                     self.checkout(feature, None)
 
                 self.active_features.pop(feature.id, None)
@@ -368,35 +389,57 @@ class RecordCountingContext:
         
         Checkout should be triggered after a level-1 feature is completely cleared. Aggregation of the level-1 feature and all its descentants proceeds.
         """
+        
+        logging.debug(
+            f"checkout() called: feature.id={feature.id}, feature.type={feature.type}, "
+            f"feature.level={feature.level}, is_chimaera={getattr(feature, 'is_chimaera', 'NOT_SET')}, "
+            f"has_counter={feature.id in self.counters}"
+        )
 
         # Deactivate the feature
         self.active_features.pop(feature.id, None)
 
         # Counter for the feature itself
-        feature_counter: Optional[MultiCounter] = self.counters.get(feature.id, None)
+        feature_counter: Optional[MultiCounter] = self.counters.pop(feature.id, None)
 
         assert self.record.id
 
         if feature_counter:
             if feature.is_chimaera:
                 assert parent_feature  # A chimaera must always have a parent feature (a gene)
-                self.aggregate_writer.write_row_chimaera_with_data(
-                    self.record.id, feature, parent_feature, feature_counter
-                )
+                if self.report_non_qualified or feature_counter.filtered_base_freqs.sum() > 0:
+                    logging.debug(f"Writing chimaera with data: {feature.id}")
+                    self.aggregate_writer.write_row_chimaera_with_data(
+                        self.record.id, feature, parent_feature, feature_counter
+                    )
                 self.chimaera_aggregate_counters[feature.type].merge(feature_counter)
                 # Also track by parent_type
                 self.chimaera_aggregate_counters_by_parent_type[(parent_feature.type, feature.type)].merge(feature_counter)
+                
+                # Track positions for chimaera
+                if feature.type not in self.chimaera_aggregate_positions:
+                    self.chimaera_aggregate_positions[feature.type] = AggregatePositions(
+                        strand=feature.location.strand if hasattr(feature.location, 'strand') else 0
+                    )
+                self.chimaera_aggregate_positions[feature.type].update_from_feature(feature)
             else:
-                self.feature_writer.write_row_with_data(self.record.id, feature, feature_counter)
-            del self.counters[feature.id]
+                logging.debug(f"Writing feature with data: {feature.id}, type: {feature.type}")
+                if self.report_non_qualified or feature_counter.filtered_base_freqs.sum() > 0:
+                    self.feature_writer.write_row_with_data(self.record.id, feature, feature_counter)
+            # Explicitly delete counter after use to free memory
+            del feature_counter
         else:
             if feature.is_chimaera:
                 assert parent_feature
-                self.aggregate_writer.write_row_chimaera_without_data(
-                    self.record.id, feature, parent_feature
-                )
+                if self.report_non_qualified:
+                    logging.debug(f"Writing chimaera without data: {feature.id}")
+                    self.aggregate_writer.write_row_chimaera_without_data(
+                        self.record.id, feature, parent_feature
+                    )
             else:
-                self.feature_writer.write_row_without_data(self.record.id, feature)
+                logging.debug(f"Writing feature without data: {feature.id}, type: {feature.type}")
+                if self.report_non_qualified:
+                    self.feature_writer.write_row_without_data(self.record.id, feature)
 
         # all_isoforms_aggregation_counters: Optional[defaultdict[str, MultiCounter]] = None
 
@@ -413,6 +456,18 @@ class RecordCountingContext:
             merge_aggregation_counter_dicts(
                 self.all_isoforms_aggregate_counters, level1_all_isoforms_aggregation_counters
             )
+            
+            # Merge positions for all_isoforms at record level
+            for aggregate_type, positions in level1_all_isoforms_aggregation_positions.items():
+                if aggregate_type not in self.all_isoforms_aggregate_positions:
+                    self.all_isoforms_aggregate_positions[aggregate_type] = AggregatePositions(strand=positions.strand)
+                self.all_isoforms_aggregate_positions[aggregate_type].merge(positions)
+            
+            # Merge positions for longest_isoform at record level
+            for aggregate_type, positions in level1_longest_isoform_aggregation_positions.items():
+                if aggregate_type not in self.longest_isoform_aggregate_positions:
+                    self.longest_isoform_aggregate_positions[aggregate_type] = AggregatePositions(strand=positions.strand)
+                self.longest_isoform_aggregate_positions[aggregate_type].merge(positions)
 
             # Also merge into by-parent-type dictionaries
             parent_type = feature.type
@@ -425,6 +480,8 @@ class RecordCountingContext:
                 aggregate_type,
                 aggregate_counter,
             ) in level1_longest_isoform_aggregation_counters.items():
+                if not self.report_non_qualified and aggregate_counter.filtered_base_freqs.sum() == 0:
+                    continue
                 # Get positions for this aggregate type
                 start_str, end_str, strand_str = ".", ".", "."
                 if aggregate_type in level1_longest_isoform_aggregation_positions:
@@ -441,12 +498,26 @@ class RecordCountingContext:
                     end=end_str,
                     strand=strand_str,
                 )
-                self.aggregate_writer.write_counter_data(aggregate_counter)
+                # Calculate TotalSites from positions
+                total_sites_str = "."
+                if aggregate_type in level1_longest_isoform_aggregation_positions:
+                    pos = level1_longest_isoform_aggregation_positions[aggregate_type]
+                    if pos.start != float('inf') and pos.end > 0:
+                        total_sites_str = str(pos.end - pos.start)
+                self.aggregate_writer.write_data(
+                    total_sites_str,
+                    ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),
+                    ",".join(map(str, aggregate_counter.filtered_base_freqs[0:4].flat)),
+                    ",".join(map(str, aggregate_counter.edit_qualified_site_freqs[0:4, 0:4].flat)),
+                    ",".join(map(str, aggregate_counter.edit_qualified_read_freqs[0:4, 0:4].flat)),
+                )
 
             for (
                 aggregate_type,
                 aggregate_counter,
             ) in level1_all_isoforms_aggregation_counters.items():
+                if not self.report_non_qualified and aggregate_counter.filtered_base_freqs.sum() == 0:
+                    continue
                 # Get positions for this aggregate type
                 start_str, end_str, strand_str = ".", ".", "."
                 if aggregate_type in level1_all_isoforms_aggregation_positions:
@@ -463,10 +534,24 @@ class RecordCountingContext:
                     end=end_str,
                     strand=strand_str,
                 )
-                self.aggregate_writer.write_counter_data(aggregate_counter)
+                # Calculate TotalSites from positions
+                total_sites_str = "."
+                if aggregate_type in level1_all_isoforms_aggregation_positions:
+                    pos = level1_all_isoforms_aggregation_positions[aggregate_type]
+                    if pos.start != float('inf') and pos.end > 0:
+                        total_sites_str = str(pos.end - pos.start)
+                self.aggregate_writer.write_data(
+                    total_sites_str,
+                    ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),
+                    ",".join(map(str, aggregate_counter.filtered_base_freqs[0:4].flat)),
+                    ",".join(map(str, aggregate_counter.edit_qualified_site_freqs[0:4, 0:4].flat)),
+                    ",".join(map(str, aggregate_counter.edit_qualified_read_freqs[0:4, 0:4].flat)),
+                )
         else:
             feature_aggregation_counters, feature_aggregation_positions = self.aggregate_children(feature)
             for aggregate_type, aggregate_counter in feature_aggregation_counters.items():
+                if not self.report_non_qualified and aggregate_counter.filtered_base_freqs.sum() == 0:
+                    continue
                 # Get positions for this aggregate type
                 start_str, end_str, strand_str = ".", ".", "."
                 if aggregate_type in feature_aggregation_positions:
@@ -483,11 +568,27 @@ class RecordCountingContext:
                     end=end_str,
                     strand=strand_str,
                 )
-                self.aggregate_writer.write_counter_data(aggregate_counter)
+                # Calculate TotalSites from positions
+                total_sites_str = "."
+                if aggregate_type in feature_aggregation_positions:
+                    pos = feature_aggregation_positions[aggregate_type]
+                    if pos.start != float('inf') and pos.end > 0:
+                        total_sites_str = str(pos.end - pos.start)
+                self.aggregate_writer.write_data(
+                    total_sites_str,
+                    ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),
+                    ",".join(map(str, aggregate_counter.filtered_base_freqs[0:4].flat)),
+                    ",".join(map(str, aggregate_counter.edit_qualified_site_freqs[0:4, 0:4].flat)),
+                    ",".join(map(str, aggregate_counter.edit_qualified_read_freqs[0:4, 0:4].flat)),
+                )
 
         # Recursively check-out children
         for child in feature.sub_features:
             self.checkout(child, feature)
+        
+        # After processing all children, clear sub_features to free memory
+        if hasattr(feature, 'sub_features'):
+            feature.sub_features.clear()
 
         return None
 
@@ -634,16 +735,32 @@ class RecordCountingContext:
         """
         Update the multicounters matching the ID of features in the `active_features` set.
         A new multicounter is created if no matching ID is found.
+        
+        Strand compatibility logic:
+        - Feature unstranded (0): accepts sites from any strand
+        - Feature stranded: only accepts sites from same strand or unstranded sites
+        - Site unstranded: only counted for unstranded features (to avoid combinatorial explosion)
         """
         for feature_key, feature in self.active_features.items():
+            # Optimized order: check exact match first (most common case)
             if feature.location.strand == site_data.strand:
+                counter: MultiCounter = self.counters[feature_key]
+                counter.update(site_data)
+            # Feature is unstranded: accept stranded sites too
+            elif feature.location.strand == 0 and site_data.strand != 0:
+                counter: MultiCounter = self.counters[feature_key]
+                counter.update(site_data)
+            # Site is unstranded: only count for unstranded features
+            # (counting for all features would cause combinatorial explosion)
+            elif site_data.strand == 0 and feature.location.strand == 0:
                 counter: MultiCounter = self.counters[feature_key]
                 counter.update(site_data)
 
         return None
 
     def is_finished(self) -> bool:
-        return len(self.action_queue) > 0 or len(self.active_features) > 0
+        """Return True if there is no remaining work (queues are empty and no active features)"""
+        return len(self.action_queue) == 0 and len(self.active_features) == 0
 
     def launch_counting(self, reader: RNASiteVariantReader) -> None:
         next_svdata: Optional[RNASiteVariantData] = reader.seek_record(self.record.id)
@@ -668,6 +785,35 @@ class RecordCountingContext:
         if self.use_progress_bar:
             self.progbar.finish()
 
+        return None
+
+    def cleanup(self) -> None:
+        """
+        Clean up memory after processing a record. Clear all data structures.
+        """
+        self.active_features.clear()
+        self.action_queue.clear()
+        self.counters.clear()
+        
+        # Clear aggregate counters
+        self.longest_isoform_aggregate_counters.clear()
+        self.chimaera_aggregate_counters.clear()
+        self.all_isoforms_aggregate_counters.clear()
+        self.longest_isoform_aggregate_counters_by_parent_type.clear()
+        self.chimaera_aggregate_counters_by_parent_type.clear()
+        self.all_isoforms_aggregate_counters_by_parent_type.clear()
+        
+        # Clear record reference
+        if hasattr(self, 'record'):
+            # Clear features from record to help garbage collection
+            if hasattr(self.record, 'features'):
+                self.record.features.clear()
+            delattr(self, 'record')
+        
+        # Clear progress bar reference
+        if hasattr(self, 'progbar'):
+            delattr(self, 'progbar')
+        
         return None
 
 
@@ -708,7 +854,7 @@ def parse_cli_input() -> argparse.Namespace:
         "--cov",
         "-c",
         type=int,
-        default=0,
+        default=1,
         help="Site coverage threshold for counting editions",
     )
     parser.add_argument(
@@ -735,6 +881,31 @@ def parse_cli_input() -> argparse.Namespace:
     )
     parser.add_argument(
         "--progress", action="store_true", default=False, help="Display progress bar"
+    )
+    parser.add_argument(
+        "--gff_feature_types",
+        type=str,
+        default=None,
+        help="Comma-separated list of GFF feature types to load (e.g., 'gene,mRNA,exon,CDS'). Reduces memory usage by filtering during parsing. Leave empty to load all types.",
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level (default: INFO). Use DEBUG to see detailed site filtering information.",
+    )
+    parser.add_argument(
+        "--report-non-qualified-features",
+        action="store_true",
+        default=False,
+        help="Report features with no qualified sites (default: skip them).",
+    )
+    parser.add_argument(
+        "--log-to-console",
+        action="store_true",
+        default=False,
+        help="Output logs to console/terminal in addition to log file.",
     )
 
     return parser.parse_args()
@@ -764,13 +935,79 @@ def init_worker(args_value, reader_factory_value):
     reader_factory = reader_factory_value
 
 
-def run_job(record: SeqRecord) -> dict[str, Any]:
+def _scan_gff_record_ids(gff_path: str) -> list[str]:
+    """Return a natsorted list of unique sequence IDs present in the GFF file.
+
+    For bgzip+tabix files (.gz) uses ``tabix -l`` (fast, no decompression of
+    data lines).  For plain-text files falls back to a lightweight linear scan.
     """
-    A wrapper function for performing counting parallelized by record. The return value is a dict containing all the information needed for integrating
-    the output of all records after the computations are finished.
+    if gff_path.endswith('.gz'):
+        result = subprocess.run(
+            ['tabix', '-l', gff_path],
+            capture_output=True, text=True, check=True,
+        )
+        return natsorted(result.stdout.splitlines())
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    with open(gff_path) as fh:
+        for line in fh:
+            if not line or line[0] == '#':
+                continue
+            fields = line.split('\t', 2)
+            if len(fields) < 2:
+                # Not a GFF data line (e.g. FASTA section, wrapped attribute line)
+                continue
+            seqid = fields[0]
+            if seqid not in seen:
+                seen.add(seqid)
+                ordered.append(seqid)
+    return natsorted(ordered)
+
+
+def _open_gff_for_record(
+    gff_path: str,
+    record_id: str,
+    gff_limit: Optional[dict],
+) -> Optional[SeqRecord]:
+    """Load a single chromosome from a GFF3 file and return its SeqRecord.
+
+    Strategy differs by file type:
+
+    * **bgzip+tabix (.gz)**: call ``tabix gff_path record_id`` to extract only
+      the relevant lines and feed them to BCBio via an ``io.StringIO`` buffer
+      (which is seekable, so BCBio can do its two-pass parent-child resolution).
+      We intentionally do *not* pass a ``gff_id`` filter here — the stream
+      already contains only the target chromosome, so there is nothing to
+      filter.  The ``gff_id`` filter in BCBio can bypass the two-pass logic,
+      causing "parent not found" warnings for out-of-order features.
+
+    * **Plain text**: use BCBio's ``gff_id`` filter on the open (seekable) file
+      handle so BCBio can seek back for its second pass when needed.
     """
-    assert record.id  # Stupid assertion for pylance
-    logging.info(f"Record {record.id} · Record parsed. Counting beings.")
+    if gff_path.endswith('.gz'):
+        proc = subprocess.run(
+            ['tabix', gff_path, record_id],
+            capture_output=True, text=True, check=True,
+        )
+        gff_stream = io.StringIO('##gff-version 3\n' + proc.stdout)
+        return next(GFF.parse(gff_stream, limit_info=gff_limit), None)
+
+    # Plain text: seekable file handle → BCBio two-pass works
+    limit: dict = {'gff_id': [record_id]}
+    if gff_limit:
+        limit.update(gff_limit)
+    with open(gff_path) as gff_handle:
+        return next(GFF.parse(gff_handle, limit_info=limit), None)
+
+
+def _do_counting(record: SeqRecord) -> dict[str, Any]:
+    """
+    Core counting logic for a single SeqRecord. Returns the result dict.
+    Called directly in sequential mode and via run_job in parallel mode.
+    """
+    assert record.id  # Placate pylance
+    logging.info(f"Record {record.id} · Counting begins.")
 
     tmp_feature_output_file: str = tempfile.mkstemp()[1]
     tmp_aggregate_output_file: str = tempfile.mkstemp()[1]
@@ -788,7 +1025,8 @@ def run_job(record: SeqRecord) -> dict[str, Any]:
         filter: SiteFilter = SiteFilter(cov_threshold=args.cov, edit_threshold=args.edit_threshold)
 
         record_ctx: RecordCountingContext = RecordCountingContext(
-            feature_writer, aggregate_writer, filter, args.progress
+            feature_writer, aggregate_writer, filter, args.progress,
+            report_non_qualified=args.report_non_qualified_features,
         )
 
         # Count
@@ -804,6 +1042,8 @@ def run_job(record: SeqRecord) -> dict[str, Any]:
             ".",
             "longest_isoform",
             record_ctx.longest_isoform_aggregate_counters,
+            record_ctx.longest_isoform_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
         aggregate_writer.write_rows_with_data(
             record.id,
@@ -812,6 +1052,8 @@ def run_job(record: SeqRecord) -> dict[str, Any]:
             ".",
             "all_isoforms",
             record_ctx.all_isoforms_aggregate_counters,
+            record_ctx.all_isoforms_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
         aggregate_writer.write_rows_with_data(
             record.id,
@@ -820,6 +1062,8 @@ def run_job(record: SeqRecord) -> dict[str, Any]:
             ".",
             "chimaera",
             record_ctx.chimaera_aggregate_counters,
+            record_ctx.chimaera_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
 
         # Write aggregate counter data by parent type
@@ -829,6 +1073,8 @@ def run_job(record: SeqRecord) -> dict[str, Any]:
             ".",
             "longest_isoform",
             record_ctx.longest_isoform_aggregate_counters_by_parent_type,
+            record_ctx.longest_isoform_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
         aggregate_writer.write_rows_with_data_by_parent_type(
             record.id,
@@ -836,6 +1082,8 @@ def run_job(record: SeqRecord) -> dict[str, Any]:
             ".",
             "all_isoforms",
             record_ctx.all_isoforms_aggregate_counters_by_parent_type,
+            record_ctx.all_isoforms_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
         aggregate_writer.write_rows_with_data_by_parent_type(
             record.id,
@@ -843,6 +1091,8 @@ def run_job(record: SeqRecord) -> dict[str, Any]:
             ".",
             "chimaera",
             record_ctx.chimaera_aggregate_counters_by_parent_type,
+            record_ctx.chimaera_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
 
         # Write the total counter data of the record. A dummy dict needs to be created to use the `write_rows_with_data` method
@@ -851,21 +1101,162 @@ def run_job(record: SeqRecord) -> dict[str, Any]:
         )
         total_counter_dict["."] = record_ctx.total_counter
         aggregate_writer.write_rows_with_data(
-            record.id, ["."], ".", ".", "all_sites", total_counter_dict
+            record.id, ["."], ".", ".", "all_sites", total_counter_dict,
+            report_non_qualified=args.report_non_qualified_features,
         )
 
-    return {
+    # Extract data needed for return before cleanup
+    result = {
         "record_id": record.id,
         "tmp_feature_output_file": tmp_feature_output_file,
         "tmp_aggregate_output_file": tmp_aggregate_output_file,
-        "chimaera_aggregate_counters": record_ctx.chimaera_aggregate_counters,
-        "longest_isoform_aggregate_counters": record_ctx.longest_isoform_aggregate_counters,
-        "all_isoforms_aggregate_counters": record_ctx.all_isoforms_aggregate_counters,
-        "chimaera_aggregate_counters_by_parent_type": record_ctx.chimaera_aggregate_counters_by_parent_type,
-        "longest_isoform_aggregate_counters_by_parent_type": record_ctx.longest_isoform_aggregate_counters_by_parent_type,
-        "all_isoforms_aggregate_counters_by_parent_type": record_ctx.all_isoforms_aggregate_counters_by_parent_type,
+        "chimaera_aggregate_counters": record_ctx.chimaera_aggregate_counters.copy(),
+        "longest_isoform_aggregate_counters": record_ctx.longest_isoform_aggregate_counters.copy(),
+        "all_isoforms_aggregate_counters": record_ctx.all_isoforms_aggregate_counters.copy(),
+        "chimaera_aggregate_counters_by_parent_type": record_ctx.chimaera_aggregate_counters_by_parent_type.copy(),
+        "longest_isoform_aggregate_counters_by_parent_type": record_ctx.longest_isoform_aggregate_counters_by_parent_type.copy(),
+        "all_isoforms_aggregate_counters_by_parent_type": record_ctx.all_isoforms_aggregate_counters_by_parent_type.copy(),
         "total_counter": record_ctx.total_counter,
+        "longest_isoform_aggregate_positions": record_ctx.longest_isoform_aggregate_positions.copy(),
+        "all_isoforms_aggregate_positions": record_ctx.all_isoforms_aggregate_positions.copy(),
+        "chimaera_aggregate_positions": record_ctx.chimaera_aggregate_positions.copy(),
     }
+
+    # Clean up record context to free memory immediately
+    record_ctx.cleanup()
+
+    return result
+
+
+def run_job(record_id: str) -> str:
+    """
+    Worker entry point for parallel processing. Loads only the chromosome matching
+    record_id from the GFF (minimal RAM footprint per worker), performs counting,
+    serializes the result dict to a pickle temp file and returns its path.
+    Only a tiny string crosses the IPC channel.
+    """
+    gff_limit: Optional[dict] = None
+    if args.gff_feature_types:
+        gff_limit = {'gff_type': [t.strip() for t in args.gff_feature_types.split(',')]}
+
+    logging.info(f"Record {record_id} · Loading GFF features.")
+    record: Optional[SeqRecord] = _open_gff_for_record(args.gff, record_id, gff_limit)
+
+    if record is None:
+        raise RuntimeError(f"Record '{record_id}' not found in {args.gff}")
+
+    result = _do_counting(record)
+    record.features.clear()
+    del record
+
+    tmp_pickle_fd, tmp_pickle_path = tempfile.mkstemp(suffix='.pkl')
+    with open(tmp_pickle_fd, 'wb') as f:
+        pickle.dump(result, f)
+    del result
+
+    return tmp_pickle_path
+
+
+def process_and_write_record_data(
+    record_data: dict[str, Any],
+    feature_output_handle: TextIO,
+    aggregate_output_handle: TextIO,
+    genome_longest_isoform_aggregate_counters: defaultdict[str, MultiCounter],
+    genome_all_isoforms_aggregate_counters: defaultdict[str, MultiCounter],
+    genome_chimaera_aggregate_counters: defaultdict[str, MultiCounter],
+    genome_longest_isoform_aggregate_counters_by_parent_type: defaultdict[tuple[str, str], MultiCounter],
+    genome_all_isoforms_aggregate_counters_by_parent_type: defaultdict[tuple[str, str], MultiCounter],
+    genome_chimaera_aggregate_counters_by_parent_type: defaultdict[tuple[str, str], MultiCounter],
+    genome_total_counter: MultiCounter,
+    genome_longest_isoform_aggregate_positions: dict[str, AggregatePositions],
+    genome_all_isoforms_aggregate_positions: dict[str, AggregatePositions],
+    genome_chimaera_aggregate_positions: dict[str, AggregatePositions],
+) -> None:
+    """
+    Process a single record's data: write its output and merge counters into genome totals.
+    This function writes immediately to output files and only keeps genome-level totals in memory.
+    """
+    logging.info(f"Record {record_data['record_id']} · Writing output and merging totals...")
+
+    # Write temporary files to final output immediately
+    with open(record_data["tmp_feature_output_file"]) as tmp_output_handle:
+        feature_output_handle.write(tmp_output_handle.read())
+    remove(record_data["tmp_feature_output_file"])
+
+    with open(record_data["tmp_aggregate_output_file"]) as tmp_output_handle:
+        aggregate_output_handle.write(tmp_output_handle.read())
+    remove(record_data["tmp_aggregate_output_file"])
+
+    # Update the genome's aggregate counters from the record data aggregate counters
+    for record_aggregate_type, record_aggregate_counter in record_data[
+        "longest_isoform_aggregate_counters"
+    ].items():
+        genome_longest_isoform_aggregate_counters[record_aggregate_type].merge(
+            record_aggregate_counter
+        )
+
+    for record_aggregate_type, record_aggregate_counter in record_data[
+        "chimaera_aggregate_counters"
+    ].items():
+        genome_chimaera_aggregate_counters[record_aggregate_type].merge(
+            record_aggregate_counter
+        )
+
+    merge_aggregation_counter_dicts(
+        genome_all_isoforms_aggregate_counters,
+        record_data["all_isoforms_aggregate_counters"],
+    )
+
+    # Update the genome's by-parent-type aggregate counters
+    for (parent_type, aggregate_type), record_aggregate_counter in record_data[
+        "longest_isoform_aggregate_counters_by_parent_type"
+    ].items():
+        genome_longest_isoform_aggregate_counters_by_parent_type[(parent_type, aggregate_type)].merge(
+            record_aggregate_counter
+        )
+
+    for (parent_type, aggregate_type), record_aggregate_counter in record_data[
+        "all_isoforms_aggregate_counters_by_parent_type"
+    ].items():
+        genome_all_isoforms_aggregate_counters_by_parent_type[(parent_type, aggregate_type)].merge(
+            record_aggregate_counter
+        )
+
+    for (parent_type, aggregate_type), record_aggregate_counter in record_data[
+        "chimaera_aggregate_counters_by_parent_type"
+    ].items():
+        genome_chimaera_aggregate_counters_by_parent_type[(parent_type, aggregate_type)].merge(
+            record_aggregate_counter
+        )
+
+    # Update the genome's total counter from the record data total counter
+    genome_total_counter.merge(record_data["total_counter"])
+    
+    # Merge positions for aggregates
+    for aggregate_type, positions in record_data.get("longest_isoform_aggregate_positions", {}).items():
+        if aggregate_type not in genome_longest_isoform_aggregate_positions:
+            genome_longest_isoform_aggregate_positions[aggregate_type] = AggregatePositions(strand=positions.strand)
+        genome_longest_isoform_aggregate_positions[aggregate_type].merge(positions)
+    
+    for aggregate_type, positions in record_data.get("all_isoforms_aggregate_positions", {}).items():
+        if aggregate_type not in genome_all_isoforms_aggregate_positions:
+            genome_all_isoforms_aggregate_positions[aggregate_type] = AggregatePositions(strand=positions.strand)
+        genome_all_isoforms_aggregate_positions[aggregate_type].merge(positions)
+    
+    for aggregate_type, positions in record_data.get("chimaera_aggregate_positions", {}).items():
+        if aggregate_type not in genome_chimaera_aggregate_positions:
+            genome_chimaera_aggregate_positions[aggregate_type] = AggregatePositions(strand=positions.strand)
+        genome_chimaera_aggregate_positions[aggregate_type].merge(positions)
+    
+    # Clear record_data counters to free memory immediately after merging
+    record_data["chimaera_aggregate_counters"].clear()
+    record_data["longest_isoform_aggregate_counters"].clear()
+    record_data["all_isoforms_aggregate_counters"].clear()
+    record_data["chimaera_aggregate_counters_by_parent_type"].clear()
+    record_data["longest_isoform_aggregate_counters_by_parent_type"].clear()
+    record_data["all_isoforms_aggregate_counters_by_parent_type"].clear()
+    
+    return None
 
 
 def main():
@@ -875,31 +1266,59 @@ def main():
     args = parse_cli_input()
     LOGGING_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
     log_filename: str = args.output + "_pluviometer.log" if args.output else "pluviometer.log"
-    logging.basicConfig(filename=log_filename, level=logging.INFO, format=LOGGING_FORMAT)
+    log_level = getattr(logging, args.log_level.upper())
+    
+    # Configure logging with file handler
+    logger = logging.getLogger()
+    logger.setLevel(log_level)
+    
+    # File handler
+    file_handler = logging.FileHandler(log_filename, mode='w')
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(logging.Formatter(LOGGING_FORMAT))
+    logger.addHandler(file_handler)
+    
+    # Console handler if requested
+    if args.log_to_console:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(log_level)
+        console_handler.setFormatter(logging.Formatter(LOGGING_FORMAT))
+        logger.addHandler(console_handler)
+    
     logging.info(f"Pluviometer started. Log file: {log_filename}")
+    logging.info("Options:")
+    logging.info(f"  Sites file: {args.sites}")
+    logging.info(f"  GFF file: {args.gff}")
+    logging.info(f"  Output prefix: {args.output if args.output else 'default'}")
+    logging.info(f"  Format: {args.format}")
+    logging.info(f"  Coverage threshold: {args.cov}")
+    logging.info(f"  Edit threshold: {args.edit_threshold}")
+    logging.info(f"  Aggregation mode: {args.aggregation_mode}")
+    logging.info(f"  Threads: {args.threads}")
+    logging.info(f"  Progress bar: {args.progress}")
+    logging.info(f"  GFF feature types filter: {args.gff_feature_types if args.gff_feature_types else 'none (all types)'}")
+    logging.info(f"  Log level: {args.log_level}")
     feature_output_filename: str = args.output + "_features.tsv" if args.output else "features.tsv"
     aggregate_output_filename: str = (
         args.output + "_aggregates.tsv" if args.output else "aggregates.tsv"
     )
 
+    # Determine reader factory based on format
+    match args.format:
+        case "reditools2":
+            reader_factory = Reditools2Reader
+        case "reditools3":
+            reader_factory = Reditools3Reader
+        case "jacusa2":
+            reader_factory = Jacusa2Reader
+        case _:
+            raise Exception(f'Unimplemented format "{args.format}"')
+
     with (
-        open(args.gff) as gff_handle,
         open(feature_output_filename, "w") as feature_output_handle,
         open(aggregate_output_filename, "w") as aggregate_output_handle,
     ):
-        match args.format:
-            case "reditools2":
-                reader_factory = Reditools2Reader
-            case "reditools3":
-                reader_factory = Reditools3Reader
-            case "jacusa2":
-                reader_factory = Jacusa2Reader
-            case _:
-                raise Exception(f'Unimplemented format "{args.format}"')
-
-        logging.info("Parsing GFF3 file...")
-        records: Generator[SeqRecord, None, None] = GFF.parse(gff_handle)
-
+        # Initialize genome-level counters (only these will be kept in memory)
         genome_filter: SiteFilter = SiteFilter(
             cov_threshold=args.cov, edit_threshold=args.edit_threshold
         )
@@ -914,6 +1333,11 @@ def main():
         genome_chimaera_aggregate_counters: defaultdict[str, MultiCounter] = defaultdict(
             lambda: MultiCounter(genome_filter)
         )
+        
+        # Positions for genome-level aggregates
+        genome_longest_isoform_aggregate_positions: dict[str, AggregatePositions] = {}
+        genome_all_isoforms_aggregate_positions: dict[str, AggregatePositions] = {}
+        genome_chimaera_aggregate_positions: dict[str, AggregatePositions] = {}
 
         # By-parent-type genome-level aggregates
         genome_longest_isoform_aggregate_counters_by_parent_type: defaultdict[tuple[str, str], MultiCounter] = defaultdict(
@@ -926,105 +1350,131 @@ def main():
             lambda: MultiCounter(genome_filter)
         )
 
+        # Write headers once at the beginning
         feature_writer: FeatureFileWriter = FeatureFileWriter(feature_output_handle)
         aggregate_writer: AggregateFileWriter = AggregateFileWriter(aggregate_output_handle)
-
         feature_writer.write_header()
         aggregate_writer.write_header()
 
-        with multiprocessing.Pool(processes=args.threads, initializer=init_worker, initargs=(args, reader_factory)) as pool:
-            # Run the jobs and save the result of each record in a dict stored in the `record_data` list
-            record_data_list: list[dict[str, Any]] = pool.map(run_job, records)
+        # Process records and write output immediately
+        if args.threads > 1:
+            # Parallel processing: use imap_unordered so each worker's result is
+            # written to a pickle temp file as soon as it is ready, regardless of
+            # chromosome order.  Only the tiny file paths cross the IPC channel,
+            # keeping the main process RAM near zero while workers are running.
+            record_ids: list[str] = _scan_gff_record_ids(args.gff)
+            logging.info(f"Processing {len(record_ids)} records with {args.threads} threads...")
+            pickle_paths: list[str] = []
+            with multiprocessing.Pool(processes=args.threads, initializer=init_worker, initargs=(args, reader_factory)) as pool:
+                for pickle_path in pool.imap_unordered(run_job, record_ids, chunksize=1):
+                    pickle_paths.append(pickle_path)
 
-        # Sort record results in "natural" order
-        record_data_list = natsorted(record_data_list, key=lambda x: x["record_id"])
+            # Sort pickle files by their record_id (natural chromosome order)
+            def _record_id_from_pickle(path: str) -> str:
+                with open(path, 'rb') as _f:
+                    return pickle.load(_f)['record_id']
 
-    with (
-        open(feature_output_filename, "a") as feature_output_handle,
-        open(aggregate_output_filename, "a") as aggregate_output_handle,
-    ):
-        for record_data in record_data_list:
-            logging.info(f"Record {record_data['record_id']} · Merging temporary output files...")
+            pickle_paths = natsorted(pickle_paths, key=_record_id_from_pickle)
 
-            with open(record_data["tmp_feature_output_file"]) as tmp_output_handle:
-                feature_output_handle.write(tmp_output_handle.read())
-            remove(record_data["tmp_feature_output_file"])
-
-            with open(record_data["tmp_aggregate_output_file"]) as tmp_output_handle:
-                aggregate_output_handle.write(tmp_output_handle.read())
-            remove(record_data["tmp_aggregate_output_file"])
-
-            # Update the genome's aggregate counters from the record data aggregate counters
-            for record_aggregate_type, record_aggregate_counter in record_data[
-                "longest_isoform_aggregate_counters"
-            ].items():
-                genome_aggregate_counter: MultiCounter = genome_longest_isoform_aggregate_counters[
-                    record_aggregate_type
-                ]
-                genome_aggregate_counter.merge(record_aggregate_counter)
-
-            for record_aggregate_type, record_aggregate_counter in record_data[
-                "chimaera_aggregate_counters"
-            ].items():
-                genome_aggregate_counter: MultiCounter = genome_chimaera_aggregate_counters[
-                    record_aggregate_type
-                ]
-                genome_aggregate_counter.merge(record_aggregate_counter)
-
-            merge_aggregation_counter_dicts(
-                genome_all_isoforms_aggregate_counters,
-                record_data["all_isoforms_aggregate_counters"],
-            )
-
-            # Update the genome's by-parent-type aggregate counters
-            for (parent_type, aggregate_type), record_aggregate_counter in record_data[
-                "longest_isoform_aggregate_counters_by_parent_type"
-            ].items():
-                genome_longest_isoform_aggregate_counters_by_parent_type[(parent_type, aggregate_type)].merge(
-                    record_aggregate_counter
+            # Process in natural order: unpickle → write → delete → GC
+            for pickle_path in pickle_paths:
+                with open(pickle_path, 'rb') as f:
+                    record_data = pickle.load(f)
+                remove(pickle_path)
+                process_and_write_record_data(
+                    record_data,
+                    feature_output_handle,
+                    aggregate_output_handle,
+                    genome_longest_isoform_aggregate_counters,
+                    genome_all_isoforms_aggregate_counters,
+                    genome_chimaera_aggregate_counters,
+                    genome_longest_isoform_aggregate_counters_by_parent_type,
+                    genome_all_isoforms_aggregate_counters_by_parent_type,
+                    genome_chimaera_aggregate_counters_by_parent_type,
+                    genome_total_counter,
+                    genome_longest_isoform_aggregate_positions,
+                    genome_all_isoforms_aggregate_positions,
+                    genome_chimaera_aggregate_positions,
                 )
+                del record_data
+                # Force flush to disk after each chromosome
+                feature_output_handle.flush()
+                aggregate_output_handle.flush()
 
-            for (parent_type, aggregate_type), record_aggregate_counter in record_data[
-                "all_isoforms_aggregate_counters_by_parent_type"
-            ].items():
-                genome_all_isoforms_aggregate_counters_by_parent_type[(parent_type, aggregate_type)].merge(
-                    record_aggregate_counter
+                # Force garbage collection to free memory immediately
+                gc.collect()
+            
+        else:
+            # Sequential processing: load one chromosome at a time, write immediately.
+            # Uses the same _open_gff_for_record helper as the parallel mode so that
+            # both plain and tabix-indexed files are handled identically.
+            logging.info("Processing records sequentially...")
+            gff_limit: Optional[dict] = None
+            if args.gff_feature_types:
+                gff_limit = {'gff_type': [t.strip() for t in args.gff_feature_types.split(',')]}
+            for record_id in _scan_gff_record_ids(args.gff):
+                record = _open_gff_for_record(args.gff, record_id, gff_limit)
+                if record is None:
+                    logging.warning(f"No features found for record '{record_id}', skipping.")
+                    continue
+                result = _do_counting(record)
+                record.features.clear()
+                del record
+                process_and_write_record_data(
+                    result,
+                    feature_output_handle,
+                    aggregate_output_handle,
+                    genome_longest_isoform_aggregate_counters,
+                    genome_all_isoforms_aggregate_counters,
+                    genome_chimaera_aggregate_counters,
+                    genome_longest_isoform_aggregate_counters_by_parent_type,
+                    genome_all_isoforms_aggregate_counters_by_parent_type,
+                    genome_chimaera_aggregate_counters_by_parent_type,
+                    genome_total_counter,
+                    genome_longest_isoform_aggregate_positions,
+                    genome_all_isoforms_aggregate_positions,
+                    genome_chimaera_aggregate_positions,
                 )
+                del result
+                feature_output_handle.flush()
+                aggregate_output_handle.flush()
+                gc.collect()
 
-            for (parent_type, aggregate_type), record_aggregate_counter in record_data[
-                "chimaera_aggregate_counters_by_parent_type"
-            ].items():
-                genome_chimaera_aggregate_counters_by_parent_type[(parent_type, aggregate_type)].merge(
-                    record_aggregate_counter
-                )
-
-            # Update the genome's total counter from the record data total counter
-            genome_total_counter.merge(record_data["total_counter"])
-
+        # Write genome-level totals at the end (only genome totals are kept in memory)
         logging.info("Writing genome totals...")
-
-        aggregate_writer: AggregateFileWriter = AggregateFileWriter(aggregate_output_handle)
 
         # Write genomic counts
         aggregate_writer.write_rows_with_data(
-            ".", ["."], ".", ".", "longest_isoform", genome_longest_isoform_aggregate_counters
+            ".", ["."], ".", ".", "longest_isoform", genome_longest_isoform_aggregate_counters,
+            genome_longest_isoform_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
         aggregate_writer.write_rows_with_data(
-            ".", ["."], ".", ".", "all_isoforms", genome_all_isoforms_aggregate_counters
+            ".", ["."], ".", ".", "all_isoforms", genome_all_isoforms_aggregate_counters,
+            genome_all_isoforms_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
         aggregate_writer.write_rows_with_data(
-            ".", ["."], ".", ".", "chimaera", genome_chimaera_aggregate_counters
+            ".", ["."], ".", ".", "chimaera", genome_chimaera_aggregate_counters,
+            genome_chimaera_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
 
         # Write genomic counts by parent type
         aggregate_writer.write_rows_with_data_by_parent_type(
-            ".", ["."], ".", "longest_isoform", genome_longest_isoform_aggregate_counters_by_parent_type
+            ".", ["."], ".", "longest_isoform", genome_longest_isoform_aggregate_counters_by_parent_type,
+            genome_longest_isoform_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
         aggregate_writer.write_rows_with_data_by_parent_type(
-            ".", ["."], ".", "all_isoforms", genome_all_isoforms_aggregate_counters_by_parent_type
+            ".", ["."], ".", "all_isoforms", genome_all_isoforms_aggregate_counters_by_parent_type,
+            genome_all_isoforms_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
         aggregate_writer.write_rows_with_data_by_parent_type(
-            ".", ["."], ".", "chimaera", genome_chimaera_aggregate_counters_by_parent_type
+            ".", ["."], ".", "chimaera", genome_chimaera_aggregate_counters_by_parent_type,
+            genome_chimaera_aggregate_positions,
+            report_non_qualified=args.report_non_qualified_features,
         )
 
         # Write the genomic total. A dummy dict needs to be created to use the `write_rows_with_data` method
@@ -1033,7 +1483,8 @@ def main():
         )
         genomic_total_counter_dict["."] = genome_total_counter
         aggregate_writer.write_rows_with_data(
-            ".", ["."], ".", ".", "all_sites", genomic_total_counter_dict
+            ".", ["."], ".", ".", "all_sites", genomic_total_counter_dict,
+            report_non_qualified=args.report_non_qualified_features,
         )
 
         logging.info("Program finished")

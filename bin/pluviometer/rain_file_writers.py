@@ -3,7 +3,10 @@ from Bio.SeqFeature import ExactPosition
 from .multi_counter import MultiCounter
 from Bio.SeqFeature import SeqFeature
 from collections import defaultdict
-from typing import TextIO
+from typing import TextIO, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from __main__ import AggregatePositions
 
 
 def make_parent_path(parent_list: list[str]) -> str:
@@ -80,10 +83,6 @@ class RainFileWriter:
         b: int = self.handle.write(str(counter.genome_base_freqs.sum()))
         b += self.handle.write('\t')
         b += self.handle.write(",".join(map(str, counter.genome_base_freqs[0:4].flat)))
-        b += self.handle.write('\t')
-        b += self.handle.write(",".join(map(str, counter.edit_site_freqs[0:4, 0:4].flat)))
-        b += self.handle.write('\t')
-        b += self.handle.write(",".join(map(str, counter.edit_read_freqs[0:4, 0:4].flat)))
         b += self.handle.write('\n')
 
         return b
@@ -94,18 +93,23 @@ class FeatureFileWriter(RainFileWriter):
     metadata_fields: list[str] = [
     "SeqID",
     "ParentIDs",
-    "FeatureID",
+    "ID",
+    "Mtype",
+    "Ptype",
     "Type",
+    "Ctype",
+    "Mode",
     "Start",
     "End",
     "Strand",
     ]
 
     data_fields: list[str] = [
-        "CoveredSites",
-        "GenomeBases",
-        "SiteBasePairings",
-        "ReadBasePairings"
+        "TotalSites",
+        "ObservedBases",
+        "QualifiedBases",
+        "SiteBasePairingsQualified",
+        "ReadBasePairingsQualified"
     ]
 
     def __init__(self, handle: TextIO):
@@ -123,7 +127,11 @@ class FeatureFileWriter(RainFileWriter):
             record_id,
             make_parent_path(feature.parent_list),
             feature.id,
+            "feature",
+            ".",
             feature.type,
+            ".",
+            ".",
             str(feature.location.parts[0].start + ExactPosition(1)),
             str(feature.location.parts[-1].end),
             str(feature.location.strand),
@@ -134,12 +142,13 @@ class FeatureFileWriter(RainFileWriter):
     ) -> int:
         """Write the data fields (coverage, read frequency, &c) of an output line, taken from the informations in a counter object"""
         return self.write_metadata(record_id, feature) + self.write_data(
-            str(counter.genome_base_freqs.sum()),
+            str(len(feature.location)),  # TotalSites: total positions in the feature
             # Subindexing is used below because counter matrices are 5x5 because they contain pairings with N, which we don't print
             # Use the flat attribute of the NumPy arrays to flatten the matrix row-wise to attain the desired base pairing order in the output
-            ",".join(map(str, counter.genome_base_freqs[0:4].flat)),
-            ",".join(map(str, counter.edit_site_freqs[0:4, 0:4].flat)),
-            ",".join(map(str, counter.edit_read_freqs[0:4, 0:4].flat)),
+            ",".join(map(str, counter.genome_base_freqs[0:4].flat)),  # ObservedBases: base distribution for all observations
+            ",".join(map(str, counter.filtered_base_freqs[0:4].flat)),  # QualifiedBases: base distribution for qualified sites
+            ",".join(map(str, counter.edit_qualified_site_freqs[0:4, 0:4].flat)),  # SiteBasePairingsQualified
+            ",".join(map(str, counter.edit_qualified_read_freqs[0:4, 0:4].flat)),  # ReadBasePairingsQualified
         )
 
     def write_row_without_data(self, record_id: str, feature: SeqFeature) -> int:
@@ -148,7 +157,7 @@ class FeatureFileWriter(RainFileWriter):
         This is faster than creating dummy counter objects with zero observations.
         """
         return self.write_metadata(record_id, feature) + self.write_data(
-            "0", self.STR_ZERO_BASE_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS
+            str(len(feature.location)), self.STR_ZERO_BASE_FREQS, self.STR_ZERO_BASE_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS
         )
 
 
@@ -156,20 +165,23 @@ class AggregateFileWriter(RainFileWriter):
     metadata_fields: list[str] = [
     "SeqID",
     "ParentIDs",
-    "AggregateID",
-    "ParentType",
-    "AggregateType",
-    "AggregationMode",
+    "ID",
+    "Mtype",
+    "Ptype",
+    "Type",
+    "Ctype",
+    "Mode",
     "Start",
     "End",
     "Strand",
     ]
 
     data_fields: list[str] = [
-        "CoveredSites",
-        "GenomeBases",
-        "SiteBasePairings",
-        "ReadBasePairings",
+        "TotalSites",
+        "ObservedBases",
+        "QualifiedBases",
+        "SiteBasePairingsQualified",
+        "ReadBasePairingsQualified",
     ]
 
     def __init__(self, handle: TextIO):
@@ -177,6 +189,16 @@ class AggregateFileWriter(RainFileWriter):
 
         return None
     
+    @staticmethod
+    def _agg_type(seq_id: str, aggregate_id: str) -> str:
+        """Compute the Type field for an aggregate row."""
+        if aggregate_id not in (".", ""):
+            return "feature"
+        elif seq_id != ".":
+            return "sequence"
+        else:
+            return "global"
+
     def write_metadata(
             self,
             seq_id: str,
@@ -190,26 +212,36 @@ class AggregateFileWriter(RainFileWriter):
             strand: str = "."
     ) -> int:
         """Write metadata fields of an aggregate"""
-        b: int = self.handle.write(seq_id)
-        b += self.handle.write('\t')
-        b += self.handle.write(parent_ids)
-        b += self.handle.write('\t')
-        b += self.handle.write(aggregate_id)
-        b += self.handle.write('\t')
-        b += self.handle.write(parent_type)
-        b += self.handle.write('\t')
-        b += self.handle.write(aggregate_type)
-        b += self.handle.write('\t')
-        b += self.handle.write(aggregation_mode)
-        b += self.handle.write('\t')
-        b += self.handle.write(start)
-        b += self.handle.write('\t')
-        b += self.handle.write(end)
-        b += self.handle.write('\t')
-        b += self.handle.write(strand)
-        b += self.handle.write('\t')
-
-        return b
+        
+        # Determine the Type field before modifying aggregate_id
+        original_aggregate_id = aggregate_id
+        agg_type = self._agg_type(seq_id, original_aggregate_id)
+        
+        # Create a dynamic ID for aggregates without explicit IDs (sequence/global level)
+        if aggregate_id == ".":
+            # Build ID as Type_Ptype_Ctype_Mode, omitting Ptype and/or Ctype if they are "."
+            id_parts = [agg_type]  # "sequence" or "global"
+            if parent_type != ".":
+                id_parts.append(parent_type)
+            if aggregate_type != ".":
+                id_parts.append(aggregate_type)
+            id_parts.append(aggregation_mode)
+            
+            aggregate_id = "_".join(id_parts)
+        
+        return super().write_metadata(
+            seq_id,
+            parent_ids,
+            aggregate_id,
+            "aggregate",
+            parent_type,
+            agg_type,  # Use the pre-computed Type instead of recalculating it
+            aggregate_type,
+            aggregation_mode,
+            start,
+            end,
+            strand,
+        )
     
     # Case like that we will add an empty start end strand
     # 21	.	.	.	exon	longest_isoform
@@ -224,28 +256,37 @@ class AggregateFileWriter(RainFileWriter):
         feature_type: str,
         aggregation_mode: str,
         counter_dict: defaultdict[str, MultiCounter],
+        positions_dict: Optional[dict[str, 'AggregatePositions']] = None,
+        report_non_qualified: bool = True,
     ) -> int:
         """Write metadata and data fields of multiple counters of the same aggregate feature"""
         b: int = 0
 
         for aggregate_type, aggregate_counter in counter_dict.items():
-            b += super().write_metadata(
+            if not report_non_qualified and aggregate_counter.filtered_base_freqs.sum() == 0:
+                continue
+            b += self.write_metadata(
                 record_id,
                 make_parent_path(parent_list),
                 aggregate_id,
                 feature_type,
                 aggregate_type,
                 aggregation_mode,
-                ".",
-                ".",
-                ".",
             )
 
+            # Calculate TotalSites from positions if available
+            total_sites_str = "."
+            if positions_dict and aggregate_type in positions_dict:
+                pos = positions_dict[aggregate_type]
+                if pos.start != float('inf') and pos.end > 0:
+                    total_sites_str = str(pos.end - pos.start)
+
             b += self.write_data(
-                str(aggregate_counter.genome_base_freqs.sum()),
-                ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),
-                ",".join(map(str, aggregate_counter.edit_site_freqs[0:4, 0:4].flat)),
-                ",".join(map(str, aggregate_counter.edit_read_freqs[0:4, 0:4].flat)),
+                total_sites_str,  # TotalSites: calculated from aggregate positions
+                ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),  # ObservedBases
+                ",".join(map(str, aggregate_counter.filtered_base_freqs[0:4].flat)),  # QualifiedBases
+                ",".join(map(str, aggregate_counter.edit_qualified_site_freqs[0:4, 0:4].flat)),  # SiteBasePairingsQualified
+                ",".join(map(str, aggregate_counter.edit_qualified_read_freqs[0:4, 0:4].flat)),  # ReadBasePairingsQualified
             )
 
         return b
@@ -276,10 +317,11 @@ class AggregateFileWriter(RainFileWriter):
             strand=strand_str,
         )
         b += self.write_data(
-            str(counter.genome_base_freqs.sum()),
-            ",".join(map(str, counter.genome_base_freqs[0:4].flat)),
-            ",".join(map(str, counter.edit_site_freqs[0:4, 0:4].flat)),
-            ",".join(map(str, counter.edit_read_freqs[0:4, 0:4].flat)),
+            str(len(feature.location)) if hasattr(feature, 'location') and feature.location else ".",  # TotalSites
+            ",".join(map(str, counter.genome_base_freqs[0:4].flat)),  # ObservedBases
+            ",".join(map(str, counter.filtered_base_freqs[0:4].flat)),  # QualifiedBases
+            ",".join(map(str, counter.edit_qualified_site_freqs[0:4, 0:4].flat)),  # SiteBasePairingsQualified
+            ",".join(map(str, counter.edit_qualified_read_freqs[0:4, 0:4].flat)),  # ReadBasePairingsQualified
         )
 
         return b
@@ -309,11 +351,14 @@ class AggregateFileWriter(RainFileWriter):
             end=end_str,
             strand=strand_str,
         )
-        b += self.write_data("0", self.STR_ZERO_BASE_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS)
+        b += self.write_data(
+            str(len(feature.location)) if hasattr(feature, 'location') and feature.location else ".",  # TotalSites
+            self.STR_ZERO_BASE_FREQS, self.STR_ZERO_BASE_FREQS, self.STR_ZERO_PAIRING_FREQS, self.STR_ZERO_PAIRING_FREQS
+        )
 
         return b
 
-    # Case like that we will add empty start end strand
+    # Case like that will add empty start end strand
     # 21	.	.	gene	    exon	longest_isoform
     # 21	.	.	pseudogene	exon	longest_isoform
     # .	    .	.	pseudogene	exon	longest_isoform
@@ -325,28 +370,37 @@ class AggregateFileWriter(RainFileWriter):
         aggregate_id: str,
         aggregation_mode: str,
         counter_dict: defaultdict[tuple[str, str], MultiCounter],
+        positions_dict: Optional[dict[str, 'AggregatePositions']] = None,
+        report_non_qualified: bool = True,
     ) -> int:
         """Write metadata and data fields of multiple counters grouped by (parent_type, aggregate_type)"""
         b: int = 0
 
         for (parent_type, aggregate_type), aggregate_counter in counter_dict.items():
-            b += super().write_metadata(
+            if not report_non_qualified and aggregate_counter.filtered_base_freqs.sum() == 0:
+                continue
+            b += self.write_metadata(
                 record_id,
                 make_parent_path(parent_list),
                 aggregate_id,
                 parent_type,
                 aggregate_type,
                 aggregation_mode,
-                ".",
-                ".",
-                ".",
             )
 
+            # Calculate TotalSites from positions if available
+            total_sites_str = "."
+            if positions_dict and aggregate_type in positions_dict:
+                pos = positions_dict[aggregate_type]
+                if pos.start != float('inf') and pos.end > 0:
+                    total_sites_str = str(pos.end - pos.start)
+
             b += self.write_data(
-                str(aggregate_counter.genome_base_freqs.sum()),
-                ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),
-                ",".join(map(str, aggregate_counter.edit_site_freqs[0:4, 0:4].flat)),
-                ",".join(map(str, aggregate_counter.edit_read_freqs[0:4, 0:4].flat)),
+                total_sites_str,  # TotalSites: calculated from aggregate positions
+                ",".join(map(str, aggregate_counter.genome_base_freqs[0:4].flat)),  # ObservedBases
+                ",".join(map(str, aggregate_counter.filtered_base_freqs[0:4].flat)),  # QualifiedBases
+                ",".join(map(str, aggregate_counter.edit_qualified_site_freqs[0:4, 0:4].flat)),  # SiteBasePairingsQualified
+                ",".join(map(str, aggregate_counter.edit_qualified_read_freqs[0:4, 0:4].flat)),  # ReadBasePairingsQualified
             )
 
         return b

@@ -20,20 +20,12 @@ python -m pluviometer --sites SITES --gff GFF [OPTIONS]
 python pluviometer_wrapper.py --sites SITES --gff GFF [OPTIONS]
 ```
 
-### drip_features.py
+### drip.py
 Post-processing tool for pluviometer feature output. Analyzes RNA editing from feature TSV files, calculating editing metrics (espf and espr) for all 16 genome-variant base pair combinations across multiple samples. Combines data into unified matrix format.
 
 **Usage:**
 ```bash
-./drip_features.py OUTPUT_PREFIX FILE1:SAMPLE1 FILE2:SAMPLE2 [...]
-```
-
-### drip_aggregates.py
-Post-processing tool for pluviometer aggregate output. Similar to drip_features.py but operates on aggregate-level data, calculating editing metrics for aggregated genomic regions across samples.
-
-**Usage:**
-```bash
-./drip_aggregates.py OUTPUT_PREFIX FILE1:SAMPLE1 FILE2:SAMPLE2 [...]
+./drip.py OUTPUT_PREFIX FILE1:GROUP1:SAMPLE1:REPLICATE1 FILE2:GROUP1:SAMPLE2:REPLICATE1 [...]
 ```
 
 ### restore_sequences.py
