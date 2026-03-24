@@ -1,6 +1,5 @@
-FROM openjdk:8u102
+FROM quay.io/biocontainers/openjdk:11.0.1--2
 
-RUN apt-get update && apt-get install -y ca-certificates
 # Download the tool
 RUN wget https://github.com/dieterich-lab/JACUSA2/releases/download/v2.0.4/JACUSA_v2.0.4.jar -O /usr/local/bin/JACUSA_v2.0.4.jar
 

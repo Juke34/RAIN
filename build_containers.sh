@@ -146,7 +146,7 @@ if [ "$build_docker" = true ]; then
         fi
 
         # Use containers/ as build context so shared files (e.g. env_*.yml) are accessible
-        docker build ${docker_arch_option} -f "${dir}/Dockerfile" -t ${imgname} containers/
+        docker build ${docker_arch_option} -f "${dir}/Dockerfile" -t ${imgname} containers/common/
     done
 
     if [[ ${github_action_mode} == 'github_action' ]]; then

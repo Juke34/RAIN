@@ -10,9 +10,9 @@ RUN apt install -y git
 RUN git clone --depth=1 https://github.com/Juke34/SAPiN.git
 
 # Use a pip constraint file to pin dependencies for reproducibility
-COPY constraints.txt SAPiN/
+COPY constraints_sapin.txt SAPiN/
 
 RUN cd SAPiN && \
-    pip install --constraint constraints.txt .
+    pip install --constraint constraints_sapin.txt .
 
 CMD [ "bash" ]
