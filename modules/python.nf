@@ -28,32 +28,30 @@ process restore_original_sequences {
 
 process drip {
     label "pluviometer"
-    tag "drip"
+    tag "drip_${tool}"
     publishDir("${params.outdir}/drip/${prefix}", mode:"copy", pattern: "*/*")
     
     input:
-        val(meta_tsv)
+        tuple(val(tool), val(meta_tsv))
         val prefix
         val samples_pct
         val group_pct
 
     output:
-        path("*_espr/*_AG.tsv"), emit: editing_ag_espr
         path("*_espr/*.tsv"), emit: editing_all_espr
-        path("*_espf/*_AG.tsv"), emit: editing_ag_espf
         path("*_espf/*.tsv"), emit: editing_all_espf
 
     script:
         def list = meta_tsv
         def args = []
         
-        // Process list by pairs: [meta, file, meta, file, ...]
-        for (int i = 0; i < list.size(); i += 2) {
-            def m = list[i]  // Don't reuse 'meta' variable name
-            def file = list[i + 1]
+        // Process list of [meta, file] pairs from groupTuple
+        list.each { pair ->
+            def m = pair[0]  // meta dictionary
+            def file = pair[1]  // file path
             def group = m.group ?: "group_unknown"
             def sample = m.sample ?: "sample_unknown"
-            def replicate = m.rep ?: "rep1"  // Note: it's 'rep' not 'replicate' in meta
+            def replicate = m.rep ?: "rep1"
             args.add("${file}:${group}:${sample}:${replicate}")
         }
         

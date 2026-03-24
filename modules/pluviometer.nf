@@ -1,17 +1,16 @@
 process pluviometer {
     label "pluviometer"
     publishDir("${params.outdir}/pluviometer/${tool_format}/", mode: "copy")
-    tag "${meta.uid}"
+    tag "${meta.uid}_${tool_format}"
 
     input:
-        tuple(val(meta), path(site_edits))
+        tuple(val(meta), val(tool_format), path(site_edits))
         path(gff)
-        val(tool_format)
 
     output:
-        tuple(val(meta), path("*features.tsv"), emit: tuple_sample_feature)
-        tuple(val(meta), path("*aggregates.tsv"), emit: tuple_sample_aggregate)
-        tuple(val(meta), path("*pluviometer.log"), emit: tuple_sample_log)
+        tuple(val(meta), val(tool_format), path("*features.tsv"), emit: tuple_sample_feature)
+        tuple(val(meta), val(tool_format), path("*aggregates.tsv"), emit: tuple_sample_aggregate)
+        tuple(val(meta), val(tool_format), path("*pluviometer.log"), emit: tuple_sample_log)
 
     script:
         base_name = site_edits.BaseName

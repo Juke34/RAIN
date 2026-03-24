@@ -192,7 +192,7 @@ include {fasta_unzip} from "$baseDir/modules/pigz.nf"
 include {samtools_index; samtools_fasta_index; samtools_sort_bam as samtools_sort_bam_raw; samtools_sort_bam as samtools_sort_bam_merged; samtools_split_mapped_unmapped; samtools_merge_bams; samtools_calmd} from './modules/samtools.nf'
 include {reditools2} from "./modules/reditools2.nf"
 include {reditools3} from "./modules/reditools3.nf"
-include {pluviometer as pluviometer_jacusa2; pluviometer as pluviometer_reditools2; pluviometer as pluviometer_reditools3; pluviometer as pluviometer_sapin} from "./modules/pluviometer.nf"
+include {pluviometer} from "./modules/pluviometer.nf"
 include {drip as drip_aggregates; drip as drip_features} from "./modules/python.nf"
 include {sapin} from "./modules/sapin.nf"
 
@@ -748,32 +748,80 @@ workflow {
 // -------------------------------------------------------
 // ----------------- DETECT EDITING SITES ----------------
 // -------------------------------------------------------
-
+        Channel.empty().set{editing_analysis}
         // Select site detection tool
         if ( "jacusa2" in edit_site_tool_list ){ 
                 // Create a fasta index file of the reference genome
                 samtools_fasta_index(genome.collect())
                 jacusa2(final_bam_for_editing, samtools_fasta_index.out.tuple_fasta_fastaindex.collect())
-                pluviometer_jacusa2(jacusa2.out.tuple_sample_jacusa2_table, clean_annotation.collect(), "jacusa2")
+                editing_analysis = editing_analysis.mix(jacusa2.out.tuple_sample_jacusa2_table)
         }
         if ( "sapin" in edit_site_tool_list ){ 
                 sapin(tuple_sample_bam_processed, genome.collect())
         }
         if ( "reditools2" in edit_site_tool_list ){ 
                 reditools2(final_bam_for_editing, genome.collect(), params.region)
-                pluviometer_reditools2(reditools2.out.tuple_sample_serial_table, clean_annotation.collect(), "reditools2")
+                editing_analysis = editing_analysis.mix(reditools2.out.tuple_sample_serial_table)
         }
         if ( "reditools3" in edit_site_tool_list ){ 
                 reditools3(final_bam_for_editing, genome.collect())
-                pluviometer_reditools3(reditools3.out.tuple_sample_serial_table, clean_annotation.collect(), "reditools3")
-                if(via_csv){
-                    // drip - compute espn, espf, merge different sample in one, and output by type of mutation (AG, AC, etc..)
-                    drip_aggregates(pluviometer_reditools3.out.tuple_sample_aggregate.collect(), "aggregates", params.min_samples_pct, params.min_group_pct)
-                    drip_features(pluviometer_reditools3.out.tuple_sample_feature.collect(), "features", params.min_samples_pct, params.min_group_pct)
-                  
-                    //barometer (drip_features.out.editing_ag_espr, "AG")
+                editing_analysis = editing_analysis.mix(reditools3.out.tuple_sample_serial_table)
+        }
+        
+        // Run pluviometer on editing analysis results to get aggregates and features values
+        pluviometer(editing_analysis, clean_annotation.collect())
 
-                }
+        if(via_csv){
+            // Collect pluviometer outputs by tool (group by element at index 1 = tool name)
+            aggregates_by_tool = pluviometer.out.tuple_sample_aggregate.map { meta, tool, file -> tuple(tool, [meta, file]) }.groupTuple()
+            features_by_tool = pluviometer.out.tuple_sample_feature.map { meta, tool, file -> tuple(tool, [meta, file]) }.groupTuple()
+
+            // drip - compute espn, espf, merge different sample in one, and output by type of mutation (AG, AC, etc..)
+            drip_aggregates(aggregates_by_tool, "aggregates", params.min_samples_pct, params.min_group_pct)
+            drip_features(features_by_tool, "features", params.min_samples_pct, params.min_group_pct)
+
+            // -------------------  ESPF JOIN AGGREGATES AND FEATURES -----------------
+            drip_aggregates.out.editing_all_espf
+                    .flatten()
+                    .map { file -> 
+                        // Extract editing type from filename (e.g., "drip_aggregates_espf_AC.tsv" -> "AC")
+                        def editType = file.baseName.tokenize('_').last()
+                        tuple(editType, file)
+                    }
+                    .join(
+                        drip_features.out.editing_all_espf
+                        .flatten()
+                        .map { file -> 
+                        // Extract editing type from filename (e.g., "drip_aggregates_espf_AC.tsv" -> "AC")
+                        def editType = file.baseName.tokenize('_').last()
+                        tuple(editType, file)
+                    }
+                    )
+                    .set { features_espf_by_edit_type }
+                    features_espf_by_edit_type.view()
+
+            // -------------------  ESPR JOIN AGGREGATES AND FEATURES -----------------
+            drip_aggregates.out.editing_all_espr
+                    .flatten()
+                    .map { file -> 
+                        // Extract editing type from filename (e.g., "drip_aggregates_espr_AC.tsv" -> "AC")
+                        def editType = file.baseName.tokenize('_').last()
+                        tuple(editType, file)
+                    }
+                    .join(
+                        drip_features.out.editing_all_espr
+                        .flatten()
+                        .map { file -> 
+                        // Extract editing type from filename (e.g., "drip_aggregates_espr_AC.tsv" -> "AC")
+                        def editType = file.baseName.tokenize('_').last()
+                        tuple(editType, file)
+                    }
+                    )
+                    .set { features_espr_by_edit_type }
+                    features_espr_by_edit_type.view()
+
+        // READY for barometer analysis
+
         }
 
         // ------------------- MULTIQC -----------------
