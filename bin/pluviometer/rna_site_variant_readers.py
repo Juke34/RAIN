@@ -234,11 +234,11 @@ class Reditools2Reader(ReditoolsXReader):
         strand = int(self.parts[REDITOOLS_FIELD_INDEX["Strand"]])
         match strand:
             case 0:
-                return -1
+                return 0  # Unstranded
             case 1:
-                return 1
+                return 1  # Forward strand
             case 2:
-                return 0
+                return -1  # Reverse strand (first-strand oriented)
             case _:
                 raise Exception(f"Invalid strand value: {strand}")
 
