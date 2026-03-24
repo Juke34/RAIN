@@ -12,9 +12,9 @@ class SiteFilter:
         if variant_data.coverage >= self.cov_threshold:
             np.copyto(
                 self.frequencies,
-                variant_data.frequencies * variant_data.frequencies
-                >= self.edit_threshold,
+                variant_data.frequencies
             )
+            self.frequencies[self.frequencies < self.edit_threshold] = 0
         else:
             self.frequencies.fill(0)
 
