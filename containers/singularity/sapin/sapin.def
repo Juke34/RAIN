@@ -2,7 +2,7 @@ Bootstrap: docker
 From: python:slim-bullseye
 
 %files
-    containers/singularity/sapin/constraints.txt /constraints.txt
+    containers/singularity/common/constraints_sapin.txt /constraints.txt
 
 %post
     apt-get update && apt-get install -y \

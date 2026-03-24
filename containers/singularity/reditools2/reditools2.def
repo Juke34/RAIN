@@ -2,7 +2,7 @@ Bootstrap: docker
 From: condaforge/miniforge3:24.7.1-2
 
 %files
-    containers/singularity/reditools2/env_reditools2.yml ./env_reditools2.yml
+    containers/singularity/common/env_reditools2.yml ./env_reditools2.yml
 
 %post
     # Activer conda dans l'environnement shell
