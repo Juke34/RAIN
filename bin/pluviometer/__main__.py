@@ -735,9 +735,24 @@ class RecordCountingContext:
         """
         Update the multicounters matching the ID of features in the `active_features` set.
         A new multicounter is created if no matching ID is found.
+        
+        Strand compatibility logic:
+        - Feature unstranded (0): accepts sites from any strand
+        - Feature stranded: only accepts sites from same strand or unstranded sites
+        - Site unstranded: only counted for unstranded features (to avoid combinatorial explosion)
         """
         for feature_key, feature in self.active_features.items():
-            if site_data.strand == 0 or feature.location.strand == 0 or feature.location.strand == site_data.strand:
+            # Optimized order: check exact match first (most common case)
+            if feature.location.strand == site_data.strand:
+                counter: MultiCounter = self.counters[feature_key]
+                counter.update(site_data)
+            # Feature is unstranded: accept stranded sites too
+            elif feature.location.strand == 0 and site_data.strand != 0:
+                counter: MultiCounter = self.counters[feature_key]
+                counter.update(site_data)
+            # Site is unstranded: only count for unstranded features
+            # (counting for all features would cause combinatorial explosion)
+            elif site_data.strand == 0 and feature.location.strand == 0:
                 counter: MultiCounter = self.counters[feature_key]
                 counter.update(site_data)
 
