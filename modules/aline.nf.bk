@@ -1,0 +1,56 @@
+/*
+Adapted from
+from https://github.com/mahesh-panchal/nf-cascade
+*/
+process AliNe {
+    tag "$pipeline_name"
+    label 'aline'
+    publishDir "${params.outdir}", mode: 'copy'
+    
+    errorStrategy 'terminate' // to avoid any retry
+    maxRetries 0  // Override global retry config - do not retry this process
+
+    input:
+        val pipeline_name     // String
+        val profile           // String
+        val config
+        val reads
+        val genome
+        val read_type
+        val aligner
+        val library_type
+        val annotation
+        val cache_dir          // String
+
+    when:
+        task.ext.when == null || task.ext.when
+
+    script:
+       
+        def nxf_cmd = "nextflow run ${pipeline_name} ${profile} ${config} --reads ${reads} --reference ${genome} ${read_type} ${aligner} ${library_type} --annotation ${annotation} --data_type rna --outdir \$WORK_DIR/AliNe"
+        
+        """
+        echo "[AliNe] Process started at \$(date '+%Y-%m-%d %H:%M:%S')"
+        
+        # Save absolute work directory before changing context
+        WORK_DIR=\$(pwd)
+        
+        # Create cache directory for resume AliNe run made from different working directory
+        mkdir -p "${cache_dir}"
+        cd "${cache_dir}"
+        
+        # Save command for reference/debugging
+        echo "${nxf_cmd}" > \$WORK_DIR/nf-cmd.sh
+  
+        # Run nextflow command directly
+        ${nxf_cmd} || {
+            echo "[AliNe] ERROR: Pipeline failed at \$(date '+%Y-%m-%d %H:%M:%S')" >&2
+            exit 1
+        }
+            
+        echo "[AliNe] Pipeline completed successfully at \$(date '+%Y-%m-%d %H:%M:%S')"
+    """
+
+    output:
+        path "AliNe"  , emit: output
+}
