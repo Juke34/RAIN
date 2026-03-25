@@ -450,19 +450,40 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
                 row_data["primary_pval"] = np.nan
     
             # Pairwise tests
+            # DEBUG: Log first BMK's pairwise test setup
+            if idx == ndf.index[0]:
+                pairs_list = list(combinations(groups, 2))
+                log.debug(f"  DEBUG PAIRWISE: {len(groups)} groups → {len(pairs_list)} pairs")
+                log.debug(f"  DEBUG PAIRWISE: Groups = {groups}")
+                log.debug(f"  DEBUG PAIRWISE: Pairs = {pairs_list}")
+            
             for g1, g2 in combinations(groups, 2):
                 v1, v2 = group_values.get(g1, []), group_values.get(g2, [])
                 pair_key = f"{g1}_vs_{g2}"
                 
+                # DEBUG: Log first BMK's pairwise data
+                if idx == ndf.index[0]:
+                    log.debug(f"  DEBUG PAIRWISE: {pair_key} → v1={len(v1)} v2={len(v2)}")
+                
                 if len(v1) >= 1 and len(v2) >= 1:
+                    # DEBUG: Log first BMK entering pairwise test block
+                    if idx == ndf.index[0]:
+                        log.debug(f"  DEBUG PAIRWISE: Entering test block for {pair_key}")
+                    
                     # Mann-Whitney U (nonparametric, always compute)
                     try:
                         stat, pval = stats.mannwhitneyu(v1, v2, alternative="two-sided")
                         row_data[f"mwu_stat_{pair_key}"] = stat
                         row_data[f"mwu_pval_{pair_key}"] = pval
-                    except Exception:
+                        
+                        # DEBUG: Confirm keys added
+                        if idx == ndf.index[0]:
+                            log.debug(f"  DEBUG PAIRWISE: Added mwu keys for {pair_key}: stat={stat:.3f}, pval={pval:.3e}")
+                    except Exception as e:
                         row_data[f"mwu_stat_{pair_key}"] = np.nan
                         row_data[f"mwu_pval_{pair_key}"] = np.nan
+                        if idx == ndf.index[0]:
+                            log.debug(f"  DEBUG PAIRWISE: Mann-Whitney failed for {pair_key}: {e}")
                     
                     # Student t-test (parametric, equal variances)
                     if len(v1) >= 2 and len(v2) >= 2:
@@ -511,24 +532,87 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
             rows.append(row_data)
 
     # Convert rows to DataFrame
+    # DEBUG: Check last row too to ensure all rows have pairwise columns
+    if len(rows) > 1:
+        last_row_keys = list(rows[-1].keys())
+        pval_keys_last = [k for k in last_row_keys if k.endswith("_pval")]
+        log.debug(f"  DEBUG: Last row has {len(last_row_keys)} total keys")
+        log.debug(f"  DEBUG: Last row has {len(pval_keys_last)} _pval keys")
+    
     res_df = pd.DataFrame(rows)
     
+    # DEBUG: Check res_df columns IMMEDIATELY after DataFrame creation
+    log.debug(f"  DEBUG: res_df has {len(res_df.columns)} columns after pd.DataFrame()")
+    mwu_cols_in_df = [c for c in res_df.columns if "mwu" in c.lower()]
+    log.debug(f"  DEBUG: res_df has {len(mwu_cols_in_df)} mwu columns: {mwu_cols_in_df[:5] if len(mwu_cols_in_df) > 0 else 'NONE'}")
+    
+    # DEBUG: Log first row keys to understand what columns were created
+    if len(rows) > 0:
+        first_row_keys = list(rows[0].keys())
+        pval_keys_in_row = [k for k in first_row_keys if k.endswith("_pval")]
+        mwu_keys_in_row = [k for k in first_row_keys if "mwu" in k.lower()]
+        log.debug(f"  DEBUG: First row dict has {len(first_row_keys)} total keys")
+        log.debug(f"  DEBUG: First row dict has {len(pval_keys_in_row)} _pval keys: {pval_keys_in_row}")
+        log.debug(f"  DEBUG: First row dict has {len(mwu_keys_in_row)} mwu keys: {mwu_keys_in_row}")
+    
     # Multiple testing correction (FDR Benjamini-Hochberg) for ALL p-value columns
-    for col in res_df.columns:
-        if col.endswith("_pval"):
-            pvals = res_df[col].values
-            mask = ~np.isnan(pvals)
-            if mask.sum() > 0:
-                _, corrected, _, _ = multipletests(pvals[mask], method="fdr_bh")
-                adj_col = col.replace("_pval", "_padj")
-                res_df[adj_col] = np.nan
-                res_df.loc[mask, adj_col] = corrected
+    log.info(f"  Applying FDR correction to p-values...")
+    
+    # DEBUG: Log column count - check ALL columns containing "pval"
+    pval_cols_endswith = [c for c in res_df.columns if c.endswith("_pval")]
+    pval_cols_contains = [c for c in res_df.columns if "pval" in str(c).lower()]
+    log.debug(f"  DEBUG: Found {len(pval_cols_endswith)} columns ending with '_pval' in res_df")
+    log.debug(f"  DEBUG: Found {len(pval_cols_contains)} columns containing 'pval' in res_df")
+    if len(pval_cols_endswith) <= 10:
+        log.debug(f"  DEBUG: Columns ending with '_pval': {pval_cols_endswith}")
+    if len(pval_cols_contains) > len(pval_cols_endswith):
+        missing = [c for c in pval_cols_contains if c not in pval_cols_endswith]
+        log.debug(f"  DEBUG: Columns with 'pval' but not ending with '_pval': {missing[:10]}")
+    
+    pval_cols = pval_cols_contains  # USE ALL pval columns, not just those ending with _pval
+    
+    n_padj_created = 0
+    for col in pval_cols:  # FIXED: Iterate over filtered list instead of checking endswith
+        adj_col = col.replace("_pval", "_padj")
+        res_df[adj_col] = np.nan  # Always create the column
+        
+        pvals = res_df[col].values
+        mask = ~np.isnan(pvals)
+        if mask.sum() > 0:
+            _, corrected, _, _ = multipletests(pvals[mask], method="fdr_bh")
+            res_df.loc[mask, adj_col] = corrected
+        n_padj_created += 1
+    log.info(f"  Created {n_padj_created} adjusted p-value columns")
 
     res_df.to_csv(os.path.join(outdir, "differential_results.csv"), index=False)
     results["table"] = os.path.join(outdir, "differential_results.csv")
     results["stat_test_method"] = stat_test
 
+    # Extract significant biomarkers (padj < 0.05 in ANY test)
+    padj_cols = [c for c in res_df.columns if c.endswith("_padj")]
+    if padj_cols:
+        # Create boolean mask: True if ANY padj column is < 0.05
+        sig_mask = res_df[padj_cols].lt(0.05).any(axis=1)
+        sig_df = res_df[sig_mask].copy()
+        
+        if len(sig_df) > 0:
+            # Add summary column: count of significant tests per BMK
+            sig_df["n_significant_tests"] = res_df[padj_cols].lt(0.05).sum(axis=1)[sig_mask]
+            
+            # Sort by minimum padj value (most significant first)
+            sig_df["min_padj"] = res_df[padj_cols].min(axis=1)[sig_mask]
+            sig_df = sig_df.sort_values("min_padj")
+            
+            sig_file = os.path.join(outdir, "significant_biomarkers.csv")
+            sig_df.to_csv(sig_file, index=False)
+            results["significant_table"] = sig_file
+            log.info(f"  Found {len(sig_df)} significant biomarkers (padj < 0.05 in any test)")
+        else:
+            log.info(f"  No significant biomarkers found (padj < 0.05)")
+    
     # Volcano-like plot for each pairwise comparison (using primary test)
+    log.info(f"  Generating volcano plots for {len(list(combinations(groups, 2)))} pairwise comparisons...")
+    n_plots_created = 0
     for g1, g2 in combinations(groups, 2):
         pair_key = f"{g1}_vs_{g2}"
         diff_col = f"diff_{pair_key}"
@@ -546,18 +630,60 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
             pval_col = f"mwu_pval_{pair_key}"
             padj_col = f"mwu_padj_{pair_key}"
             test_label = "Mann-Whitney U"
-        if diff_col in res_df.columns and padj_col in res_df.columns:
-            pdf = res_df[[diff_col, padj_col]].dropna()
-            if len(pdf) > 0:
-                fig, ax = plt.subplots(figsize=(7, 5))
-                neg_log_p = -np.log10(pdf[padj_col].clip(lower=1e-300))
-                colors = ["red" if p < 0.05 else "grey" for p in pdf[padj_col]]
-                ax.scatter(pdf[diff_col], neg_log_p, c=colors, alpha=0.6, s=20)
-                ax.axhline(-np.log10(0.05), color="blue", linestyle="--", alpha=0.5)
-                ax.set_xlabel(f"Difference ({g1} - {g2})")
-                ax.set_ylabel("-log10(adjusted p-value)")
-                ax.set_title(f"Volcano plot: {g1} vs {g2} ({test_label})")
-                save_fig(fig, os.path.join(outdir, f"volcano_{pair_key}.png"))
+        
+        # Check if columns exist
+        if diff_col not in res_df.columns:
+            log.warning(f"  Column {diff_col} not found, skipping volcano plot for {pair_key}")
+            continue
+        if padj_col not in res_df.columns:
+            log.warning(f"  Column {padj_col} not found, skipping volcano plot for {pair_key}")
+            continue
+            
+        pdf = res_df[[diff_col, padj_col]].dropna()
+        if len(pdf) > 0:
+            fig, ax = plt.subplots(figsize=(8, 6))
+            neg_log_p = -np.log10(pdf[padj_col].clip(lower=1e-300))
+            
+            # Color points by significance level
+            colors = []
+            for p in pdf[padj_col]:
+                if p < 0.05:
+                    colors.append("red")
+                elif p < 0.1:
+                    colors.append("orange")
+                else:
+                    colors.append("lightgrey")
+            
+            ax.scatter(pdf[diff_col], neg_log_p, c=colors, alpha=0.6, s=20, edgecolors='none')
+            
+            # Add significance threshold lines
+            ax.axhline(-np.log10(0.05), color="blue", linestyle="--", linewidth=1.5, alpha=0.7, label="p = 0.05")
+            ax.axhline(-np.log10(0.1), color="green", linestyle="--", linewidth=1.5, alpha=0.7, label="p = 0.1")
+            
+            # Add legend for significance levels
+            from matplotlib.patches import Patch
+            legend_elements = [
+                Patch(facecolor='red', alpha=0.6, label='p < 0.05'),
+                Patch(facecolor='orange', alpha=0.6, label='0.05 ≤ p < 0.1'),
+                Patch(facecolor='lightgrey', alpha=0.6, label='p ≥ 0.1')
+            ]
+            legend1 = ax.legend(handles=legend_elements, loc='upper left', title='Significativité')
+            ax.add_artist(legend1)
+            
+            # Add legend for threshold lines
+            ax.legend(loc='upper right', title='Seuils')
+            
+            ax.set_xlabel(f"Différence de moyenne ({g1} - {g2})")
+            ax.set_ylabel("-log10(p-value ajustée)")
+            ax.set_title(f"Volcano plot : {g1} vs {g2} ({test_label})")
+            ax.grid(True, alpha=0.3, linestyle=':')
+            save_fig(fig, os.path.join(outdir, f"volcano_{pair_key}.png"))
+            n_plots_created += 1
+            log.info(f"    Created volcano plot: {pair_key}")
+        else:
+            log.warning(f"  No data available for volcano plot {pair_key}")
+    
+    log.info(f"  Generated {n_plots_created} volcano plots")
 
     return results
 
@@ -743,7 +869,7 @@ def feature_ranking(df, sample_cols, sample_info, outdir, max_bmks=500, bmk_filt
     # Filter BMKs: cascade through filter columns to collect significant ones
     # PASS 1: adjusted p-values (*_padj < 0.05)
     # PASS 2: raw p-values (*_pval < 0.05) if not enough
-    diff_file = os.path.join(os.path.dirname(outdir), "differential", "differential_results.csv")
+    diff_file = os.path.join(os.path.dirname(outdir), "5_differential", "differential_results.csv")
     selected_bmks = set()
     n_bmks_total = len(mat.columns)
     filter_log = []
@@ -838,7 +964,7 @@ def feature_ranking(df, sample_cols, sample_info, outdir, max_bmks=500, bmk_filt
     var_df.to_csv(os.path.join(outdir, "variance_ranking.csv"), index=False)
 
     # Kruskal-Wallis based ranking (from differential analysis if available)
-    diff_file = os.path.join(os.path.dirname(outdir), "differential", "differential_results.csv")
+    diff_file = os.path.join(os.path.dirname(outdir), "5_differential", "differential_results.csv")
     if os.path.exists(diff_file):
         diff_df = pd.read_csv(diff_file)
         if "kruskal_padj" in diff_df.columns:
@@ -887,7 +1013,7 @@ def classification_analysis(df, sample_cols, sample_info, outdir, max_bmks=500, 
         bmk_filter_cols = ["primary_padj", "kruskal_padj", "welch_padj", "anova_padj"]
     
     # Filter BMKs: cascade through filter columns to collect significant ones
-    diff_file = os.path.join(os.path.dirname(outdir), "differential", "differential_results.csv")
+    diff_file = os.path.join(os.path.dirname(outdir), "5_differential", "differential_results.csv")
     selected_bmks = set()
     filter_log = []
     
@@ -1235,7 +1361,7 @@ def section_heatmap(df, sample_cols, sample_info, outdir, title="", max_rows=100
     ax.set_ylabel("Biomarker Type" if show_ylabels else f"Biomarker ({len(mat)} total)", fontsize=10)
     ax.set_title(title or "Heatmap")
     plt.xticks(rotation=90, fontsize=8)
-    save_fig(fig, os.path.join(outdir, "heatmap.png"))
+    save_fig(fig, os.path.join(outdir, "10_heatmap.png"))
 
 
 # ---------------------------------------------------------------------------
@@ -1257,114 +1383,110 @@ def analyze_section(df, sample_cols, sample_info, outdir, section_name, stat_tes
     safe_mkdir(outdir)
     results = {"n_bmks": len_df, "n_samples": len_sample_cols, "section": section_name}
     
-    # EARLY PRE-FILTER: For very large sections (>3k BMKs), reduce to top 3k by variance
+    # PRE-FILTER #1: Remove BMKs with near-zero variance FIRST (before any size limit)
+    # This prevents numerical issues and removes uninformative BMKs early
+    ndf_prefilter = numeric_df(df, sample_cols)
+    variance_prefilter = ndf_prefilter[sample_cols].var(axis=1)
+    variable_mask = variance_prefilter > 1e-10
+    n_constants = (~variable_mask).sum()
+    
+    if n_constants > 0:
+        log.info(f"{log_prefix} Removing {n_constants} constant BMKs (near-zero variance)")
+        df = df[variable_mask].reset_index(drop=True).copy()
+        len_df = len(df)
+        log.info(f"{log_prefix} {len_df} variable BMKs remaining")
+        results["n_constants_removed"] = n_constants
+    
+    # Early exit if no variable BMKs
+    if len_df == 0:
+        log.warning(f"{log_prefix} No variable BMKs remaining after removing constants")
+        return results
+    
+    # PRE-FILTER #2: For very large sections, reduce to top 10k by variance
     # This prevents memory crashes in parallel workers for all_sequence_bmks / all_global_bmks
-    MAX_BMKS_FOR_ANALYSIS = 3000  # Reduced from 5000 to prevent hangs
+    MAX_BMKS_FOR_ANALYSIS = 10000
     if len_df > MAX_BMKS_FOR_ANALYSIS:
         log.info(f"{log_prefix} {len_df} BMKs exceeds {MAX_BMKS_FOR_ANALYSIS} limit")
-        log.info(f"{log_prefix} Pre-filtering to top {MAX_BMKS_FOR_ANALYSIS} BMKs by variance to prevent memory issues...")
-        ndf_prefilter = numeric_df(df, sample_cols)
-        variance_prefilter = ndf_prefilter[sample_cols].var(axis=1)
-        top_indices = variance_prefilter.nlargest(MAX_BMKS_FOR_ANALYSIS).index
+        log.info(f"{log_prefix} Selecting top {MAX_BMKS_FOR_ANALYSIS} BMKs by variance...")
+        # Recalculate variance on already-filtered data
+        ndf_size_limit = numeric_df(df, sample_cols)
+        variance_size_limit = ndf_size_limit[sample_cols].var(axis=1)
+        top_indices = variance_size_limit.nlargest(MAX_BMKS_FOR_ANALYSIS).index
         df = df.loc[top_indices].reset_index(drop=True).copy()
         len_df = len(df)
-        log.info(f"{log_prefix} Pre-filtered to {len_df} BMKs")
-        results["n_bmks_prefiltered"] = len_df
+        log.info(f"{log_prefix} Reduced to {len_df} BMKs")
+        results["n_bmks_after_size_limit"] = len_df
 
     # Save filtered data
     df.to_csv(os.path.join(outdir, "data.csv"), index=False)
 
-    # 1. QC
+    # 1. Quality Control
     log.info(f"{log_prefix} QC analysis...")
     try:
-        results["qc"] = qc_analysis(df.reset_index(drop=True), sample_cols, os.path.join(outdir, "qc"))
+        results["qc"] = qc_analysis(df.reset_index(drop=True), sample_cols, os.path.join(outdir, "1_qc"))
     except Exception as e:
         log.warning(f"{log_prefix} QC failed: {e}")
 
-    # 2. Descriptive stats
-    log.info(f"{log_prefix} Descriptive stats...")
+    # 2. Batch Effect Detection
+    log.info(f"{log_prefix} Batch effect analysis...")
     try:
-        results["descriptive"] = descriptive_stats(df.reset_index(drop=True), sample_cols, sample_info, os.path.join(outdir, "descriptive"))
-    except Exception as e:
-        log.warning(f"{log_prefix} Descriptive stats failed: {e}")
-
-    # PRE-FILTER: Remove BMKs with near-zero variance for all subsequent analyses
-    # This prevents numerical issues in: differential tests, PCA, correlation, heatmaps, ML models
-    # QC and descriptive stats above use ALL BMKs to identify constants
-    ndf_tmp = numeric_df(df, sample_cols)
-    variance = ndf_tmp[sample_cols].var(axis=1)
-    variable_mask = variance > 1e-10
-    n_filtered_out = (~variable_mask).sum()
-    
-    if n_filtered_out > 0:
-        log.info(f"{log_prefix} Removing {n_filtered_out} BMKs with near-zero variance (keeping {variable_mask.sum()} variable)")
-        df_variable = df[variable_mask].reset_index(drop=True).copy()
-        n_bmks_variable = len(df_variable)
-    else:
-        df_variable = df.copy()
-        n_bmks_variable = len_df
-    
-    # Early exit if no variable BMKs
-    if n_bmks_variable == 0:
-        log.warning(f"{log_prefix} No variable BMKs remaining after pre-filtering")
-        return results
-    
-    # Update results with variable BMK count
-    results["n_bmks_variable"] = n_bmks_variable
-
-    # 3. Differential analysis (use variable BMKs only)
-    log.info(f"{log_prefix} Differential analysis ({n_bmks_variable} BMKs)...")
-    try:
-        results["differential"] = differential_analysis(df_variable, sample_cols, sample_info, os.path.join(outdir, "differential"), stat_test=stat_test)
-    except Exception as e:
-        log.warning(f"{log_prefix} Differential analysis failed: {e}")
-
-    # 4. Multivariate (use variable BMKs only)
-    log.info(f"{log_prefix} Multivariate analysis ({n_bmks_variable} BMKs)...")
-    try:
-        results["multivariate"] = multivariate_analysis(df_variable, sample_cols, sample_info, os.path.join(outdir, "multivariate"))
-    except Exception as e:
-        log.warning(f"{log_prefix} Multivariate analysis failed: {e}")
-
-    # 5. Correlation / Network (use variable BMKs only)
-    log.info(f"{log_prefix} Correlation / Network analysis ({n_bmks_variable} BMKs)...")
-    try:
-        results["correlation"] = correlation_network(df_variable, sample_cols, os.path.join(outdir, "correlation"))
-    except Exception as e:
-        log.warning(f"{log_prefix} Correlation analysis failed: {e}")
-
-    # 6. Feature ranking (use variable BMKs only)
-    log.info(f"{log_prefix} Feature ranking ({n_bmks_variable} BMKs)...")
-    try:
-        results["ranking"] = feature_ranking(df_variable, sample_cols, sample_info, os.path.join(outdir, "ranking"), max_bmks=max_bmks, bmk_filter_cols=bmk_filter_cols)
-    except Exception as e:
-        log.warning(f"{log_prefix} Feature ranking failed: {e}")
-
-    # 7. Classification (use variable BMKs only)
-    log.info(f"{log_prefix} Classification ({n_bmks_variable} BMKs)...")
-    try:
-        results["classification"] = classification_analysis(df_variable, sample_cols, sample_info, os.path.join(outdir, "classification"), max_bmks=max_bmks, bmk_filter_cols=bmk_filter_cols)
-    except Exception as e:
-        log.warning(f"{log_prefix} Classification failed: {e}")
-
-    # 8. Stability (use variable BMKs only)
-    log.info(f"{log_prefix} Stability analysis ({n_bmks_variable} BMKs)...")
-    try:
-        results["stability"] = stability_analysis(df_variable, sample_cols, sample_info, os.path.join(outdir, "stability"))
-    except Exception as e:
-        log.warning(f"{log_prefix} Stability analysis failed: {e}")
-
-    # 9. Batch effect (use variable BMKs only)
-    log.info(f"{log_prefix} Batch effect analysis ({n_bmks_variable} BMKs)...")
-    try:
-        results["batch"] = batch_effect_analysis(df_variable, sample_cols, sample_info, os.path.join(outdir, "batch"))
+        results["batch"] = batch_effect_analysis(df.reset_index(drop=True), sample_cols, sample_info, os.path.join(outdir, "2_batch"))
     except Exception as e:
         log.warning(f"{log_prefix} Batch effect analysis failed: {e}")
 
-    # 10. Heatmap (use variable BMKs only)
-    log.info(f"{log_prefix} Heatmap generation ({n_bmks_variable} BMKs)...")
+    # 3. Descriptive Statistics
+    log.info(f"{log_prefix} Descriptive stats...")
     try:
-        section_heatmap(df_variable, sample_cols, sample_info, outdir, title=section_name)
+        results["descriptive"] = descriptive_stats(df.reset_index(drop=True), sample_cols, sample_info, os.path.join(outdir, "3_descriptive"))
+    except Exception as e:
+        log.warning(f"{log_prefix} Descriptive stats failed: {e}")
+
+    # 4. Multivariate Analysis (PCA, clustering)
+    log.info(f"{log_prefix} Multivariate analysis...")
+    try:
+        results["multivariate"] = multivariate_analysis(df.reset_index(drop=True), sample_cols, sample_info, os.path.join(outdir, "4_multivariate"))
+    except Exception as e:
+        log.warning(f"{log_prefix} Multivariate analysis failed: {e}")
+
+    # 5. Differential Editing Analysis
+    log.info(f"{log_prefix} Differential analysis...")
+    try:
+        results["differential"] = differential_analysis(df.reset_index(drop=True), sample_cols, sample_info, os.path.join(outdir, "5_differential"), stat_test=stat_test)
+    except Exception as e:
+        log.warning(f"{log_prefix} Differential analysis failed: {e}")
+
+    # 6. Correlation / Network Analysis
+    log.info(f"{log_prefix} Correlation / Network analysis...")
+    try:
+        results["correlation"] = correlation_network(df.reset_index(drop=True), sample_cols, os.path.join(outdir, "6_correlation"))
+    except Exception as e:
+        log.warning(f"{log_prefix} Correlation analysis failed: {e}")
+
+    # 7. Feature Selection / Biomarker Ranking
+    log.info(f"{log_prefix} Feature ranking...")
+    try:
+        results["ranking"] = feature_ranking(df.reset_index(drop=True), sample_cols, sample_info, os.path.join(outdir, "7_ranking"), max_bmks=max_bmks, bmk_filter_cols=bmk_filter_cols)
+    except Exception as e:
+        log.warning(f"{log_prefix} Feature ranking failed: {e}")
+
+    # 8. Classification / Predictive Modeling
+    log.info(f"{log_prefix} Classification...")
+    try:
+        results["classification"] = classification_analysis(df.reset_index(drop=True), sample_cols, sample_info, os.path.join(outdir, "8_classification"), max_bmks=max_bmks, bmk_filter_cols=bmk_filter_cols)
+    except Exception as e:
+        log.warning(f"{log_prefix} Classification failed: {e}")
+
+    # 9. Stability / Robustness (replicate concordance)
+    log.info(f"{log_prefix} Stability analysis...")
+    try:
+        results["stability"] = stability_analysis(df.reset_index(drop=True), sample_cols, sample_info, os.path.join(outdir, "9_stability"))
+    except Exception as e:
+        log.warning(f"{log_prefix} Stability analysis failed: {e}")
+
+    # 10. Heatmap
+    log.info(f"{log_prefix} Heatmap generation...")
+    try:
+        section_heatmap(df.reset_index(drop=True), sample_cols, sample_info, outdir, title=section_name)
         log.info(f"{log_prefix} Heatmap generation completed")
     except Exception as e:
         log.warning(f"{log_prefix} Heatmap failed: {e}")
@@ -1480,7 +1602,7 @@ def analyze_section_wrapper(args_tuple):
         # Full results dict is ~500KB per task × 1491 tasks = 745MB accumulated in all_results
         # global_ranking() only needs the differential.table path (50 bytes)
         slim_results = {
-            "differential_table": os.path.join(outdir, "differential", "differential_results.csv")
+            "differential_table": os.path.join(outdir, "5_differential", "differential_results.csv")
         }
         
         # Explicitly clean up to help garbage collector (critical for parallel execution)
@@ -1539,7 +1661,7 @@ def analyze_section_wrapper(args_tuple):
 # ---------------------------------------------------------------------------
 
 def global_ranking(all_results, outdir):
-    """Aggregate rankings across sections to produce a global ranking."""
+    """Aggregate rankings across sections to produce a global ranking with cross-validation metrics."""
     safe_mkdir(outdir)
 
     # Collect differential results
@@ -1561,22 +1683,63 @@ def global_ranking(all_results, outdir):
 
     if diff_files:
         all_diff = pd.concat(diff_files, ignore_index=True)
+        
+        # Add n_sections_significant: cross-validation metric
+        # Count how many sections each BMK appears in (regardless of significance)
+        if "ID" in all_diff.columns:
+            id_section_counts = all_diff.groupby("ID")["section"].nunique()
+            all_diff["n_sections_total"] = all_diff["ID"].map(id_section_counts)
+            
+            # Count sections where BMK is significant (padj < 0.05 in ANY test)
+            padj_cols = [c for c in all_diff.columns if c.endswith("_padj")]
+            if padj_cols:
+                # Create mask: True if ANY padj column is < 0.05
+                sig_mask = all_diff[padj_cols].lt(0.05).any(axis=1)
+                sig_df = all_diff[sig_mask].copy()
+                if len(sig_df) > 0:
+                    sig_counts = sig_df.groupby("ID")["section"].nunique()
+                    all_diff["n_sections_significant"] = all_diff["ID"].map(sig_counts).fillna(0).astype(int)
+                else:
+                    all_diff["n_sections_significant"] = 0
+            else:
+                all_diff["n_sections_significant"] = 0
+        
         # Rank by kruskal_padj
         if "kruskal_padj" in all_diff.columns:
             ranked = all_diff.dropna(subset=["kruskal_padj"]).sort_values("kruskal_padj")
             ranked.to_csv(os.path.join(outdir, "global_ranking_kruskal.csv"), index=False)
-
-            # Top 50 plot
+            
+            # Log statistics
+            best_padj = ranked["kruskal_padj"].min() if len(ranked) > 0 else float('nan')
+            log.info(f"  Saved global ranking: {len(ranked)} biomarkers (best padj: {best_padj:.2e})")
+            
+            # Create filtered version: only significant (padj < 0.05 in kruskal test)
+            sig_ranked = ranked[ranked["kruskal_padj"] < 0.05].copy()
+            if len(sig_ranked) > 0:
+                sig_ranked.to_csv(os.path.join(outdir, "global_ranking_significant.csv"), index=False)
+                log.info(f"  Saved significant subset: {len(sig_ranked)} biomarkers (kruskal_padj < 0.05)")
+            else:
+                log.info(f"  No significant biomarkers found (all kruskal_padj >= 0.05)")
+            
+            # Top 50 plot with cross-validation info
             top_n = min(50, len(ranked))
             top = ranked.head(top_n)
             fig, ax = plt.subplots(figsize=(8, max(4, top_n * 0.3)))
             neg_log_p = -np.log10(top["kruskal_padj"].clip(lower=1e-300))
-            labels = top["ID"].astype(str) + " [" + top["section"].astype(str) + "]"
+            
+            # Enhanced labels with n_sections_significant
+            if "n_sections_significant" in top.columns:
+                labels = [f"{row['ID']} [{row['section']}] (×{int(row['n_sections_significant'])} sec)" 
+                          if row['n_sections_significant'] > 1 else f"{row['ID']} [{row['section']}]"
+                          for _, row in top.iterrows()]
+            else:
+                labels = top["ID"].astype(str) + " [" + top["section"].astype(str) + "]"
+            
             ax.barh(range(top_n), neg_log_p.values[::-1])
             ax.set_yticks(range(top_n))
-            ax.set_yticklabels(labels.values[::-1], fontsize=6)
+            ax.set_yticklabels(labels[::-1], fontsize=6)
             ax.set_xlabel("-log10(adjusted p-value)")
-            ax.set_title("Global BMK Ranking by Significance (top 50)")
+            ax.set_title("Global BMK Ranking by Significance (top 50)\n(×N sec = significant in N sections)")
             
             # Add reference lines for p-value thresholds
             ax.axvline(-np.log10(0.05), color='red', linestyle='--', linewidth=1, alpha=0.7, label='p=0.05')
@@ -2256,39 +2419,41 @@ EXAMPLES:
                     log.warning(f"  {failed} tasks failed or cancelled out of {len(tasks)} total")
         else:
             # Sequential execution
-            for df_source, cols, info, outdir, name, key, stat_test, bmk_filter, max_bmks in tasks:
+            for df_source, cols, info, section_outdir, name, key, stat_test, bmk_filter, max_bmks in tasks:
                 # Reconstruct DataFrame from pickled format
                 if isinstance(df_source, tuple) and df_source[0] == 'pickled':
                     import pickle
                     df = pickle.loads(df_source[1])
                 else:
                     df = pd.DataFrame(df_source)
-                results = analyze_section(df, cols, info, outdir, name, stat_test=stat_test, bmk_filter_cols=bmk_filter, max_bmks=max_bmks)
+                results = analyze_section(df, cols, info, section_outdir, name, stat_test=stat_test, bmk_filter_cols=bmk_filter, max_bmks=max_bmks)
                 
                 # Create slim results dict (same as parallel mode for consistency)
                 slim_results = {
-                    "differential_table": os.path.join(outdir, "differential", "differential_results.csv")
+                    "differential_table": os.path.join(section_outdir, "differential", "differential_results.csv")
                 }
                 
                 mtype, section_key = key
                 all_results[vtype][mtype][section_key] = slim_results
 
-    # ===============================================================
-    # GLOBAL RANKING
-    # ===============================================================
-    log.info("\n--- GLOBAL RANKING ---")
-    global_ranking(all_results, os.path.join(outdir, "global_ranking"))
+        # ===============================================================
+        # GLOBAL RANKING for this value_type
+        # ===============================================================
+        log.info(f"\n--- GLOBAL RANKING for {vtype} ---")
+        # Create a subset of results for this value_type only
+        vtype_results = {vtype: all_results[vtype]}
+        global_ranking(vtype_results, os.path.join(vtype_dir, "global_ranking"))
 
-    # Save manifest
-    manifest = {
-        "value_types": value_types,
-        "outdir": outdir,
-        "n_aggregates": len(agg_df) if agg_df is not None else 0,
-        "n_features": len(feat_df) if feat_df is not None else 0,
-        "sample_info": sample_info,
-    }
-    with open(os.path.join(outdir, "manifest.json"), "w") as f:
-        json.dump(manifest, f, indent=2, default=str)
+        # Save manifest
+        manifest = {
+            "value_types": value_types,
+            "outdir": outdir,
+            "n_aggregates": len(agg_df) if agg_df is not None else 0,
+            "n_features": len(feat_df) if feat_df is not None else 0,
+            "sample_info": sample_info,
+        }
+        with open(os.path.join(vtype_dir, "manifest.json"), "w") as f:
+            json.dump(manifest, f, indent=2, default=str)
 
     log.info(f"\nAnalysis complete. Results saved to {outdir}/")
 
