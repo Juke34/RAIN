@@ -220,7 +220,14 @@ class AggregateFileWriter(RainFileWriter):
         # Create a dynamic ID for aggregates without explicit IDs (sequence/global level)
         if aggregate_id == ".":
             # Build ID as Type_Ptype_Ctype_Mode, omitting Ptype and/or Ctype if they are "."
+            # For sequence-level aggregates, insert SeqID to ensure uniqueness across chromosomes
             id_parts = [agg_type]  # "sequence" or "global"
+            
+            # Insert SeqID for sequence-level aggregates to make IDs unique
+            # Example: "sequence_chr1_CDS_all_isoforms" instead of "sequence_CDS_all_isoforms"
+            if agg_type == "sequence":
+                id_parts.append(seq_id)
+            
             if parent_type != ".":
                 id_parts.append(parent_type)
             if aggregate_type != ".":
