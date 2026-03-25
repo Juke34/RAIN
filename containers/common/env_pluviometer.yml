@@ -52,7 +52,10 @@ dependencies:
   - tzdata=2025b=h78e105d_0
   - wheel=0.45.1=pyhd8ed1ab_1
   - pysam=0.23.3=py312h47d5410_1
-  - pandas
+  - pandas=3.0.1=py312h8ecdadd_0
+  - matplotlib=3.10.8=py312h7900ff3_0
+  - seaborn=0.13.2=hd8ed1ab_3
+  - scikit-learn=1.8.0=np2py312h3226591_1
   - pip:
       - flameprof==0.4
 prefix: /home/earx/miniforge3/envs/rain-stats-scripts
