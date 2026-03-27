@@ -331,6 +331,23 @@ def _process_seqid_chunk(seqid, chunk_paths_by_sample, col_prefixes, temp_out_di
 
     for col_prefix, chunk_path in zip(col_prefixes, chunk_paths_by_sample):
         if chunk_path is None:
+            # Crée un DataFrame vide avec les bonnes colonnes de métadonnées et une colonne NA pour ce sample
+            # On suppose qu'il y a au moins un sample avec données pour récupérer la structure
+            # On construit une ligne unique avec NA pour les colonnes metrics, et les métadonnées à la valeur du seqid
+            # Pour chaque BP, on crée une ligne NA
+            for i in range(len(all_bps)):
+                # On crée un DataFrame avec une seule ligne, toutes les métadonnées à seqid ou '.' et la colonne metric à NA
+                meta = {k: seqid if k == 'SeqID' else '.' for k in metadata_cols}
+                # Une seule ligne
+                row = {**meta, f'{col_prefix}::espf': np.nan, f'{col_prefix}::espr': np.nan}
+                bp_data = pd.DataFrame([row])
+                if bp_accumulators[i] is None:
+                    bp_accumulators[i] = bp_data
+                else:
+                    bp_accumulators[i] = bp_accumulators[i].merge(
+                        bp_data, on=metadata_cols, how='outer'
+                    )
+                    del bp_data
             continue
         df = pd.read_csv(chunk_path, sep='\t', dtype=mixed_dtypes_local)
         for i in range(len(all_bps)):
