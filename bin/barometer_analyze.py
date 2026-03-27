@@ -533,6 +533,27 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
                     row_data[f"student_pval_{pair_key}"] = np.nan
                     row_data[f"welch_stat_{pair_key}"] = np.nan
                     row_data[f"welch_pval_{pair_key}"] = np.nan
+
+                # Ajout des colonnes primary_stat/pval/padj pour chaque comparaison
+                # On détermine le test principal pour cette paire
+                if test_choice == "parametric":
+                    stat = row_data.get(f"student_stat_{pair_key}", np.nan)
+                    pval = row_data.get(f"student_pval_{pair_key}", np.nan)
+                    padj = row_data.get(f"student_padj_{pair_key}", np.nan)
+                    test_used = "student"
+                elif test_choice == "welch":
+                    stat = row_data.get(f"welch_stat_{pair_key}", np.nan)
+                    pval = row_data.get(f"welch_pval_{pair_key}", np.nan)
+                    padj = row_data.get(f"welch_padj_{pair_key}", np.nan)
+                    test_used = "welch"
+                else:  # nonparametric
+                    stat = row_data.get(f"mwu_stat_{pair_key}", np.nan)
+                    pval = row_data.get(f"mwu_pval_{pair_key}", np.nan)
+                    padj = row_data.get(f"mwu_padj_{pair_key}", np.nan)
+                    test_used = "mwu"
+                row_data[f"primary_stat_{pair_key}"] = stat
+                row_data[f"primary_pval_{pair_key}"] = pval
+                row_data[f"primary_test_{pair_key}"] = test_used
     
             rows.append(row_data)
 
