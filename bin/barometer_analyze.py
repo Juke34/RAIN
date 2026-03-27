@@ -65,6 +65,11 @@ def safe_mkdir(path):
     Path(path).mkdir(parents=True, exist_ok=True)
 
 
+def harmonize_columns(df):
+    """Replace '..' par '::' dfor compatibility in case it has been proceceed by R."""
+    df.columns = [c.replace('..', '::') for c in df.columns]
+    return df
+
 def prepare_df_for_task(df):
     """Convert DataFrame to a memory-efficient format for task submission.
     
@@ -1896,6 +1901,7 @@ EXAMPLES:
         log.info(f"Loading aggregates from {args.aggregates}...")
         agg_df = pd.read_csv(args.aggregates, sep="\t", dtype={"SeqID": str, "Start": str, "End": str, "Strand": str})
         agg_df.columns = agg_df.columns.str.strip()  # Remove leading/trailing whitespace from column names
+        harmonize_columns(agg_df)  # Ensure column header standardisation
         # Strip whitespace from string columns
         for col in agg_df.select_dtypes(include=['object', 'string']).columns:
             agg_df[col] = agg_df[col].str.strip() if agg_df[col].dtype in ['object', 'string'] else agg_df[col]
@@ -1910,6 +1916,7 @@ EXAMPLES:
         log.info(f"Loading features from {args.features}...")
         feat_df = pd.read_csv(args.features, sep="\t", dtype={"SeqID": str, "Start": str, "End": str, "Strand": str})
         feat_df.columns = feat_df.columns.str.strip()  # Remove leading/trailing whitespace from column names
+        harmonize_columns(feat_df)  # Ensure column header standardisation
         # Strip whitespace from string columns
         for col in feat_df.select_dtypes(include=['object', 'string']).columns:
             feat_df[col] = feat_df[col].str.strip() if feat_df[col].dtype in ['object', 'string'] else feat_df[col]
