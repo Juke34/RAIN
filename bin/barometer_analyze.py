@@ -51,6 +51,7 @@ from sklearn.metrics import classification_report
 import statsmodels.api as sm
 from statsmodels.stats.multicomp import pairwise_tukeyhsd
 from statsmodels.stats.multitest import multipletests
+from upsetplot import UpSet, from_indicators
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -191,7 +192,54 @@ def qc_analysis(df, sample_cols, outdir):
     results["desc"] = desc.to_dict()
     return results
 
+# ---------------------------------------------------------------------------
+# Batch Effect Detection
+# ---------------------------------------------------------------------------
 
+def batch_effect_analysis(df, sample_cols, sample_info, outdir):
+    safe_mkdir(outdir)
+    ndf = numeric_df(df, sample_cols)
+    results = {}
+
+    # Check if samples cluster by batch (sample) rather than group
+    # Use PCA and check if samples separate by sample-id vs group
+    mat = ndf[sample_cols].T.fillna(0)
+    if mat.shape[0] < 3 or mat.shape[1] < 2:
+        return results
+
+    scaler = StandardScaler()
+    scaled = scaler.fit_transform(mat)
+    pca = PCA(n_components=min(3, mat.shape[0], mat.shape[1]))
+    coords = pca.fit_transform(scaled)
+
+    groups = [group_for_col(sample_info, c) for c in sample_cols]
+    samples = [s["sample"] for s in sample_info if s["col"] in sample_cols[:len(groups)]]
+
+    # Plot colored by sample (batch)
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    unique_groups = sorted(set(groups))
+    colors_g = plt.cm.Set1(np.linspace(0, 1, max(len(unique_groups), 1)))
+    for i, g in enumerate(unique_groups):
+        mask = [l == g for l in groups]
+        axes[0].scatter(coords[mask, 0], coords[mask, 1], c=[colors_g[i]], label=g, s=80)
+    axes[0].set_title("PCA colored by Group")
+    axes[0].set_xlabel("PC1")
+    axes[0].set_ylabel("PC2")
+    axes[0].legend()
+
+    unique_samples = sorted(set(samples))
+    colors_s = plt.cm.Set2(np.linspace(0, 1, max(len(unique_samples), 1)))
+    for i, s in enumerate(unique_samples):
+        mask = [l == s for l in samples]
+        axes[1].scatter(coords[mask, 0], coords[mask, 1], c=[colors_s[i]], label=s, s=80)
+    axes[1].set_title("PCA colored by Sample (batch)")
+    axes[1].set_xlabel("PC1")
+    axes[1].set_ylabel("PC2")
+    axes[1].legend(fontsize=7)
+
+    save_fig(fig, os.path.join(outdir, "batch_effect_pca.png"))
+    return results
+    
 # ---------------------------------------------------------------------------
 # Descriptive Statistics
 # ---------------------------------------------------------------------------
@@ -252,6 +300,101 @@ def descriptive_stats(df, sample_cols, sample_info, outdir):
 
     return results
 
+
+# ---------------------------------------------------------------------------
+# Multivariate Analysis (PCA, hierarchical clustering)
+# ---------------------------------------------------------------------------
+
+def multivariate_analysis(df, sample_cols, sample_info, outdir):
+    safe_mkdir(outdir)
+    ndf = numeric_df(df, sample_cols)
+    results = {}
+
+    # Transpose: samples as rows, BMKs as columns
+    mat = ndf[sample_cols].T.copy()
+    mat.columns = df["ID"].values if "ID" in df.columns else range(len(df))
+    mat = mat.dropna(axis=1, how="all").fillna(0)
+
+    if mat.shape[1] < 2 or mat.shape[0] < 2:
+        log.warning("Not enough data for multivariate analysis")
+        return results
+
+    # PCA
+    scaler = StandardScaler()
+    scaled = scaler.fit_transform(mat)
+    n_components = min(mat.shape[0], mat.shape[1], 10)
+    pca = PCA(n_components=n_components)
+    coords = pca.fit_transform(scaled)
+    var_exp = pca.explained_variance_ratio_
+
+    labels = [s["group"] for s in sample_info if s["col"] in mat.index]
+    sample_labels = [s["sample"] for s in sample_info if s["col"] in mat.index]
+
+    pca_df = pd.DataFrame(coords[:, :min(5, n_components)],
+                          columns=[f"PC{i+1}" for i in range(min(5, n_components))],
+                          index=mat.index)
+    pca_df["group"] = labels
+    pca_df["sample"] = sample_labels
+    pca_df.to_csv(os.path.join(outdir, "pca_coordinates.csv"))
+
+    # Variance explained
+    var_df = pd.DataFrame({"PC": [f"PC{i+1}" for i in range(len(var_exp))],
+                           "variance_explained": var_exp,
+                           "cumulative": np.cumsum(var_exp)})
+    var_df.to_csv(os.path.join(outdir, "pca_variance.csv"), index=False)
+
+    # Scree plot
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.bar(range(1, len(var_exp) + 1), var_exp * 100, alpha=0.7, label="Individual")
+    ax.plot(range(1, len(var_exp) + 1), np.cumsum(var_exp) * 100, "ro-", label="Cumulative")
+    ax.set_xlabel("Principal Component")
+    ax.set_ylabel("Variance Explained (%)")
+    ax.set_title("PCA Scree Plot")
+    ax.legend()
+    save_fig(fig, os.path.join(outdir, "pca_scree.png"))
+
+    # PCA biplot PC1 vs PC2
+    if n_components >= 2:
+        fig, ax = plt.subplots(figsize=(8, 6))
+        unique_groups = sorted(set(labels))
+        colors = plt.cm.Set1(np.linspace(0, 1, max(len(unique_groups), 1)))
+        for i, g in enumerate(unique_groups):
+            mask = [l == g for l in labels]
+            ax.scatter(coords[mask, 0], coords[mask, 1], c=[colors[i]], label=g, s=80, alpha=0.8)
+            for j, m in enumerate(mask):
+                if m:
+                    ax.annotate(sample_labels[j], (coords[j, 0], coords[j, 1]),
+                                fontsize=7, alpha=0.7)
+        ax.set_xlabel(f"PC1 ({var_exp[0]*100:.1f}%)")
+        ax.set_ylabel(f"PC2 ({var_exp[1]*100:.1f}%)")
+        ax.set_title("PCA - Samples")
+        ax.legend()
+        save_fig(fig, os.path.join(outdir, "pca_biplot.png"))
+
+    # Hierarchical clustering on samples
+    if mat.shape[0] >= 2:
+        try:
+            dist = pdist(scaled, metric="euclidean")
+            Z = linkage(dist, method="ward")
+            fig, ax = plt.subplots(figsize=(max(6, len(sample_cols) * 0.8), 5))
+            dendrogram(Z, labels=[s.split("::")[1] for s in mat.index], ax=ax, leaf_rotation=90)
+            ax.set_title("Hierarchical Clustering of Samples")
+            save_fig(fig, os.path.join(outdir, "dendrogram_samples.png"))
+        except Exception as e:
+            log.warning(f"Dendrogram failed: {e}")
+
+    # Sample correlation heatmap
+    corr = mat.T.corr()
+    corr.to_csv(os.path.join(outdir, "sample_correlation.csv"))
+    fig, ax = plt.subplots(figsize=(max(6, len(sample_cols) * 0.8), max(5, len(sample_cols) * 0.6)))
+    short_labels = [s.split("::")[0] + "::" + s.split("::")[1] for s in corr.index]
+    sns.heatmap(corr, annot=True, fmt=".2f", cmap="RdBu_r", center=0, ax=ax,
+                xticklabels=short_labels, yticklabels=short_labels)
+    ax.set_title("Sample Correlation Matrix")
+    save_fig(fig, os.path.join(outdir, "correlation_heatmap.png"))
+
+    results["pca_variance"] = var_df.to_dict(orient="records")
+    return results
 
 # ---------------------------------------------------------------------------
 # Differential Editing Analysis
@@ -713,103 +856,6 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
 
     return results
 
-
-# ---------------------------------------------------------------------------
-# Multivariate Analysis (PCA, hierarchical clustering)
-# ---------------------------------------------------------------------------
-
-def multivariate_analysis(df, sample_cols, sample_info, outdir):
-    safe_mkdir(outdir)
-    ndf = numeric_df(df, sample_cols)
-    results = {}
-
-    # Transpose: samples as rows, BMKs as columns
-    mat = ndf[sample_cols].T.copy()
-    mat.columns = df["ID"].values if "ID" in df.columns else range(len(df))
-    mat = mat.dropna(axis=1, how="all").fillna(0)
-
-    if mat.shape[1] < 2 or mat.shape[0] < 2:
-        log.warning("Not enough data for multivariate analysis")
-        return results
-
-    # PCA
-    scaler = StandardScaler()
-    scaled = scaler.fit_transform(mat)
-    n_components = min(mat.shape[0], mat.shape[1], 10)
-    pca = PCA(n_components=n_components)
-    coords = pca.fit_transform(scaled)
-    var_exp = pca.explained_variance_ratio_
-
-    labels = [s["group"] for s in sample_info if s["col"] in mat.index]
-    sample_labels = [s["sample"] for s in sample_info if s["col"] in mat.index]
-
-    pca_df = pd.DataFrame(coords[:, :min(5, n_components)],
-                          columns=[f"PC{i+1}" for i in range(min(5, n_components))],
-                          index=mat.index)
-    pca_df["group"] = labels
-    pca_df["sample"] = sample_labels
-    pca_df.to_csv(os.path.join(outdir, "pca_coordinates.csv"))
-
-    # Variance explained
-    var_df = pd.DataFrame({"PC": [f"PC{i+1}" for i in range(len(var_exp))],
-                           "variance_explained": var_exp,
-                           "cumulative": np.cumsum(var_exp)})
-    var_df.to_csv(os.path.join(outdir, "pca_variance.csv"), index=False)
-
-    # Scree plot
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.bar(range(1, len(var_exp) + 1), var_exp * 100, alpha=0.7, label="Individual")
-    ax.plot(range(1, len(var_exp) + 1), np.cumsum(var_exp) * 100, "ro-", label="Cumulative")
-    ax.set_xlabel("Principal Component")
-    ax.set_ylabel("Variance Explained (%)")
-    ax.set_title("PCA Scree Plot")
-    ax.legend()
-    save_fig(fig, os.path.join(outdir, "pca_scree.png"))
-
-    # PCA biplot PC1 vs PC2
-    if n_components >= 2:
-        fig, ax = plt.subplots(figsize=(8, 6))
-        unique_groups = sorted(set(labels))
-        colors = plt.cm.Set1(np.linspace(0, 1, max(len(unique_groups), 1)))
-        for i, g in enumerate(unique_groups):
-            mask = [l == g for l in labels]
-            ax.scatter(coords[mask, 0], coords[mask, 1], c=[colors[i]], label=g, s=80, alpha=0.8)
-            for j, m in enumerate(mask):
-                if m:
-                    ax.annotate(sample_labels[j], (coords[j, 0], coords[j, 1]),
-                                fontsize=7, alpha=0.7)
-        ax.set_xlabel(f"PC1 ({var_exp[0]*100:.1f}%)")
-        ax.set_ylabel(f"PC2 ({var_exp[1]*100:.1f}%)")
-        ax.set_title("PCA - Samples")
-        ax.legend()
-        save_fig(fig, os.path.join(outdir, "pca_biplot.png"))
-
-    # Hierarchical clustering on samples
-    if mat.shape[0] >= 2:
-        try:
-            dist = pdist(scaled, metric="euclidean")
-            Z = linkage(dist, method="ward")
-            fig, ax = plt.subplots(figsize=(max(6, len(sample_cols) * 0.8), 5))
-            dendrogram(Z, labels=[s.split("::")[1] for s in mat.index], ax=ax, leaf_rotation=90)
-            ax.set_title("Hierarchical Clustering of Samples")
-            save_fig(fig, os.path.join(outdir, "dendrogram_samples.png"))
-        except Exception as e:
-            log.warning(f"Dendrogram failed: {e}")
-
-    # Sample correlation heatmap
-    corr = mat.T.corr()
-    corr.to_csv(os.path.join(outdir, "sample_correlation.csv"))
-    fig, ax = plt.subplots(figsize=(max(6, len(sample_cols) * 0.8), max(5, len(sample_cols) * 0.6)))
-    short_labels = [s.split("::")[0] + "::" + s.split("::")[1] for s in corr.index]
-    sns.heatmap(corr, annot=True, fmt=".2f", cmap="RdBu_r", center=0, ax=ax,
-                xticklabels=short_labels, yticklabels=short_labels)
-    ax.set_title("Sample Correlation Matrix")
-    save_fig(fig, os.path.join(outdir, "correlation_heatmap.png"))
-
-    results["pca_variance"] = var_df.to_dict(orient="records")
-    return results
-
-
 # ---------------------------------------------------------------------------
 # Correlation / Network Analysis
 # ---------------------------------------------------------------------------
@@ -1202,56 +1248,6 @@ def stability_analysis(df, sample_cols, sample_info, outdir):
 
     return results
 
-
-# ---------------------------------------------------------------------------
-# Batch Effect Detection
-# ---------------------------------------------------------------------------
-
-def batch_effect_analysis(df, sample_cols, sample_info, outdir):
-    safe_mkdir(outdir)
-    ndf = numeric_df(df, sample_cols)
-    results = {}
-
-    # Check if samples cluster by batch (sample) rather than group
-    # Use PCA and check if samples separate by sample-id vs group
-    mat = ndf[sample_cols].T.fillna(0)
-    if mat.shape[0] < 3 or mat.shape[1] < 2:
-        return results
-
-    scaler = StandardScaler()
-    scaled = scaler.fit_transform(mat)
-    pca = PCA(n_components=min(3, mat.shape[0], mat.shape[1]))
-    coords = pca.fit_transform(scaled)
-
-    groups = [group_for_col(sample_info, c) for c in sample_cols]
-    samples = [s["sample"] for s in sample_info if s["col"] in sample_cols[:len(groups)]]
-
-    # Plot colored by sample (batch)
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    unique_groups = sorted(set(groups))
-    colors_g = plt.cm.Set1(np.linspace(0, 1, max(len(unique_groups), 1)))
-    for i, g in enumerate(unique_groups):
-        mask = [l == g for l in groups]
-        axes[0].scatter(coords[mask, 0], coords[mask, 1], c=[colors_g[i]], label=g, s=80)
-    axes[0].set_title("PCA colored by Group")
-    axes[0].set_xlabel("PC1")
-    axes[0].set_ylabel("PC2")
-    axes[0].legend()
-
-    unique_samples = sorted(set(samples))
-    colors_s = plt.cm.Set2(np.linspace(0, 1, max(len(unique_samples), 1)))
-    for i, s in enumerate(unique_samples):
-        mask = [l == s for l in samples]
-        axes[1].scatter(coords[mask, 0], coords[mask, 1], c=[colors_s[i]], label=s, s=80)
-    axes[1].set_title("PCA colored by Sample (batch)")
-    axes[1].set_xlabel("PC1")
-    axes[1].set_ylabel("PC2")
-    axes[1].legend(fontsize=7)
-
-    save_fig(fig, os.path.join(outdir, "batch_effect_pca.png"))
-    return results
-
-
 # ---------------------------------------------------------------------------
 # Comprehensive heatmap for a section
 # ---------------------------------------------------------------------------
@@ -1389,6 +1385,206 @@ def section_heatmap(df, sample_cols, sample_info, outdir, title="", max_rows=100
     plt.xticks(rotation=90, fontsize=8)
     save_fig(fig, os.path.join(outdir, "10_heatmap.png"))
 
+# ---------------------------------------------------------------------------
+# Global Biomarker Ranking (across all sections)
+# ---------------------------------------------------------------------------
+
+def global_ranking(all_results, outdir):
+    """Aggregate rankings across sections to produce a global ranking with cross-validation metrics."""
+    safe_mkdir(outdir)
+
+    # Collect differential results
+    diff_files = []
+    for vtype, vdata in all_results.items():
+        for mtype, mdata in vdata.items():
+            for section, sdata in mdata.items():
+                # MEMORY FIX: sdata is now a slim dict with only "differential_table" key
+                diff_path = sdata.get("differential_table")
+                if diff_path and os.path.exists(diff_path):
+                    ddf = pd.read_csv(diff_path)
+                    # Defragment DataFrame before adding columns to avoid PerformanceWarning
+                    ddf = ddf.copy()
+                    # Add metadata columns
+                    ddf["value_type"] = vtype
+                    ddf["mtype"] = mtype
+                    ddf["section"] = section
+                    diff_files.append(ddf)
+
+    if diff_files:
+        all_diff = pd.concat(diff_files, ignore_index=True)
+        
+        # Add n_sections_significant: cross-validation metric
+        # Count how many sections each BMK appears in (regardless of significance)
+        if "ID" in all_diff.columns:
+            id_section_counts = all_diff.groupby("ID")["section"].nunique()
+            all_diff["n_sections_total"] = all_diff["ID"].map(id_section_counts)
+            
+            # Count sections where BMK is significant (padj < 0.05 in ANY test)
+            padj_cols = [c for c in all_diff.columns if c.endswith("_padj")]
+            if padj_cols:
+                # Create mask: True if ANY padj column is < 0.05
+                sig_mask = all_diff[padj_cols].lt(0.05).any(axis=1)
+                sig_df = all_diff[sig_mask].copy()
+                if len(sig_df) > 0:
+                    sig_counts = sig_df.groupby("ID")["section"].nunique()
+                    all_diff["n_sections_significant"] = all_diff["ID"].map(sig_counts).fillna(0).astype(int)
+                else:
+                    all_diff["n_sections_significant"] = 0
+            else:
+                all_diff["n_sections_significant"] = 0
+        
+        # Rank by kruskal_padj
+        if "kruskal_padj" in all_diff.columns:
+            ranked = all_diff.dropna(subset=["kruskal_padj"]).sort_values("kruskal_padj")
+            ranked.to_csv(os.path.join(outdir, "global_ranking_kruskal.csv"), index=False)
+            
+            # Log statistics
+            best_padj = ranked["kruskal_padj"].min() if len(ranked) > 0 else float('nan')
+            log.info(f"  Saved global ranking: {len(ranked)} biomarkers (best padj: {best_padj:.2e})")
+            # -----------------------------------------------------------------------
+            # Create filtered version: only significant (padj < 0.05 in kruskal test)
+            # -----------------------------------------------------------------------
+            sig_ranked = ranked[ranked["kruskal_padj"] < 0.05].copy()
+            if len(sig_ranked) > 0:
+                sig_ranked.to_csv(os.path.join(outdir, "global_ranking_significant.csv"), index=False)
+                log.info(f"  Saved significant subset: {len(sig_ranked)} biomarkers (kruskal_padj < 0.05)")
+                # -----------------------------------------------------------------------
+                # Create figure from global_ranking_significant.csv
+                # -----------------------------------------------------------------------
+                try:
+                    generate_diagram(os.path.join(outdir, "global_ranking_significant.csv"), outdir)
+                except Exception as e:
+                    log.warning(f" generate_diagram failed: {e}")
+                # -----------------------------------------------------------------------
+                # Create structure folder with unique/common splits for each comparison
+                # -----------------------------------------------------------------------
+                try:
+                    split_significant_bmks(os.path.join(outdir, "global_ranking_significant.csv"), os.path.join(outdir,"significant_bmks_by_comparison"))
+                except Exception as e:
+                    log.warning(f"  split_significant_bmks failed: {e}")
+            else:
+                log.info(f"  No significant biomarkers found (all kruskal_padj >= 0.05)")
+            
+            # Top 50 plot with cross-validation info
+            top_n = min(50, len(ranked))
+            top = ranked.head(top_n)
+            fig, ax = plt.subplots(figsize=(8, max(4, top_n * 0.3)))
+            neg_log_p = -np.log10(top["kruskal_padj"].clip(lower=1e-300))
+            
+            # Enhanced labels with n_sections_significant
+            if "n_sections_significant" in top.columns:
+                labels = [f"{row['ID']} [{row['section']}] (×{int(row['n_sections_significant'])} sec)" 
+                          if row['n_sections_significant'] > 1 else f"{row['ID']} [{row['section']}]"
+                          for _, row in top.iterrows()]
+            else:
+                labels = top["ID"].astype(str) + " [" + top["section"].astype(str) + "]"
+            
+            ax.barh(range(top_n), neg_log_p.values[::-1])
+            ax.set_yticks(range(top_n))
+            ax.set_yticklabels(labels[::-1], fontsize=6)
+            ax.set_xlabel("-log10(adjusted p-value)")
+            ax.set_title("Global BMK Ranking by Significance (top 50)\n(×N sec = significant in N sections)")
+            
+            # Add reference lines for p-value thresholds
+            ax.axvline(-np.log10(0.05), color='red', linestyle='--', linewidth=1, alpha=0.7, label='p=0.05')
+            ax.axvline(-np.log10(0.1), color='orange', linestyle='--', linewidth=1, alpha=0.7, label='p=0.1')
+            ax.legend(loc='lower right', fontsize=8)
+            
+            save_fig(fig, os.path.join(outdir, "global_ranking_plot.png"))
+
+    return outdir
+
+# ---------------------------------------------------------------------------
+# Venn Diagram Generation
+# ---------------------------------------------------------------------------
+
+def generate_diagram(sig_csv_path, outdir):
+    """Génère un diagramme de Venn pour les sections présentes dans global_ranking_significant.csv"""
+    safe_mkdir(outdir)
+
+    # Charger le fichier
+    df = pd.read_csv(sig_csv_path)
+
+    # 🔎 1. sélectionner les colonnes de padj (comparaisons)
+    padj_cols = [c for c in df.columns if c.startswith("primary_padj_")]
+
+    # 🧼 2. nettoyer les noms de colonnes
+    rename_map = {
+        c: c.replace("primary_padj_", "")
+        for c in padj_cols
+    }
+    df = df.rename(columns=rename_map)
+    padj_cols = list(rename_map.values())
+
+    # 🎯 3. seuil de significativité
+    alpha = 0.05
+    binary_df = df[padj_cols] < alpha
+    
+    # 🔗 4. format UpSet
+    upset_data = from_indicators(binary_df.columns, binary_df)
+    df["ID"] = df["section"].astype(str) + "_" + df["ID"].astype(str)  # create more human readable ID by combining section and original ID
+    binary_df = binary_df.set_index(df["ID"]) # use ID as index for better visualization
+
+    # 📊 5. plot
+    # 🔥 hauteur proportionnelle
+    n_rows = binary_df.shape[0]
+    fig_height = max(6, n_rows * 0.3)
+    fig, ax = plt.subplots(figsize=(12, fig_height))
+    #plot heatmap
+    sns.heatmap(binary_df.astype(int), cmap="viridis", ax=ax)
+    #label
+    plt.xticks(rotation=45, ha="right")
+    plt.yticks(rotation=0)
+
+    # 💾 Save
+    plt.savefig(os.path.join(outdir, "global_ranking_significant_by_condition.png"), bbox_inches="tight", facecolor="white")
+    plt.close()
+
+# ---------------------------------------------------------------------------
+# Split csv significant BMKs into unique/common for each comparison
+# ---------------------------------------------------------------------------
+def split_significant_bmks(sig_csv_path, outdir):
+    """Crée une arborescence de dossiers/fichiers pour chaque comparaison :
+    - all_significant.csv : tous les BMKs significatifs pour la comparaison
+    - unique/unique.csv : BMKs uniquement significatifs pour cette comparaison
+    - common/<autre_comparaison>.csv : BMKs partagés avec une autre comparaison
+    """
+    safe_mkdir(outdir)
+
+    df = pd.read_csv(sig_csv_path)
+    padj_cols = [c for c in df.columns if c.startswith("primary_padj_")]
+    rename_map = {c: c.replace("primary_padj_", "") for c in padj_cols}
+    df = df.rename(columns=rename_map)
+    padj_cols = list(rename_map.values())
+    alpha = 0.05
+    binary_df = df[padj_cols] < alpha
+    binary_df = binary_df.set_index(df["ID"])  # index = BMK ID
+
+    for comp in padj_cols:
+        comp_dir = os.path.join(outdir, comp)
+        # 1. Tous les BMKs significatifs pour cette comparaison
+        sig_bmks = binary_df.index[binary_df[comp]].tolist()
+        all_sig_df = df[df[comp] < alpha]
+        if not all_sig_df.empty:
+            os.makedirs(comp_dir, exist_ok=True)
+            all_sig_df.to_csv(os.path.join(comp_dir, "all_significant.csv"), index=False)
+        # 2. BMKs uniques à cette comparaison
+        is_unique = (binary_df[comp]) & (binary_df.drop(columns=[comp]).sum(axis=1) == 0)
+        unique_df = df[df["ID"].isin(binary_df.index[is_unique])]
+        if not unique_df.empty:
+            unique_dir = os.path.join(comp_dir, "unique")
+            os.makedirs(unique_dir, exist_ok=True)
+            unique_df.to_csv(os.path.join(unique_dir, "unique.csv"), index=False)
+        # 3. BMKs communs avec chaque autre comparaison
+        for other in padj_cols:
+            if other == comp:
+                continue
+            is_common = (binary_df[comp]) & (binary_df[other])
+            common_df = df[df["ID"].isin(binary_df.index[is_common])]
+            if not common_df.empty:
+                common_dir = os.path.join(comp_dir, "common")
+                os.makedirs(common_dir, exist_ok=True)
+                common_df.to_csv(os.path.join(common_dir, f"{other}.csv"), index=False)
 
 # ---------------------------------------------------------------------------
 # Top-level orchestration per section
@@ -1680,102 +1876,6 @@ def analyze_section_wrapper(args_tuple):
         except:
             pass
         raise
-
-
-# ---------------------------------------------------------------------------
-# Global Biomarker Ranking (across all sections)
-# ---------------------------------------------------------------------------
-
-def global_ranking(all_results, outdir):
-    """Aggregate rankings across sections to produce a global ranking with cross-validation metrics."""
-    safe_mkdir(outdir)
-
-    # Collect differential results
-    diff_files = []
-    for vtype, vdata in all_results.items():
-        for mtype, mdata in vdata.items():
-            for section, sdata in mdata.items():
-                # MEMORY FIX: sdata is now a slim dict with only "differential_table" key
-                diff_path = sdata.get("differential_table")
-                if diff_path and os.path.exists(diff_path):
-                    ddf = pd.read_csv(diff_path)
-                    # Defragment DataFrame before adding columns to avoid PerformanceWarning
-                    ddf = ddf.copy()
-                    # Add metadata columns
-                    ddf["value_type"] = vtype
-                    ddf["mtype"] = mtype
-                    ddf["section"] = section
-                    diff_files.append(ddf)
-
-    if diff_files:
-        all_diff = pd.concat(diff_files, ignore_index=True)
-        
-        # Add n_sections_significant: cross-validation metric
-        # Count how many sections each BMK appears in (regardless of significance)
-        if "ID" in all_diff.columns:
-            id_section_counts = all_diff.groupby("ID")["section"].nunique()
-            all_diff["n_sections_total"] = all_diff["ID"].map(id_section_counts)
-            
-            # Count sections where BMK is significant (padj < 0.05 in ANY test)
-            padj_cols = [c for c in all_diff.columns if c.endswith("_padj")]
-            if padj_cols:
-                # Create mask: True if ANY padj column is < 0.05
-                sig_mask = all_diff[padj_cols].lt(0.05).any(axis=1)
-                sig_df = all_diff[sig_mask].copy()
-                if len(sig_df) > 0:
-                    sig_counts = sig_df.groupby("ID")["section"].nunique()
-                    all_diff["n_sections_significant"] = all_diff["ID"].map(sig_counts).fillna(0).astype(int)
-                else:
-                    all_diff["n_sections_significant"] = 0
-            else:
-                all_diff["n_sections_significant"] = 0
-        
-        # Rank by kruskal_padj
-        if "kruskal_padj" in all_diff.columns:
-            ranked = all_diff.dropna(subset=["kruskal_padj"]).sort_values("kruskal_padj")
-            ranked.to_csv(os.path.join(outdir, "global_ranking_kruskal.csv"), index=False)
-            
-            # Log statistics
-            best_padj = ranked["kruskal_padj"].min() if len(ranked) > 0 else float('nan')
-            log.info(f"  Saved global ranking: {len(ranked)} biomarkers (best padj: {best_padj:.2e})")
-            
-            # Create filtered version: only significant (padj < 0.05 in kruskal test)
-            sig_ranked = ranked[ranked["kruskal_padj"] < 0.05].copy()
-            if len(sig_ranked) > 0:
-                sig_ranked.to_csv(os.path.join(outdir, "global_ranking_significant.csv"), index=False)
-                log.info(f"  Saved significant subset: {len(sig_ranked)} biomarkers (kruskal_padj < 0.05)")
-            else:
-                log.info(f"  No significant biomarkers found (all kruskal_padj >= 0.05)")
-            
-            # Top 50 plot with cross-validation info
-            top_n = min(50, len(ranked))
-            top = ranked.head(top_n)
-            fig, ax = plt.subplots(figsize=(8, max(4, top_n * 0.3)))
-            neg_log_p = -np.log10(top["kruskal_padj"].clip(lower=1e-300))
-            
-            # Enhanced labels with n_sections_significant
-            if "n_sections_significant" in top.columns:
-                labels = [f"{row['ID']} [{row['section']}] (×{int(row['n_sections_significant'])} sec)" 
-                          if row['n_sections_significant'] > 1 else f"{row['ID']} [{row['section']}]"
-                          for _, row in top.iterrows()]
-            else:
-                labels = top["ID"].astype(str) + " [" + top["section"].astype(str) + "]"
-            
-            ax.barh(range(top_n), neg_log_p.values[::-1])
-            ax.set_yticks(range(top_n))
-            ax.set_yticklabels(labels[::-1], fontsize=6)
-            ax.set_xlabel("-log10(adjusted p-value)")
-            ax.set_title("Global BMK Ranking by Significance (top 50)\n(×N sec = significant in N sections)")
-            
-            # Add reference lines for p-value thresholds
-            ax.axvline(-np.log10(0.05), color='red', linestyle='--', linewidth=1, alpha=0.7, label='p=0.05')
-            ax.axvline(-np.log10(0.1), color='orange', linestyle='--', linewidth=1, alpha=0.7, label='p=0.1')
-            ax.legend(loc='lower right', fontsize=8)
-            
-            save_fig(fig, os.path.join(outdir, "global_ranking_plot.png"))
-
-    return outdir
-
 
 # ---------------------------------------------------------------------------
 # Main pipeline
@@ -2472,7 +2572,9 @@ EXAMPLES:
         vtype_results = {vtype: all_results[vtype]}
         global_ranking(vtype_results, os.path.join(vtype_dir, "global_ranking"))
 
+        # ===============================================================
         # Save manifest
+        # ===============================================================
         manifest = {
             "value_types": value_types,
             "outdir": outdir,
