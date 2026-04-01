@@ -73,6 +73,28 @@ def append_res_df_by_df_via_index (res_df, df, sample_cols, meta_cols_exclude):
     res_df = res_df[existing_meta + stat_cols]
     return res_df
 
+# to avoid DtypeWarning
+def slurp_csv(path, sample_cols=None):
+    if sample_cols :
+        feat_df = pd.read_csv(
+            path,
+            sep="\t",
+            dtype=str,
+            low_memory=False
+        )
+        # convertir uniquement les colonnes numériques
+        feat_df[sample_cols] = feat_df[sample_cols].apply(
+            pd.to_numeric, errors="coerce"
+        )
+    else:
+        feat_df = pd.read_csv(
+            path,
+            sep="\t",
+            dtype={"SeqID": str, "Start": str, "End": str, "Strand": str},
+            low_memory=False
+        )
+
+    return feat_df
 
 def filter_significant(df_sig, feat_df, agg_df, uid_col="uid"):
     """Filter df to only include rows where uid is in sig_df[uid_col]."""    
@@ -168,7 +190,8 @@ def create_uid_column(df=None, meta_cols=["SeqID", "ParentIDs", "ID", "Mtype", "
     # ── ID → seulement si Type n’est pas sequence/global ──
     if "ID" in df.columns and "Type" in df.columns:
         type_clean = df["Type"].astype(str).str.lower().str.strip()       
-        id_allowed = df["ID"].where(type_clean == "feature", pd.NA)
+         # garder ID si Type NOT IN ["global", "sequence"]
+        id_allowed = df["ID"].where(~type_clean.isin(["global", "sequence"]), pd.NA)
         composite_parts.append(clean_part(id_allowed))
 
     # ── Ctype ───────────────────────────────────────────
@@ -192,6 +215,7 @@ def create_uid_column(df=None, meta_cols=["SeqID", "ParentIDs", "ID", "Mtype", "
     cols = ["uid"] + [c for c in df.columns if c != "uid"]
     
     #df[cols].to_csv(os.path.join("test.csv"))
+    #sys.exit(0)
     return df[cols]
 
 def parse_sample_columns(columns):
@@ -1757,7 +1781,7 @@ def generate_diagram(sig_csv_path, outdir):
     )
     plt.close()
     
-    print(f"✓ Saved significance heatmap with {n_rows} BMKs × {len(padj_cols)} comparisons")
+    log.info(f"✓ Saved significance heatmap with {n_rows} BMKs × {len(padj_cols)} comparisons")
     log.info(f"  Saved significance heatmap: {output_path}")
 
 # ---------------------------------------------------------------------------
@@ -2293,7 +2317,7 @@ EXAMPLES:
             log.error(f"Aggregates file not found: {args.aggregates}")
             sys.exit(1)
         log.info(f"Loading aggregates from {args.aggregates}...")
-        agg_df = pd.read_csv(args.aggregates, sep="\t", dtype={"SeqID": str, "Start": str, "End": str, "Strand": str})
+        agg_df = slurp_csv(args.aggregates)
         agg_df.columns = agg_df.columns.str.strip()  # Remove leading/trailing whitespace from column names
         agg_df = harmonize_columns(agg_df)  # Ensure column header standardisation
         agg_df = create_uid_column(agg_df)  # Create UID column for unique identification of rows
@@ -2310,7 +2334,7 @@ EXAMPLES:
             log.error(f"Features file not found: {args.features}")
             sys.exit(1)
         log.info(f"Loading features from {args.features}...")
-        feat_df = pd.read_csv(args.features, sep="\t", dtype={"SeqID": str, "Start": str, "End": str, "Strand": str})
+        feat_df = slurp_csv(args.features) 
         feat_df.columns = feat_df.columns.str.strip()  # Remove leading/trailing whitespace from column names
         feat_df = harmonize_columns(feat_df)  # Ensure column header standardisation
         feat_df = create_uid_column(feat_df)  # Create UID column for unique identification of rows
@@ -2861,7 +2885,7 @@ EXAMPLES:
         # ── Récupérer tous les chemins ────────────────────────────────────────────
         base_dir = os.path.join(vtype_dir, "global_ranking", "significant_bmks_by_comparison")
         all_sig_paths = glob.glob(os.path.join(base_dir, "**", "all_significant.csv"), recursive=True)
-        print(f"Found {len(all_sig_paths)} files")
+        log.info(f"Found {len(all_sig_paths)} files")
         # ── Loop ──────────────────────────────────────────────────────────────────
         for path in sorted(all_sig_paths):
             folder = os.path.dirname(path)     
