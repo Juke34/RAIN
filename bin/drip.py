@@ -30,7 +30,8 @@ DESCRIPTION:
     This script analyzes RNA editing from standardized pluviometer files. It calculates
     two key metrics for all 12 genome-variant base pair combinations across multiple 
     samples and combines them into a unified matrix format.
-
+    drip.py implicitly assumes that the combination of the 11 columns forms a unique key, used to merge rows across samples.
+    
 USAGE:
     ./drip.py --output OUTPUT_PREFIX FILE1:GROUP1:SAMPLE1:REP1 FILE2:GROUP2:SAMPLE2:REP2 [...]
     ./drip.py --help | -h
