@@ -16,6 +16,7 @@ Usage:
 
 import argparse
 import gc
+import glob
 import json
 import logging
 import multiprocessing
@@ -61,6 +62,49 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def append_res_df_by_df_via_index (res_df, df, sample_cols, meta_cols_exclude):
+    meta_cols = [c for c in df.columns if c not in sample_cols and c not in meta_cols_exclude]
+    # Merge with original df to get metadata
+    res_df = res_df.join(df.loc[res_df.index, meta_cols], how="left")
+    # ⭐ RÉORGANISER : mettre les METADATA en PREMIER ⭐
+    existing_meta = [c for c in meta_cols if c in res_df.columns]
+    stat_cols = [c for c in res_df.columns if c not in meta_cols]
+    # Ordre final : metadata d'abord, puis statistiques
+    res_df = res_df[existing_meta + stat_cols]
+    return res_df
+
+
+def filter_significant(df_sig, feat_df, agg_df, uid_col="uid"):
+    """Filter df to only include rows where uid is in sig_df[uid_col]."""    
+    # ── get significant ─────────────────────────────────────────────  
+    sig_uids = df_sig["uid"].tolist()  # les uid significatifs
+    
+    # ── Filtrer les significatifs ─────────────────────────────────────────────
+    feat_df_sig = feat_df[feat_df["uid"].isin(sig_uids)] if feat_df is not None and len(feat_df) > 0 else None
+    agg_df_sig  = agg_df[agg_df["uid"].isin(sig_uids)]   if agg_df  is not None and len(agg_df)  > 0 else None
+
+    # ── Jointure  ─────────────────────────────────────────────────
+    if feat_df_sig is not None and agg_df_sig is not None:
+        # Les deux existent → on fusionne
+        df_sig = pd.merge(feat_df_sig, agg_df_sig, on="uid", how="outer", suffixes=("_feat", "_agg"))
+        log.info(f"  Merged feat + agg → {len(df_sig)} rows")
+
+    elif feat_df_sig is not None:
+        # Seulement feat
+        df_sig = feat_df_sig
+        log.info(f"  Only feat_df available → {len(df_sig)} rows")
+
+    elif agg_df_sig is not None:
+        # Seulement agg
+        df_sig = agg_df_sig
+        log.info(f"  Only agg_df available → {len(df_sig)} rows")
+
+    else:
+        # Aucun des deux
+        log.warning("  No data available (feat_df and agg_df are both empty/None)")
+        df_sig = pd.DataFrame()
+    
+    return df_sig
 
 def safe_mkdir(path):
     Path(path).mkdir(parents=True, exist_ok=True)
@@ -80,6 +124,75 @@ def prepare_df_for_task(df):
     import pickle
     return ('pickled', pickle.dumps(df, protocol=pickle.HIGHEST_PROTOCOL))
 
+# work line by line (Series)
+def create_uid_column(df=None, meta_cols=["SeqID", "ParentIDs", "ID", "Mtype", "Ptype", "Type", "Ctype", "Mode"]):
+    """Create a unique identifier (vectorized, robust)"""
+
+    def clean_part(series):
+        cleaned = series.astype(str).str.strip()
+        # remove leading ., or ., e.g. for ParentsID
+        cleaned = cleaned.str.replace(r"^\.?,?", "", regex=True)
+        cleaned = cleaned.replace(r"^\.*$", pd.NA, regex=True)
+        cleaned = cleaned.replace(r"^\s*$", pd.NA, regex=True)
+        return cleaned.fillna("").astype(str)
+
+    # ── Mtype (prefix) ───────────────────────────────────
+    uid = pd.Series("", index=df.index)
+
+    if "Mtype" in df.columns:
+        mtype_clean = df["Mtype"].astype(str).str.lower().str.strip()
+        
+        # Utiliser loc avec le masque booléen
+        uid.loc[mtype_clean == "aggregate"] = "agg"
+        uid.loc[mtype_clean == "feature"] = "feat"
+
+
+    composite_parts = []
+
+    # ── Type ─────────────────────────────────────────────
+    if "Type" in df.columns:
+        composite_parts.append(clean_part(df["Type"]))
+
+    # ── SeqID ────────────────────────────────────────────
+    if "SeqID" in df.columns:
+        composite_parts.append(clean_part(df["SeqID"]))
+
+    # ── Ptype ────────────────────────────────────────────
+    if "Ptype" in df.columns:
+        composite_parts.append(clean_part(df["Ptype"]))
+
+    # ── ParentIDs ────────────────────────────────────────
+    if "ParentIDs" in df.columns:
+        composite_parts.append(clean_part(df["ParentIDs"]))
+
+    # ── ID → seulement si Type n’est pas sequence/global ──
+    if "ID" in df.columns and "Type" in df.columns:
+        type_clean = df["Type"].astype(str).str.lower().str.strip()       
+        id_allowed = df["ID"].where(type_clean == "feature", pd.NA)
+        composite_parts.append(clean_part(id_allowed))
+
+    # ── Ctype ───────────────────────────────────────────
+    if "Ctype" in df.columns:
+        composite_parts.append(clean_part(df["Ctype"]))
+
+    # ── Mode ────────────────────────────────────────────
+    if "Mode" in df.columns:
+        composite_parts.append(clean_part(df["Mode"]))
+
+    # ── Concaténation des parties
+    for part in composite_parts:
+        uid = uid + "-" + part
+
+    # Supprimer doubles tirets et tirets devant/derrière
+    uid = uid.str.replace(r"-+", "-", regex=True).str.strip("-")
+
+    df["uid"] = uid
+    
+    # Mettre uid en première colonne
+    cols = ["uid"] + [c for c in df.columns if c != "uid"]
+    
+    #df[cols].to_csv(os.path.join("test.csv"))
+    return df[cols]
 
 def parse_sample_columns(columns):
     """Parse sample column names like 'test1::rain_chr21_small::rep1::espf'.
@@ -87,7 +200,7 @@ def parse_sample_columns(columns):
     Returns a list of dicts with keys: col, group, sample, rep, value_type.
     """
     parsed = []
-    meta_cols = {"SeqID", "ParentIDs", "ID", "Mtype", "Ptype", "Type", "Ctype", "Mode", "Start", "End", "Strand"}
+    meta_cols = {"uid", "SeqID", "ParentIDs", "ID", "Mtype", "Ptype", "Type", "Ctype", "Mode", "Start", "End", "Strand"}
     for c in columns:
         if c in meta_cols:
             continue
@@ -466,6 +579,7 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
     """
     safe_mkdir(outdir)
     ndf = numeric_df(df, sample_cols)
+
     groups = sorted(set(s["group"] for s in sample_info))
     results = {"pairwise": {}, "global": {}, "stat_test_used": stat_test}
 
@@ -494,8 +608,6 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
         
         for idx in ndf.index:
             row_data = {"index": idx}
-            if "ID" in df.columns:
-                row_data["ID"] = df.loc[idx, "ID"]
 
             group_values = {}
             for g in groups:
@@ -601,9 +713,9 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
             # DEBUG: Log first BMK's pairwise test setup
             if idx == ndf.index[0]:
                 pairs_list = list(combinations(groups, 2))
-                log.debug(f"  DEBUG PAIRWISE: {len(groups)} groups → {len(pairs_list)} pairs")
-                log.debug(f"  DEBUG PAIRWISE: Groups = {groups}")
-                log.debug(f"  DEBUG PAIRWISE: Pairs = {pairs_list}")
+                log.debug(f"PAIRWISE: {len(groups)} groups → {len(pairs_list)} pairs")
+                log.debug(f"PAIRWISE: Groups = {groups}")
+                log.debug(f"PAIRWISE: Pairs = {pairs_list}")
             
             for g1, g2 in combinations(groups, 2):
                 v1, v2 = group_values.get(g1, []), group_values.get(g2, [])
@@ -611,12 +723,12 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
                 
                 # DEBUG: Log first BMK's pairwise data
                 if idx == ndf.index[0]:
-                    log.debug(f"  DEBUG PAIRWISE: {pair_key} → v1={len(v1)} v2={len(v2)}")
+                    log.debug(f"PAIRWISE: {pair_key} → v1={len(v1)} v2={len(v2)}")
                 
                 if len(v1) >= 1 and len(v2) >= 1:
                     # DEBUG: Log first BMK entering pairwise test block
                     if idx == ndf.index[0]:
-                        log.debug(f"  DEBUG PAIRWISE: Entering test block for {pair_key}")
+                        log.debug(f"PAIRWISE: Entering test block for {pair_key}")
                     
                     # Mann-Whitney U (nonparametric, always compute)
                     try:
@@ -626,12 +738,12 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
                         
                         # DEBUG: Confirm keys added
                         if idx == ndf.index[0]:
-                            log.debug(f"  DEBUG PAIRWISE: Added mwu keys for {pair_key}: stat={stat:.3f}, pval={pval:.3e}")
+                            log.debug(f"PAIRWISE: Added mwu keys for {pair_key}: stat={stat:.3f}, pval={pval:.3e}")
                     except Exception as e:
                         row_data[f"mwu_stat_{pair_key}"] = np.nan
                         row_data[f"mwu_pval_{pair_key}"] = np.nan
                         if idx == ndf.index[0]:
-                            log.debug(f"  DEBUG PAIRWISE: Mann-Whitney failed for {pair_key}: {e}")
+                            log.debug(f"PAIRWISE: Mann-Whitney failed for {pair_key}: {e}")
                     
                     # Student t-test (parametric, equal variances)
                     if len(v1) >= 2 and len(v2) >= 2:
@@ -705,40 +817,19 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
     if len(rows) > 1:
         last_row_keys = list(rows[-1].keys())
         pval_keys_last = [k for k in last_row_keys if k.endswith("_pval")]
-        log.debug(f"  DEBUG: Last row has {len(last_row_keys)} total keys")
-        log.debug(f"  DEBUG: Last row has {len(pval_keys_last)} _pval keys")
+        log.debug(f"Last row has {len(last_row_keys)} total keys")
+        log.debug(f"Last row has {len(pval_keys_last)} _pval keys")
     
+     # Convert rows to DataFrame
     res_df = pd.DataFrame(rows)
+    res_df = res_df.set_index("index")
     
-    # DEBUG: Check res_df columns IMMEDIATELY after DataFrame creation
-    log.debug(f"  DEBUG: res_df has {len(res_df.columns)} columns after pd.DataFrame()")
-    mwu_cols_in_df = [c for c in res_df.columns if "mwu" in c.lower()]
-    log.debug(f"  DEBUG: res_df has {len(mwu_cols_in_df)} mwu columns: {mwu_cols_in_df[:5] if len(mwu_cols_in_df) > 0 else 'NONE'}")
-    
-    # DEBUG: Log first row keys to understand what columns were created
-    if len(rows) > 0:
-        first_row_keys = list(rows[0].keys())
-        pval_keys_in_row = [k for k in first_row_keys if k.endswith("_pval")]
-        mwu_keys_in_row = [k for k in first_row_keys if "mwu" in k.lower()]
-        log.debug(f"  DEBUG: First row dict has {len(first_row_keys)} total keys")
-        log.debug(f"  DEBUG: First row dict has {len(pval_keys_in_row)} _pval keys: {pval_keys_in_row}")
-        log.debug(f"  DEBUG: First row dict has {len(mwu_keys_in_row)} mwu keys: {mwu_keys_in_row}")
-    
-    # Multiple testing correction (FDR Benjamini-Hochberg) for ALL p-value columns
+    # ============================================================================
+    # FDR CORRECTION - Multiple testing correction (FDR Benjamini-Hochberg) for ALL p-value columns
+    # ============================================================================
     log.info(f"  Applying FDR correction to p-values...")
-    
-    # DEBUG: Log column count - check ALL columns containing "pval"
-    pval_cols_endswith = [c for c in res_df.columns if c.endswith("_pval")]
-    pval_cols_contains = [c for c in res_df.columns if "pval" in str(c).lower()]
-    log.debug(f"  DEBUG: Found {len(pval_cols_endswith)} columns ending with '_pval' in res_df")
-    log.debug(f"  DEBUG: Found {len(pval_cols_contains)} columns containing 'pval' in res_df")
-    if len(pval_cols_endswith) <= 10:
-        log.debug(f"  DEBUG: Columns ending with '_pval': {pval_cols_endswith}")
-    if len(pval_cols_contains) > len(pval_cols_endswith):
-        missing = [c for c in pval_cols_contains if c not in pval_cols_endswith]
-        log.debug(f"  DEBUG: Columns with 'pval' but not ending with '_pval': {missing[:10]}")
-    
-    pval_cols = pval_cols_contains  # USE ALL pval columns, not just those ending with _pval
+
+    pval_cols = [c for c in res_df.columns if "pval" in str(c).lower()]
     
     n_padj_created = 0
     for col in pval_cols:  # FIXED: Iterate over filtered list instead of checking endswith
@@ -753,7 +844,16 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
         n_padj_created += 1
     log.info(f"  Created {n_padj_created} adjusted p-value columns")
 
-    res_df.to_csv(os.path.join(outdir, "differential_results.csv"), index=False)
+    # ============================================================================
+    # ADD ORIGINAL METADATA from input df
+    # ============================================================================
+    meta_cols_exclude = ["some_col", "another_col"]  # Example of columns to exclude from metadata (if any)
+    res_df = append_res_df_by_df_via_index(res_df, df, sample_cols, meta_cols_exclude)  # Ensure index is aligned for joining
+
+    # ============================================================================
+    # OUTPUT RESULTS
+    # ============================================================================
+    res_df.to_csv(os.path.join(outdir, "differential_results.csv"), index=True)
     results["table"] = os.path.join(outdir, "differential_results.csv")
     results["stat_test_method"] = stat_test
 
@@ -848,7 +948,7 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
             ax.grid(True, alpha=0.3, linestyle=':')
             save_fig(fig, os.path.join(outdir, f"volcano_{pair_key}.png"))
             n_plots_created += 1
-            log.info(f"    Created volcano plot: {pair_key}")
+            log.info(f"    Created volcano plot : {pair_key}")
         else:
             log.warning(f"  No data available for volcano plot {pair_key}")
     
@@ -857,11 +957,11 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
     return results
 
 # ---------------------------------------------------------------------------
-# Correlation / Network Analysis
+# Correlation / Network Analysis - with clustering
 # ---------------------------------------------------------------------------
 
 def correlation_network(df, sample_cols, outdir, max_bmks=50):
-    """Compute BMK-BMK correlation matrix and heatmap.
+    """Compute BMK-BMK correlation matrix and heatmap with hierarchical clustering.
     
     MEMORY FIX: Reduced max_bmks from 200 to 50 to prevent OOM.
     - Correlation matrix: N×N float64 = N² × 8 bytes
@@ -870,12 +970,12 @@ def correlation_network(df, sample_cols, outdir, max_bmks=50):
     - Heatmap figure with N=50: ~4 MB instead of 64 MB per image
     """
     safe_mkdir(outdir)
-    ndf = numeric_df(df, sample_cols)
     results = {}
+    
+    df = df.set_index("uid", drop=False)
 
-    # BMK-BMK correlation (limit to top variable BMKs)
-    mat = ndf[sample_cols].copy()
-    mat.index = df["ID"].values if "ID" in df.columns else range(len(df))
+    # avoid Correlation analysis failed: could not convert string to float: 'NA'
+    mat = df[sample_cols].apply(pd.to_numeric, errors="coerce")
     mat = mat.dropna(axis=0, how="all")
     
     # Early exit if too few BMKs
@@ -887,20 +987,56 @@ def correlation_network(df, sample_cols, outdir, max_bmks=50):
     top_idx = var.nlargest(min(max_bmks, len(var))).index
     sub = mat.loc[top_idx]
 
-    if len(sub) >= 3:
+    if len(sub) >= 2:
         # Compute correlation matrix (memory intensive: N×N)
         corr = sub.T.corr()
         corr.to_csv(os.path.join(outdir, "bmk_correlation.csv"))
 
-        # Limit figure size to prevent excessive memory usage
-        fig_width = min(15, max(6, len(sub) * 0.15))   # Cap at 15 inches
-        fig_height = min(12, max(5, len(sub) * 0.12))  # Cap at 12 inches
-        
+        # ── Heatmap simple (sans clustering) ──────────────────────────────────
+        fig_width  = min(45, max(16, len(sub) * 0.40))  
+        fig_height = min(40, max(12, len(sub) * 0.40))   
+
         fig, ax = plt.subplots(figsize=(fig_width, fig_height))
         sns.heatmap(corr, cmap="RdBu_r", center=0, ax=ax,
-                    xticklabels=len(sub) < 50, yticklabels=len(sub) < 50)
+                    xticklabels=len(sub) < 50,
+                    yticklabels=len(sub) < 50)
         ax.set_title(f"BMK Correlation (top {len(sub)} by variance)")
         save_fig(fig, os.path.join(outdir, "bmk_correlation_heatmap.png"))
+
+        # ── Clustermap (regroupement par ressemblance) ────────────────────────
+        # sns.clustermap retourne une ClusterGrid, pas un Figure+Axes classique
+        if len(sub) >= 3:  # clustering nécessite au moins 3 éléments
+            try:
+                cmap_width  = min(45, max(16,  len(sub) * 0.40))
+                cmap_height = min(45, max(16,  len(sub) * 0.40))
+
+                cg = sns.clustermap(
+                    corr,
+                    cmap="RdBu_r",
+                    center=0,
+                    method="average",       # liaison hiérarchique : average, complete, ward…
+                    metric="euclidean",     # distance entre lignes/colonnes
+                    figsize=(cmap_width, cmap_height),
+                    xticklabels=len(sub) < 50,
+                    yticklabels=len(sub) < 50,
+                    dendrogram_ratio=0.15,  # taille relative du dendrogramme
+                    cbar_pos=(0.02, 0.8, 0.03, 0.18),  # position colorbar
+                )
+                cg.fig.suptitle(
+                    f"BMK Correlation – clustered (top {len(sub)} by variance)",
+                    y=1.02
+                )
+
+                # Sauvegarder via la figure de la ClusterGrid
+                save_fig(cg.fig, os.path.join(outdir, "bmk_correlation_clustermap.png"))
+
+                # Ordre des BMKs après clustering (utile pour debug / export)
+                clustered_order = corr.index[cg.dendrogram_row.reordered_ind].tolist()
+                log.debug(f"Clustered BMK order: {clustered_order[:10]}{'...' if len(clustered_order) > 10 else ''}")
+
+            except Exception as e:
+                log.warning(f"  Clustermap failed (skipping): {e}")
+
         results["n_bmks_corr"] = len(sub)
 
     return results
@@ -924,9 +1060,16 @@ def feature_ranking(df, sample_cols, sample_info, outdir, max_bmks=500, bmk_filt
     if len(groups) < 2:
         return results
 
+    # ⭐ CRÉER bmk_ids BASÉ SUR ndf.index ⭐
+    if "uid" in df.columns:
+        bmk_ids = df.loc[ndf.index, "uid"].values
+    else:
+        bmk_ids = ndf.index.values
+
     # Build matrix: rows = samples, cols = BMKs
     mat = ndf[sample_cols].T.copy()
-    bmk_ids = df["ID"].values if "ID" in df.columns else [str(i) for i in range(len(df))]
+
+    # Use the unique index (already set in analyze_section)
     mat.columns = bmk_ids
     mat = mat.fillna(0)
 
@@ -949,47 +1092,53 @@ def feature_ranking(df, sample_cols, sample_info, outdir, max_bmks=500, bmk_filt
     if os.path.exists(diff_file):
         diff_df = pd.read_csv(diff_file)
         
-        # PASS 1: Cascade through adjusted p-values (strong evidence)
-        for filter_col in bmk_filter_cols:
-            if len(selected_bmks) >= max_bmks:
-                break
-                
-            if filter_col in diff_df.columns and "ID" in diff_df.columns:
-                sig_bmks = diff_df[diff_df[filter_col] < 0.05]["ID"].values
-                valid_sig_bmks = [b for b in sig_bmks if b in mat.columns and b not in selected_bmks]
-                remaining = max_bmks - len(selected_bmks)
-                to_add = valid_sig_bmks[:remaining]
-                
-                if to_add:
-                    selected_bmks.update(to_add)
-                    filter_log.append(f"{filter_col}: +{len(to_add)}")
+        # ⭐ Déterminer quelle colonne utiliser pour l'ID ⭐
+        id_col = "uid" if "uid" in diff_df.columns else "index" if "index" in diff_df.columns else None
         
-        # PASS 2: If not enough, cascade through raw p-values (suggestive evidence)
-        if len(selected_bmks) < max_bmks:
-            filter_log.append("|")
+        if id_col is None:
+            log.warning("No 'uid' or 'index' column found in differential results")
+        else:
+            # PASS 1: Cascade through adjusted p-values (strong evidence)
             for filter_col in bmk_filter_cols:
                 if len(selected_bmks) >= max_bmks:
                     break
-                
-                # Convert *_padj to *_pval
-                pval_col = filter_col.replace("_padj", "_pval")
-                if pval_col != filter_col and pval_col in diff_df.columns and "ID" in diff_df.columns:
-                    sig_bmks = diff_df[diff_df[pval_col] < 0.05]["ID"].values
+                    
+                if filter_col in diff_df.columns:
+                    sig_bmks = diff_df[diff_df[filter_col] < 0.05][id_col].values
                     valid_sig_bmks = [b for b in sig_bmks if b in mat.columns and b not in selected_bmks]
                     remaining = max_bmks - len(selected_bmks)
                     to_add = valid_sig_bmks[:remaining]
                     
                     if to_add:
                         selected_bmks.update(to_add)
-                        filter_log.append(f"{pval_col}: +{len(to_add)}")
+                        filter_log.append(f"{filter_col}: +{len(to_add)}")
+            
+            # PASS 2: If not enough, cascade through raw p-values (suggestive evidence)
+            if len(selected_bmks) < max_bmks:
+                filter_log.append("|")
+                for filter_col in bmk_filter_cols:
+                    if len(selected_bmks) >= max_bmks:
+                        break
+                    
+                    # Convert *_padj to *_pval
+                    pval_col = filter_col.replace("_padj", "_pval")
+                    if pval_col != filter_col and pval_col in diff_df.columns :
+                        sig_bmks = diff_df[diff_df[pval_col] < 0.05][id_col].values
+                        valid_sig_bmks = [b for b in sig_bmks if b in mat.columns and b not in selected_bmks]
+                        remaining = max_bmks - len(selected_bmks)
+                        to_add = valid_sig_bmks[:remaining]
+                        
+                        if to_add:
+                            selected_bmks.update(to_add)
+                            filter_log.append(f"{pval_col}: +{len(to_add)}")
+            
+            if selected_bmks:
+                selected_bmks = list(selected_bmks)
+                log.info(f"  Collected {len(selected_bmks)} significant BMKs from {n_bmks_total} total for ranking")
+                log.info(f"    Cascade: {' → '.join(filter_log)}")
+            else:
+                selected_bmks = None
         
-        if selected_bmks:
-            selected_bmks = list(selected_bmks)
-            log.info(f"  Collected {len(selected_bmks)} significant BMKs from {n_bmks_total} total for ranking")
-            log.info(f"    Cascade: {' → '.join(filter_log)}")
-        else:
-            selected_bmks = None
-    
     # If not enough significant BMKs, complete with top variable ones
     if selected_bmks is None or len(selected_bmks) < 10:
         if selected_bmks is None:
@@ -1039,8 +1188,10 @@ def feature_ranking(df, sample_cols, sample_info, outdir, max_bmks=500, bmk_filt
     diff_file = os.path.join(os.path.dirname(outdir), "5_differential", "differential_results.csv")
     if os.path.exists(diff_file):
         diff_df = pd.read_csv(diff_file)
+        id_col = "uid" if "uid" in diff_df.columns else "index" if "index" in diff_df.columns else None
+
         if "kruskal_padj" in diff_df.columns:
-            rank_df = diff_df[["ID", "kruskal_padj"]].dropna().sort_values("kruskal_padj")
+            rank_df = diff_df[[id_col, "kruskal_padj"]].dropna().sort_values("kruskal_padj")
             rank_df.to_csv(os.path.join(outdir, "kruskal_ranking.csv"), index=False)
             results["kruskal_top10"] = rank_df.head(10).to_dict(orient="records")
 
@@ -1065,8 +1216,10 @@ def classification_analysis(df, sample_cols, sample_info, outdir, max_bmks=500, 
     if len(groups) < 2:
         return results
 
+    bmk_ids = df["uid"].values if "uid" in df.columns else [str(i) for i in range(len(df))]
+
     mat = ndf[sample_cols].T.fillna(0).copy()
-    bmk_ids = df["ID"].values if "ID" in df.columns else [str(i) for i in range(len(df))]
+    
     mat.columns = bmk_ids
     labels = [group_for_col(sample_info, c) for c in sample_cols]
     le = LabelEncoder()
@@ -1097,9 +1250,9 @@ def classification_analysis(df, sample_cols, sample_info, outdir, max_bmks=500, 
             if len(selected_bmks) >= max_bmks:
                 break  # Stop if we have enough
                 
-            if filter_col in diff_df.columns and "ID" in diff_df.columns:
+            if filter_col in diff_df.columns and "uid" in diff_df.columns:
                 # Get significant BMKs from this column
-                sig_bmks = diff_df[diff_df[filter_col] < 0.05]["ID"].values
+                sig_bmks = diff_df[diff_df[filter_col] < 0.05]["uid"].values
                 valid_sig_bmks = [b for b in sig_bmks if b in mat.columns and b not in selected_bmks]
                 
                 # Add up to remaining slots
@@ -1136,6 +1289,8 @@ def classification_analysis(df, sample_cols, sample_info, outdir, max_bmks=500, 
     if n_bmks < max(2, n_classes):
         log.warning(f"Not enough biomarkers for classification ({n_bmks} BMKs after filtering, need at least {max(2, n_classes)})")
         return results
+    else:
+        log.warning(f"Go ahead we have enough biomarkers for classification")
 
     # Use LOO or stratified k-fold depending on sample count
     if n_samples < 10:
@@ -1233,7 +1388,7 @@ def stability_analysis(df, sample_cols, sample_info, outdir):
 
     # Coefficient of variation per BMK across all samples
     cv_vals = ndf[sample_cols].apply(lambda row: row.std() / row.mean() if row.mean() != 0 else np.nan, axis=1)
-    cv_df = pd.DataFrame({"bmk": df["ID"].values if "ID" in df.columns else range(len(df)),
+    cv_df = pd.DataFrame({"bmk": df["uid"].values if "uid" in df.columns else range(len(df)),
                            "cv": cv_vals.values})
     cv_df = cv_df.sort_values("cv")
     cv_df.to_csv(os.path.join(outdir, "coefficient_variation.csv"), index=False)
@@ -1295,8 +1450,8 @@ def section_heatmap(df, sample_cols, sample_info, outdir, title="", max_rows=100
                 base_label = "all_sites"
             elif ctype and ctype != ".":
                 base_label = str(ctype)
-            elif "ID" in df.columns:
-                base_label = str(df.loc[idx, "ID"])
+            elif "uid" in df.columns:
+                base_label = str(df.loc[idx, "uid"])
             else:
                 base_label = str(idx)
             
@@ -1406,7 +1561,7 @@ def global_ranking(all_results, outdir):
                     ddf = ddf.copy()
                     # Add metadata columns
                     ddf["value_type"] = vtype
-                    ddf["mtype"] = mtype
+                    #ddf["mtype"] = mtype
                     ddf["section"] = section
                     diff_files.append(ddf)
 
@@ -1415,9 +1570,9 @@ def global_ranking(all_results, outdir):
         
         # Add n_sections_significant: cross-validation metric
         # Count how many sections each BMK appears in (regardless of significance)
-        if "ID" in all_diff.columns:
-            id_section_counts = all_diff.groupby("ID")["section"].nunique()
-            all_diff["n_sections_total"] = all_diff["ID"].map(id_section_counts)
+        if "uid" in all_diff.columns:
+            id_section_counts = all_diff.groupby("uid")["section"].nunique()
+            all_diff["n_sections_total"] = all_diff["uid"].map(id_section_counts)
             
             # Count sections where BMK is significant (padj < 0.05 in ANY test)
             padj_cols = [c for c in all_diff.columns if c.endswith("_padj")]
@@ -1426,58 +1581,58 @@ def global_ranking(all_results, outdir):
                 sig_mask = all_diff[padj_cols].lt(0.05).any(axis=1)
                 sig_df = all_diff[sig_mask].copy()
                 if len(sig_df) > 0:
-                    sig_counts = sig_df.groupby("ID")["section"].nunique()
-                    all_diff["n_sections_significant"] = all_diff["ID"].map(sig_counts).fillna(0).astype(int)
+                    sig_counts = sig_df.groupby("uid")["section"].nunique()
+                    all_diff["n_sections_significant"] = all_diff["uid"].map(sig_counts).fillna(0).astype(int)
                 else:
                     all_diff["n_sections_significant"] = 0
             else:
                 all_diff["n_sections_significant"] = 0
         
-        # Rank by kruskal_padj
-        if "kruskal_padj" in all_diff.columns:
-            ranked = all_diff.dropna(subset=["kruskal_padj"]).sort_values("kruskal_padj")
-            ranked.to_csv(os.path.join(outdir, "global_ranking_kruskal.csv"), index=False)
+        # Rank by primary_padj
+        if "primary_padj" in all_diff.columns:
+            ranked = all_diff.dropna(subset=["primary_padj"]).sort_values("primary_padj")
+            ranked.to_csv(os.path.join(outdir, "global_ranking_primary_pval.csv"), index=False)
             
             # Log statistics
-            best_padj = ranked["kruskal_padj"].min() if len(ranked) > 0 else float('nan')
+            best_padj = ranked["primary_padj"].min() if len(ranked) > 0 else float('nan')
             log.info(f"  Saved global ranking: {len(ranked)} biomarkers (best padj: {best_padj:.2e})")
             # -----------------------------------------------------------------------
             # Create filtered version: only significant (padj < 0.05 in kruskal test)
             # -----------------------------------------------------------------------
-            sig_ranked = ranked[ranked["kruskal_padj"] < 0.05].copy()
+            sig_ranked = ranked[ranked["primary_padj"] < 0.05].copy()
             if len(sig_ranked) > 0:
-                sig_ranked.to_csv(os.path.join(outdir, "global_ranking_significant.csv"), index=False)
-                log.info(f"  Saved significant subset: {len(sig_ranked)} biomarkers (kruskal_padj < 0.05)")
+                sig_ranked.to_csv(os.path.join(outdir, "global_ranking_primary_padj_significant.csv"), index=False)
+                log.info(f"  Saved significant subset: {len(sig_ranked)} biomarkers (primary_padj < 0.05)")
                 # -----------------------------------------------------------------------
                 # Create figure from global_ranking_significant.csv
                 # -----------------------------------------------------------------------
                 try:
-                    generate_diagram(os.path.join(outdir, "global_ranking_significant.csv"), outdir)
+                    generate_diagram(os.path.join(outdir, "global_ranking_primary_padj_significant.csv"), outdir)
                 except Exception as e:
                     log.warning(f" generate_diagram failed: {e}")
                 # -----------------------------------------------------------------------
                 # Create structure folder with unique/common splits for each comparison
                 # -----------------------------------------------------------------------
                 try:
-                    split_significant_bmks(os.path.join(outdir, "global_ranking_significant.csv"), os.path.join(outdir,"significant_bmks_by_comparison"))
+                    split_significant_bmks(os.path.join(outdir, "global_ranking_primary_padj_significant.csv"), os.path.join(outdir,"significant_bmks_by_comparison"))
                 except Exception as e:
                     log.warning(f"  split_significant_bmks failed: {e}")
             else:
-                log.info(f"  No significant biomarkers found (all kruskal_padj >= 0.05)")
+                log.info(f"  No significant biomarkers found (all primary_padj >= 0.05)")
             
             # Top 50 plot with cross-validation info
             top_n = min(50, len(ranked))
             top = ranked.head(top_n)
             fig, ax = plt.subplots(figsize=(8, max(4, top_n * 0.3)))
-            neg_log_p = -np.log10(top["kruskal_padj"].clip(lower=1e-300))
+            neg_log_p = -np.log10(top["primary_padj"].clip(lower=1e-300))
             
             # Enhanced labels with n_sections_significant
             if "n_sections_significant" in top.columns:
-                labels = [f"{row['ID']} [{row['section']}] (×{int(row['n_sections_significant'])} sec)" 
-                          if row['n_sections_significant'] > 1 else f"{row['ID']} [{row['section']}]"
+                labels = [f"{row['uid']} [{row['section']}] (×{int(row['n_sections_significant'])} sec)" 
+                          if row['n_sections_significant'] > 1 else f"{row['uid']} [{row['section']}]"
                           for _, row in top.iterrows()]
             else:
-                labels = top["ID"].astype(str) + " [" + top["section"].astype(str) + "]"
+                labels = top["uid"].astype(str) + " [" + top["section"].astype(str) + "]"
             
             ax.barh(range(top_n), neg_log_p.values[::-1])
             ax.set_yticks(range(top_n))
@@ -1504,9 +1659,16 @@ def generate_diagram(sig_csv_path, outdir):
 
     # Charger le fichier
     df = pd.read_csv(sig_csv_path)
+    log.debug(f"Loaded {len(df)} rows from {sig_csv_path}")
+    log.debug(f"Columns: {df.columns.tolist()}")
 
     # 🔎 1. sélectionner les colonnes de padj (comparaisons)
     padj_cols = [c for c in df.columns if c.startswith("primary_padj_")]
+    log.debug(f"Found {len(padj_cols)} padj columns: {padj_cols}")
+
+    if len(padj_cols) == 0:
+        log.warning("No primary_padj columns found")
+        return
 
     # 🧼 2. nettoyer les noms de colonnes
     rename_map = {
@@ -1515,30 +1677,88 @@ def generate_diagram(sig_csv_path, outdir):
     }
     df = df.rename(columns=rename_map)
     padj_cols = list(rename_map.values())
+    log.debug(f"Renamed columns: {padj_cols}")
 
-    # 🎯 3. seuil de significativité
-    alpha = 0.05
-    binary_df = df[padj_cols] < alpha
+    # 🎯 3. Créer une matrice avec 3 niveaux de significativité
+    sig_matrix = pd.DataFrame(0, index=df.index, columns=padj_cols)
     
-    # 🔗 4. format UpSet
-    upset_data = from_indicators(binary_df.columns, binary_df)
-    df["ID"] = df["section"].astype(str) + "_" + df["ID"].astype(str)  # create more human readable ID by combining section and original ID
-    binary_df = binary_df.set_index(df["ID"]) # use ID as index for better visualization
-
-    # 📊 5. plot
-    # 🔥 hauteur proportionnelle
-    n_rows = binary_df.shape[0]
+    for col in padj_cols:
+        pvals = df[col]
+        log.debug(f"{col} - min={pvals.min():.4f}, max={pvals.max():.4f}, NaN={pvals.isna().sum()}")
+        sig_matrix.loc[pvals < 0.1, col] = 1   # marginalement significatif
+        sig_matrix.loc[pvals < 0.05, col] = 2  # significatif
+    
+    log.debug(f"sig_matrix value counts:\n{sig_matrix.stack().value_counts()}")
+    
+    # Utiliser uid comme index si disponible
+    if "uid" in df.columns:
+        sig_matrix.index = df["uid"]
+        log.debug(f"Using uid as index")
+    
+    # 📊 4. plot avec palette à 3 couleurs
+    n_rows = sig_matrix.shape[0]
     fig_height = max(6, n_rows * 0.3)
+    log.debug(f"Creating figure {12}x{fig_height} for {n_rows} rows")
+    
     fig, ax = plt.subplots(figsize=(12, fig_height))
-    #plot heatmap
-    sns.heatmap(binary_df.astype(int), cmap="viridis", ax=ax)
-    #label
+    
+    # Import nécessaire
+    from matplotlib.colors import ListedColormap
+    
+    # Palette personnalisée : blanc (non-sig), orange (p<0.1), rouge (p<0.05)
+    colors = ["#f0f0f0", "#FFA500", "#D32F2F"]
+    cmap = ListedColormap(colors)
+    
+    # Heatmap
+    sns.heatmap(
+        sig_matrix, 
+        cmap=cmap, 
+        ax=ax,
+        vmin=0,
+        vmax=2,
+        linewidths=0.5,
+        linecolor='lightgray',
+         cbar=False 
+      #  cbar_kws={
+      #      'label': 'Significance',
+      #      'ticks': [0.33, 1, 1.67],  # ⭐ Position des ticks au centre de chaque couleur
+      #      'boundaries': [0, 0.66, 1.33, 2]  # ⭐ Limites entre couleurs
+      #  }
+    )
+    
+    # colorbar label
+    #cbar = ax.collections[0].colorbar
+    #cbar.set_ticklabels(['NS\n(p≥0.1)', 'Marginal\n(p<0.1)', 'Significant\n(p<0.05)'])
+
+    # Labels
     plt.xticks(rotation=45, ha="right")
-    plt.yticks(rotation=0)
+    plt.yticks(rotation=0, fontsize=8)
+    plt.xlabel("Comparisons", fontsize=10)
+    plt.ylabel("Biomarkers (uid)", fontsize=10)
+    plt.title("Significance of biomarkers across conditions", fontsize=12, pad=20)
+    
+    # Légende manuelle
+    from matplotlib.patches import Rectangle
+    legend_elements = [
+        Rectangle((0, 0), 1, 1, fc=colors[0], label='Not significant (p ≥ 0.1)'),
+        Rectangle((0, 0), 1, 1, fc=colors[1], label='Marginal (0.05 ≤ p < 0.1)'),
+        Rectangle((0, 0), 1, 1, fc=colors[2], label='Significant (p < 0.05)')
+    ]
+    ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.15, 1))
 
     # 💾 Save
-    plt.savefig(os.path.join(outdir, "global_ranking_significant_by_condition.png"), bbox_inches="tight", facecolor="white")
+    output_path = os.path.join(outdir, "global_ranking_significant_by_condition.png")
+    log.debug(f"Saving to {output_path}")
+    plt.savefig(
+        output_path, 
+        bbox_inches="tight", 
+        facecolor="white",
+        dpi=150
+    )
     plt.close()
+    
+    print(f"✓ Saved significance heatmap with {n_rows} BMKs × {len(padj_cols)} comparisons")
+    log.info(f"  Saved significance heatmap: {output_path}")
 
 # ---------------------------------------------------------------------------
 # Split csv significant BMKs into unique/common for each comparison
@@ -1558,7 +1778,7 @@ def split_significant_bmks(sig_csv_path, outdir):
     padj_cols = list(rename_map.values())
     alpha = 0.05
     binary_df = df[padj_cols] < alpha
-    binary_df = binary_df.set_index(df["ID"])  # index = BMK ID
+    binary_df = binary_df.set_index(df["uid"])  # index = BMK ID
 
     for comp in padj_cols:
         comp_dir = os.path.join(outdir, comp)
@@ -1570,7 +1790,7 @@ def split_significant_bmks(sig_csv_path, outdir):
             all_sig_df.to_csv(os.path.join(comp_dir, "all_significant.csv"), index=False)
         # 2. BMKs uniques à cette comparaison
         is_unique = (binary_df[comp]) & (binary_df.drop(columns=[comp]).sum(axis=1) == 0)
-        unique_df = df[df["ID"].isin(binary_df.index[is_unique])]
+        unique_df = df[df["uid"].isin(binary_df.index[is_unique])]
         if not unique_df.empty:
             unique_dir = os.path.join(comp_dir, "unique")
             os.makedirs(unique_dir, exist_ok=True)
@@ -1580,7 +1800,7 @@ def split_significant_bmks(sig_csv_path, outdir):
             if other == comp:
                 continue
             is_common = (binary_df[comp]) & (binary_df[other])
-            common_df = df[df["ID"].isin(binary_df.index[is_common])]
+            common_df = df[df["uid"].isin(binary_df.index[is_common])]
             if not common_df.empty:
                 common_dir = os.path.join(comp_dir, "common")
                 os.makedirs(common_dir, exist_ok=True)
@@ -1589,133 +1809,186 @@ def split_significant_bmks(sig_csv_path, outdir):
 # ---------------------------------------------------------------------------
 # Top-level orchestration per section
 # ---------------------------------------------------------------------------
+# df arrive complete here
+# sample_cols looks like'condition::sample::replicate::valuetype'
+def analyze_section(df, sample_cols, sample_info, outdir, section_name, stat_test="auto", bmk_filter_cols=None, max_bmks=500, enabled_tests=None):
+    """Run all analyses on a filtered dataframe for a given report section.
+    
+    enabled_tests : list[str] | None
+        - None ou liste vide  → tous les tests sont exécutés
+        - ["qc", "pca", ...]  → seuls les tests listés sont exécutés
+    
+    Noms valides :
+        "filter1", "filter2",
+        "qc", "batch", "descriptive", "multivariate", "differential",
+        "correlation", "ranking", "classification", "stability", "heatmap"
+        
+    info:
+        filter1 = near-zero variance filter
+        filter2 = size limit filter (top 10k)
+    """
 
-def analyze_section(df, sample_cols, sample_info, outdir, section_name, stat_test="auto", bmk_filter_cols=None, max_bmks=500):
-    """Run all analyses on a filtered dataframe for a given report section."""
+    # ── Résolution de la liste active ────────────────────────────────────────
+    ALL_TESTS = ["filter1", "filter2","qc", "batch", "descriptive", "multivariate", "differential","correlation", "ranking", "classification", "stability", "heatmap"]
+    
+    # Check size for skipping empty sections
     len_df = len(df)
     len_sample_cols = len(sample_cols)
     if len_df == 0:
         log.info(f"  Section '{section_name}' is empty, skipping.")
         return {}
 
+    # Deal with tests
+    if not enabled_tests:          # None ou liste vide → tout activer
+        active = set(ALL_TESTS)
+    else:
+        active = set(enabled_tests)
+        unknown = active - set(ALL_TESTS)
+        if unknown:
+            log.warning(f"Unknown test names ignored: {unknown}")
+        active &= set(ALL_TESTS)   # on ne garde que les noms valides
+
+    log.info(f"Active analyses: {sorted(active)}")
+
+    # ── Helper pour sauter proprement un test désactivé ──────────────────────
+    def is_active(name):
+        if name in active:
+            return True
+        log.info(f"Skipping '{name}' (not in enabled_tests)")
+        return False
+
+
     # Create log prefix for this section
     log_prefix = f"[{section_name[:50]}]"  # Limit to 50 chars
     
     log.info(f"{log_prefix} Analyzing section: {section_name} ({len_df} BMKs, {len_sample_cols} samples)")
-    safe_mkdir(outdir)
+    safe_mkdir(outdir)    
     results = {"n_bmks": len_df, "n_samples": len_sample_cols, "section": section_name}
     
-    # PRE-FILTER #1: Remove BMKs with near-zero variance FIRST (before any size limit)
-    # This prevents numerical issues and removes uninformative BMKs early
-    ndf_prefilter = numeric_df(df, sample_cols)
-    variance_prefilter = ndf_prefilter[sample_cols].var(axis=1)
-    variable_mask = variance_prefilter > 1e-10
-    n_constants = (~variable_mask).sum()
+    if is_active("filter1"):
+        # PRE-FILTER #1: Remove BMKs with near-zero variance FIRST (before any size limit)
+        # This prevents numerical issues and removes uninformative BMKs early
+        ndf_prefilter = numeric_df(df, sample_cols)
+        variance_prefilter = ndf_prefilter[sample_cols].var(axis=1)
+        variable_mask = variance_prefilter > 1e-10
+        n_constants = (~variable_mask).sum()
+        
+        if n_constants > 0:
+            log.info(f"{log_prefix} Removing {n_constants} constant BMKs (near-zero variance)")
+            df = df[variable_mask].reset_index(drop=True).copy() 
+            len_df = len(df)
+            log.info(f"{log_prefix} {len_df} variable BMKs remaining")
+            results["n_constants_removed"] = n_constants
+        
+        # Early exit if no variable BMKs
+        if len_df == 0:
+            log.warning(f"{log_prefix} No variable BMKs remaining after removing constants")
+            return results
     
-    if n_constants > 0:
-        log.info(f"{log_prefix} Removing {n_constants} constant BMKs (near-zero variance)")
-        df = df[variable_mask].reset_index(drop=True).copy()
-        len_df = len(df)
-        log.info(f"{log_prefix} {len_df} variable BMKs remaining")
-        results["n_constants_removed"] = n_constants
-    
-    # Early exit if no variable BMKs
-    if len_df == 0:
-        log.warning(f"{log_prefix} No variable BMKs remaining after removing constants")
-        return results
-    
-    # PRE-FILTER #2: For very large sections, reduce to top 10k by variance
-    # This prevents memory crashes in parallel workers for all_sequence_bmks / all_global_bmks
-    MAX_BMKS_FOR_ANALYSIS = 10000
-    if len_df > MAX_BMKS_FOR_ANALYSIS:
-        log.info(f"{log_prefix} {len_df} BMKs exceeds {MAX_BMKS_FOR_ANALYSIS} limit")
-        log.info(f"{log_prefix} Selecting top {MAX_BMKS_FOR_ANALYSIS} BMKs by variance...")
-        # Recalculate variance on already-filtered data
-        ndf_size_limit = numeric_df(df, sample_cols)
-        variance_size_limit = ndf_size_limit[sample_cols].var(axis=1)
-        top_indices = variance_size_limit.nlargest(MAX_BMKS_FOR_ANALYSIS).index
-        df = df.loc[top_indices].reset_index(drop=True).copy()
-        len_df = len(df)
-        log.info(f"{log_prefix} Reduced to {len_df} BMKs")
-        results["n_bmks_after_size_limit"] = len_df
+    if is_active("filter2"):
+        # PRE-FILTER #2: For very large sections, reduce to top 10k by variance
+        # This prevents memory crashes in parallel workers for all_sequence_bmks / all_global_bmks
+        MAX_BMKS_FOR_ANALYSIS = 10000
+        if len_df > MAX_BMKS_FOR_ANALYSIS:
+            log.info(f"{log_prefix} {len_df} BMKs exceeds {MAX_BMKS_FOR_ANALYSIS} limit")
+            log.info(f"{log_prefix} Selecting top {MAX_BMKS_FOR_ANALYSIS} BMKs by variance...")
+            # Recalculate variance on already-filtered data
+            ndf_size_limit = numeric_df(df, sample_cols)
+            variance_size_limit = ndf_size_limit[sample_cols].var(axis=1)
+            top_indices = variance_size_limit.nlargest(MAX_BMKS_FOR_ANALYSIS).index
+            df = df.loc[top_indices].reset_index(drop=True).copy()
+            len_df = len(df)
+            log.info(f"{log_prefix} Reduced to {len_df} BMKs")
+            results["n_bmks_after_size_limit"] = len_df
 
-    # Save filtered data
-    df.to_csv(os.path.join(outdir, "data.csv"), index=False)
+        # Save filtered data
+        df.to_csv(os.path.join(outdir, "data.csv"), index=True)
+    
 
     # 1. Quality Control
-    log.info(f"{log_prefix} QC analysis...")
-    try:
-        results["qc"] = qc_analysis(df.reset_index(drop=True), sample_cols, os.path.join(outdir, "1_qc"))
-    except Exception as e:
-        log.warning(f"{log_prefix} QC failed: {e}")
-
+    if is_active("qc"):
+        try:
+            log.info(f"{log_prefix} QC analysis...")
+            results["qc"] = qc_analysis(df, sample_cols, os.path.join(outdir, "1_qc"))
+        except Exception as e:
+            log.warning(f"{log_prefix} QC failed: {e}")
+    
     # 2. Batch Effect Detection
-    log.info(f"{log_prefix} Batch effect analysis...")
-    try:
-        results["batch"] = batch_effect_analysis(df.reset_index(drop=True), sample_cols, sample_info, os.path.join(outdir, "2_batch"))
-    except Exception as e:
-        log.warning(f"{log_prefix} Batch effect analysis failed: {e}")
+    if is_active("batch"):
+        try:
+            log.info(f"{log_prefix} Batch effect analysis...")
+            results["batch"] = batch_effect_analysis(df, sample_cols, sample_info, os.path.join(outdir, "2_batch"))
+        except Exception as e:
+            log.warning(f"{log_prefix} Batch effect analysis failed: {e}")
 
     # 3. Descriptive Statistics
-    log.info(f"{log_prefix} Descriptive stats...")
-    try:
-        results["descriptive"] = descriptive_stats(df.reset_index(drop=True), sample_cols, sample_info, os.path.join(outdir, "3_descriptive"))
-    except Exception as e:
-        log.warning(f"{log_prefix} Descriptive stats failed: {e}")
+    if is_active("descriptive"):
+        try:
+            log.info(f"{log_prefix} Descriptive stats...")
+            results["descriptive"] = descriptive_stats(df, sample_cols, sample_info, os.path.join(outdir, "3_descriptive"))
+        except Exception as e:
+            log.warning(f"{log_prefix} Descriptive stats failed: {e}")
 
     # 4. Multivariate Analysis (PCA, clustering)
-    log.info(f"{log_prefix} Multivariate analysis...")
-    try:
-        results["multivariate"] = multivariate_analysis(df.reset_index(drop=True), sample_cols, sample_info, os.path.join(outdir, "4_multivariate"))
-    except Exception as e:
-        log.warning(f"{log_prefix} Multivariate analysis failed: {e}")
+    if is_active("multivariate"):
+        try:
+            log.info(f"{log_prefix} Multivariate analysis...")
+            results["multivariate"] = multivariate_analysis(df, sample_cols, sample_info, os.path.join(outdir, "4_multivariate"))
+        except Exception as e:
+            log.warning(f"{log_prefix} Multivariate analysis failed: {e}")
 
     # 5. Differential Editing Analysis
-    log.info(f"{log_prefix} Differential analysis...")
-    try:
-        results["differential"] = differential_analysis(df.reset_index(drop=True), sample_cols, sample_info, os.path.join(outdir, "5_differential"), stat_test=stat_test)
-    except Exception as e:
-        log.warning(f"{log_prefix} Differential analysis failed: {e}")
+    if is_active("differential"):
+        try:
+            log.info(f"{log_prefix} Differential analysis...")
+            results["differential"] = differential_analysis(df, sample_cols, sample_info, os.path.join(outdir, "5_differential"), stat_test=stat_test)
+        except Exception as e:
+            log.warning(f"{log_prefix} Differential analysis failed: {e}")
 
     # 6. Correlation / Network Analysis
-    log.info(f"{log_prefix} Correlation / Network analysis...")
-    try:
-        results["correlation"] = correlation_network(df.reset_index(drop=True), sample_cols, os.path.join(outdir, "6_correlation"))
-    except Exception as e:
-        log.warning(f"{log_prefix} Correlation analysis failed: {e}")
+    if is_active("correlation"):
+        try:
+            log.info(f"{log_prefix} Correlation / Network analysis...")
+            results["correlation"] = correlation_network(df, sample_cols, os.path.join(outdir, "6_correlation"))
+        except Exception as e:
+            log.warning(f"{log_prefix} Correlation analysis failed: {e}")
 
     # 7. Feature Selection / Biomarker Ranking
-    log.info(f"{log_prefix} Feature ranking...")
-    try:
-        results["ranking"] = feature_ranking(df.reset_index(drop=True), sample_cols, sample_info, os.path.join(outdir, "7_ranking"), max_bmks=max_bmks, bmk_filter_cols=bmk_filter_cols)
-    except Exception as e:
-        log.warning(f"{log_prefix} Feature ranking failed: {e}")
+    if is_active("ranking"):
+        try:
+            log.info(f"{log_prefix} Feature ranking...")
+            results["ranking"] = feature_ranking(df, sample_cols, sample_info, os.path.join(outdir, "7_ranking"), max_bmks=max_bmks, bmk_filter_cols=bmk_filter_cols)
+        except Exception as e:
+            log.warning(f"{log_prefix} Feature ranking failed: {e}")
 
     # 8. Classification / Predictive Modeling
-    log.info(f"{log_prefix} Classification...")
-    try:
-        results["classification"] = classification_analysis(df.reset_index(drop=True), sample_cols, sample_info, os.path.join(outdir, "8_classification"), max_bmks=max_bmks, bmk_filter_cols=bmk_filter_cols)
-    except Exception as e:
-        log.warning(f"{log_prefix} Classification failed: {e}")
+    if is_active("classification"):
+        try:
+            log.info(f"{log_prefix} Classification...")
+            results["classification"] = classification_analysis(df, sample_cols, sample_info, os.path.join(outdir, "8_classification"), max_bmks=max_bmks, bmk_filter_cols=bmk_filter_cols)
+        except Exception as e:
+            log.warning(f"{log_prefix} Classification failed: {e}")
 
     # 9. Stability / Robustness (replicate concordance)
-    log.info(f"{log_prefix} Stability analysis...")
-    try:
-        results["stability"] = stability_analysis(df.reset_index(drop=True), sample_cols, sample_info, os.path.join(outdir, "9_stability"))
-    except Exception as e:
-        log.warning(f"{log_prefix} Stability analysis failed: {e}")
+    if is_active("stability"):
+        try:
+            log.info(f"{log_prefix} Stability analysis...")
+            results["stability"] = stability_analysis(df, sample_cols, sample_info, os.path.join(outdir, "9_stability"))
+        except Exception as e:
+            log.warning(f"{log_prefix} Stability analysis failed: {e}")
 
     # 10. Heatmap
-    log.info(f"{log_prefix} Heatmap generation...")
-    try:
-        section_heatmap(df.reset_index(drop=True), sample_cols, sample_info, outdir, title=section_name)
-        log.info(f"{log_prefix} Heatmap generation completed")
-    except Exception as e:
-        log.warning(f"{log_prefix} Heatmap failed: {e}")
+    if is_active("heatmap"):
+        log.info(f"{log_prefix} Heatmap generation...")
+        try:
+            section_heatmap(df, sample_cols, sample_info, outdir, title=section_name)
+            log.info(f"{log_prefix} Heatmap generation completed")
+        except Exception as e:
+            log.warning(f"{log_prefix} Heatmap failed: {e}")
 
+    # END
     log.info(f"{log_prefix} Section analysis completed successfully")
     return results
-
 
 # ---------------------------------------------------------------------------
 # Build feature hierarchy tree
@@ -1815,7 +2088,7 @@ def analyze_section_wrapper(args_tuple):
             log.info(f"  ▶ [PID {pid}] DataFrame reconstructed: {len(df)} rows")
         
         # Run analysis
-        results = analyze_section(df, sample_cols, sample_info, outdir, section_name, stat_test=stat_test, bmk_filter_cols=bmk_filter_cols, max_bmks=max_bmks)
+        results = analyze_section(df, sample_cols, sample_info, outdir, section_name, stat_test=stat_test, bmk_filter_cols=bmk_filter_cols, max_bmks=max_bmks, enabled_tests=["differential"])
         
         # Cancel alarm
         signal.alarm(0)
@@ -2022,7 +2295,9 @@ EXAMPLES:
         log.info(f"Loading aggregates from {args.aggregates}...")
         agg_df = pd.read_csv(args.aggregates, sep="\t", dtype={"SeqID": str, "Start": str, "End": str, "Strand": str})
         agg_df.columns = agg_df.columns.str.strip()  # Remove leading/trailing whitespace from column names
-        harmonize_columns(agg_df)  # Ensure column header standardisation
+        agg_df = harmonize_columns(agg_df)  # Ensure column header standardisation
+        agg_df = create_uid_column(agg_df)  # Create UID column for unique identification of rows
+
         # Strip whitespace from string columns
         for col in agg_df.select_dtypes(include=['object', 'string']).columns:
             agg_df[col] = agg_df[col].str.strip() if agg_df[col].dtype in ['object', 'string'] else agg_df[col]
@@ -2037,7 +2312,8 @@ EXAMPLES:
         log.info(f"Loading features from {args.features}...")
         feat_df = pd.read_csv(args.features, sep="\t", dtype={"SeqID": str, "Start": str, "End": str, "Strand": str})
         feat_df.columns = feat_df.columns.str.strip()  # Remove leading/trailing whitespace from column names
-        harmonize_columns(feat_df)  # Ensure column header standardisation
+        feat_df = harmonize_columns(feat_df)  # Ensure column header standardisation
+        feat_df = create_uid_column(feat_df)  # Create UID column for unique identification of rows
         # Strip whitespace from string columns
         for col in feat_df.select_dtypes(include=['object', 'string']).columns:
             feat_df[col] = feat_df[col].str.strip() if feat_df[col].dtype in ['object', 'string'] else feat_df[col]
@@ -2136,7 +2412,7 @@ EXAMPLES:
                     section = glob_agg[(glob_agg["Ptype"] == ".") & (glob_agg["Mode"] == mode)]
                     tasks.append((
                         prepare_df_for_task(section), vcols, v_sample_info,
-                        os.path.join(agg_dir, "global", f"by_ctype_{mode}"),
+                        os.path.join(agg_dir, "global", f"-{mode}"),
                         f"Global - By Ctype - {mode}",
                         ("aggregate", f"global_ctype_{mode}"),
                         args.stat_test,
@@ -2151,7 +2427,7 @@ EXAMPLES:
                         section = glob_agg[(glob_agg["Ptype"] == ptype) & (glob_agg["Mode"] == mode)]
                         tasks.append((
                             prepare_df_for_task(section), vcols, v_sample_info,
-                            os.path.join(agg_dir, "global", f"by_ptype_{ptype}_{mode}"),
+                            os.path.join(agg_dir, "global", f"{ptype}-{mode}"),
                             f"Global - Ptype={ptype} - {mode}",
                             ("aggregate", f"global_ptype_{ptype}_{mode}"),
                             args.stat_test,
@@ -2187,7 +2463,7 @@ EXAMPLES:
                         section = chr_data[(chr_data["Ptype"] == ".") & (chr_data["Mode"] == mode)]
                         tasks.append((
                             prepare_df_for_task(section), vcols, v_sample_info,
-                            os.path.join(agg_dir, f"sequence/{chrom}", f"by_ctype_{mode}"),
+                            os.path.join(agg_dir, f"sequence/{chrom}", f"{mode}"),
                             f"Chr {chrom} - By Ctype - {mode}",
                             ("aggregate", f"chr{chrom}_ctype_{mode}"),
                             args.stat_test,
@@ -2202,7 +2478,7 @@ EXAMPLES:
                             section = chr_data[(chr_data["Ptype"] == ptype) & (chr_data["Mode"] == mode)]
                             tasks.append((
                                 prepare_df_for_task(section), vcols, v_sample_info,
-                                os.path.join(agg_dir, f"sequence/{chrom}", f"by_ptype_{ptype}_{mode}"),
+                                os.path.join(agg_dir, f"sequence/{chrom}", f"{ptype}-{mode}"),
                                 f"Chr {chrom} - Ptype={ptype} - {mode}",
                                 ("aggregate", f"chr{chrom}_ptype_{ptype}_{mode}"),
                                 args.stat_test,
@@ -2227,7 +2503,7 @@ EXAMPLES:
                     section = seq_agg[(seq_agg["Ptype"] == ".") & (seq_agg["Mode"] == mode)]
                     tasks.append((
                         prepare_df_for_task(section), vcols, v_sample_info,
-                        os.path.join(agg_dir, "sequence", "all_sequence_bmks", f"by_ctype_{mode}"),
+                        os.path.join(agg_dir, "sequence", "all_sequence_bmks", f"{mode}"),
                         f"All Sequences - By Ctype - {mode}",
                         ("aggregate", f"allseq_ctype_{mode}"),
                         args.stat_test,
@@ -2241,7 +2517,7 @@ EXAMPLES:
                         section = seq_agg[(seq_agg["Ptype"] == ptype) & (seq_agg["Mode"] == mode)]
                         tasks.append((
                             prepare_df_for_task(section), vcols, v_sample_info,
-                            os.path.join(agg_dir, "sequence", "all_sequence_bmks", f"by_ptype_{ptype}_{mode}"),
+                            os.path.join(agg_dir, "sequence", "all_sequence_bmks", f"{ptype}-{mode}"),
                             f"All Sequences - Ptype={ptype} - {mode}",
                             ("aggregate", f"allseq_ptype_{ptype}_{mode}"),
                             args.stat_test,
@@ -2573,11 +2849,34 @@ EXAMPLES:
         global_ranking(vtype_results, os.path.join(vtype_dir, "global_ranking"))
 
         # ===============================================================
+        # 2nd Pass for only the top-ranked BMKs 
+        # ===============================================================     
+        df_sig = pd.read_csv(os.path.join(vtype_dir, "global_ranking", "global_ranking_primary_padj_significant.csv"))
+        log.info(f"  Running second-pass analysis on all significant BMKs from global ranking ({len(df_sig)} rows)")
+        df_sig = filter_significant(df_sig, feat_df, agg_df, uid_col="uid")
+        output = os.path.join(vtype_dir, "global_ranking", "significant_bmks_all_conditions")
+        results = analyze_section(df_sig, vcols, v_sample_info, output , "Section Significant", stat_test=args.stat_test, bmk_filter_cols=args.bmk_filter, max_bmks=args.max_bmks, enabled_tests=["descriptive", "multivariate", "correlation", "differential", "ranking", "classification", "stability", "heatmap"])
+        # ----------------
+        log.info(f"  Running second-pass analysis on per condition significant BMKs from global ranking")
+        # ── Récupérer tous les chemins ────────────────────────────────────────────
+        base_dir = os.path.join(vtype_dir, "global_ranking", "significant_bmks_by_comparison")
+        all_sig_paths = glob.glob(os.path.join(base_dir, "**", "all_significant.csv"), recursive=True)
+        print(f"Found {len(all_sig_paths)} files")
+        # ── Loop ──────────────────────────────────────────────────────────────────
+        for path in sorted(all_sig_paths):
+            folder = os.path.dirname(path)     
+            folder_name = os.path.basename(folder)
+            df_sig = pd.read_csv(path)
+            log.info(f"  Processing {folder_name}({len(df_sig)} rows)")
+            df_sig = filter_significant(df_sig, feat_df, agg_df, uid_col="uid")
+            results = analyze_section(df_sig, vcols, v_sample_info, folder , "Section Significant", stat_test=args.stat_test, bmk_filter_cols=args.bmk_filter, max_bmks=args.max_bmks, enabled_tests=["descriptive", "multivariate", "correlation", "differential", "ranking", "classification", "stability", "heatmap"])
+
+        # ===============================================================
         # Save manifest
         # ===============================================================
         manifest = {
             "value_types": value_types,
-            "outdir": outdir,
+            "outdir": args.outdir,
             "n_aggregates": len(agg_df) if agg_df is not None else 0,
             "n_features": len(feat_df) if feat_df is not None else 0,
             "sample_info": sample_info,
@@ -2585,7 +2884,7 @@ EXAMPLES:
         with open(os.path.join(vtype_dir, "manifest.json"), "w") as f:
             json.dump(manifest, f, indent=2, default=str)
 
-    log.info(f"\nAnalysis complete. Results saved to {outdir}/")
+    log.info(f"\nAnalysis complete. Results saved to {args.outdir}/")
 
 
 if __name__ == "__main__":
