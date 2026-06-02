@@ -65,7 +65,7 @@ params.trimming_fastp = false
 align_tools = [ 'bbmap', 'bowtie', 'bowtie2', 'bwaaln', 'bwamem', 'bwamem2', 'bwasw', 'dragmap', 'graphmap2', 'hisat2', 'kallisto', 'last', 'minimap2', 'novoalign', 'nucmer', 'ngmlr', 'salmon', 'star', 'subread', 'sublong' ]
 params.aligner = 'hisat2'
 // AliNe version
-params.aline_version = 'v1.6.3'
+params.aline_version = 'v1.6.4'
 //*************************************************
 // STEP 1 - HELP
 //*************************************************

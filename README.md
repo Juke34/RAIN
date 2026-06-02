@@ -49,7 +49,8 @@ Its primary goal is to distinguish true RNA editing events from genomic variants
 The prerequisites to run the pipeline are:  
 
   * [Nextflow](https://www.nextflow.io/)  >= 22.04.0
-  * [Docker](https://www.docker.com) or [Singularity](https://sylabs.io/singularity/)  
+  * [Docker](https://www.docker.com) or [Singularity](https://sylabs.io/singularity/)
+  * Build the required container images locally by running `./build_containers.sh` after cloning the repository
 
 ### Nextflow 
 
@@ -101,6 +102,27 @@ Please follow the instructions at the [Singularity website](https://docs.sylabs.
 Softwares are distributed as container images, ensuring reproducibility and enabling automatic retrieval by the pipeline.
 Version information for each software package is defined in `config/softwares.config`.
 To update a software version, simply modify the corresponding container image reference in that file.
+
+Some images are pulled automatically from public registries, but RAIN also relies on project-specific images such as `jacusa2`, `reditools2`, `reditools3`, and `pluviometer`.
+These project-specific images must be built locally before running the workflow, otherwise the `docker` and `singularity` profiles will not be able to start the corresponding processes.
+
+After cloning the repository and installing your container platform, run:
+
+```bash
+./build_containers.sh
+```
+
+The script auto-detects the available container engine and builds the corresponding images:
+
+- Docker images for the `docker` profile
+- Singularity/Apptainer `.sif` images in `sif_images/` for the `singularity` profile
+
+You can also target a specific engine explicitly:
+
+```bash
+./build_containers.sh --docker
+./build_containers.sh --singularity
+```
 
 ## Usage
 
@@ -186,24 +208,34 @@ For details and tuning, see `config/resources/local.config` and `config/resource
 
 ### Test
 
-With nextflow and docker available you can run (where vX.X.X is the release version you wish to use):
+Several built-in test profiles are available:
+
+- `test_short_single_list`: test using an explicit list of input files
+- `test_short_paired_folder`: test using a folder containing paired-end FASTQ files
+- `test_short_single_csv`: test using a CSV sample sheet (single-end data)
+- `test_short_paired_csv`: test using a CSV sample sheet (paired-end data)
+- `test_mix_csv`: test using a mixed CSV input (single-end data, paired-end data, and bam files)
+
+With Nextflow and Docker available, you can run one of these tests as follows:
 
 ```bash
-nextflow run -profile docker,test Juke34/RAIN -r v0.0.3
+nextflow run -profile docker,test_short_single_list Juke34/RAIN -r v0.0.3
 ```
+
+Replace `test_short_single_list` with any of the other test profiles above depending on the input mode you want to validate.
 
 Or via a clone of the repository: 
 
 ```
 git clone https://github.com/Juke34/rain.git
 cd rain
-nextflow run -profile docker,test rain.nf
+nextflow run -profile docker,test_short_single_list rain.nf
 ```
 
 ## Parameters
 
 ```
-RAIN - RNA Alterations Investigation using Nextflow - v0.0.3
+    RAIN - RNA Alterations Investigation using Nextflow - v0.0.3
 
         Usage example:
     nextflow run rain.nf -profile docker --genome /path/to/genome.fa --annotation /path/to/annotation.gff3 --reads /path/to/reads_folder --output /path/to/output --aligner hisat2
@@ -213,31 +245,52 @@ RAIN - RNA Alterations Investigation using Nextflow - v0.0.3
 
         Input sequences:
     --annotation                Path to the annotation file (GFF or GTF)
+    --genome                    Path to the reference genome in FASTA format.
+    --read_type                 Type of reads among this list [short_paired, short_single, pacbio, ont] [no default]
     --reads                     path to the reads file, folder or csv. If a folder is provided, all the files with proper extension in the folder will be used. You can provide remote files (commma separated list).
                                     file extension expected : <.fastq.gz>, <.fq.gz>, <.fastq>, <.fq> or <.bam>. 
-                                                              for paired reads extra <_R1_001> or <_R2_001> is expected where <R> and <_001> are optional. e.g. <sample_id_1.fastq.gz>, <sample_id_R1.fastq.gz>, <sample_id_R1_001.fastq.gz>)
-                                    csv input expects 6 columns: sample, fastq_1, fastq_2, strandedness and read_type. 
-                                    fastq_2 is optional and can be empty. Strandedness, read_type expects same values as corresponding RAIN parameter; If a value is provided via RAIN paramter, it will override the value in the csv file.
-                                    Example of csv file:
-                                        sample,fastq_1,fastq_2,strandedness,read_type
-                                        control1,path/to/data1.fastq.bam,,auto,short_single
-                                        control2,path/to/data2_R1.fastq.gz,path/to/data2_R2.fastq.gz,auto,short_paired
-    --genome                    Path to the reference genome in FASTA format.
-    --read_type                 Type of reads among this list [short_paired, short_single, pacbio, ont] (no default)
+                                                              for paired reads extra <_R1_001> or <_R2_001> is expected where <R> and <_001> are optional. e.g. <sample_1.fastq.gz>, <sample_R1.fastq.gz>, <sample_R1_001.fastq.gz>)
+                                    CSV Input Format:
+                                        4 required columns: group, input_1, strandedness and read_type.
+                                        3 optional columns: - input_2   : in case of paired-end data
+                                                            - sample    : by default, the sample name is extracted from the filename and would be uniq. However, you must provide this column if you have technical replicates, so that replicates from the same sample are correctly grouped. 
+                                                            - replicate : Specifies the replicate number. Otherwise, each sample will be treated as independent and assigned as rep1. Required the sample column.
+                                    Strandedness, read_type expects same values as corresponding AliNe parameter; If a value is provided via AliNe parameter, it will override the value in the csv file.
+                                    
+                                    Example of csv file with biological replicates (with paired end data and bam files):
+                                        group,input_1,input_2,strandedness,read_type
+                                        control,path/to/data1.bam,,auto,short_single
+                                        control,path/to/data2.bam,,auto,short_single
+                                        desease,path/to/data3_R1.fastq.gz,path/to/data3_R2.fastq.gz,auto,short_paired
+                                        desease,path/to/data4_R1.fastq.gz,path/to/data4_R2.fastq.gz,auto,short_paired
+                                    
+                                    Example of csv file with techinical replicates (with paired end data and bam files):
+                                        group,input_1,input_2,strandedness,read_type,sample,replicate
+                                        control,path/to/data1.bam,,auto,short_single,control1,replicate1
+                                        control,path/to/data2.bam,,auto,short_single,control1,replicate2
+                                        control,path/to/data3.bam,,auto,short_single,control2,replicate1
+                                        control,path/to/data4.bam,,auto,short_single,control2,replicate2
+                                        desease,path/to/data5_R1.fastq.gz,path/to/data5_R2.fastq.gz,auto,short_paired,desease1,replicate1
+                                        desease,path/to/data6_R1.fastq.gz,path/to/data6_R2.fastq.gz,auto,short_paired,desease1,replicate2
 
         Output:
-    --output                    Path to the output directory (default: result)
+    --output                    Path to the output directory [default: rain_result]
 
        Optional input:
-    --aligner                   Aligner to use [default: hisat2]
-    --edit_site_tool            Tool used for detecting edited sites. Default: reditools3
-    --strandedness              Set the strandedness for all your input reads (default: null). In auto mode salmon will guess the library type for each fastq sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
-    --edit_threshold            Minimal number of edited reads to count a site as edited (default: 1)
     --aggregation_mode          Mode for aggregating edition counts mapped on genomic features. See documentation for details. Options are: "all" (default) or "cds_longest"
-    --clipoverlap               Clip overlapping sequences in read pairs to avoid double counting. (default: false)
+    --aligner                   Aligner to use [default: hisat2]
+    --clean_duplicate           Remove PCR duplicates from BAM files using GATK MarkDuplicates. [default: true]
+    --clip_overlap              Clip overlapping sequences in read pairs to avoid double counting. [default: null]
+    --cov_threshold             Minimal coverage to consider a site for editing detection [default: 10]
+    --debug                     Enable debug output for troubleshooting. [default: false]
+    --edit_site_tool            Tool used for detecting edited sites. [default: reditools3]
+    --edit_threshold            Minimal number of edited reads to count a site as edited [default: 1]
+    --fastqc                    run fastqc on main steps [default: false]
+    --skip_hyper_editing        Skip hyper-editing detection step for unmapped reads. [default: false]
+    --strandedness              Set the strandedness for all your input reads [default: null]. In auto mode salmon will guess the library type for each fastq sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
 
         Nextflow options:
-    -profile                    Change the profile of nextflow both the engine and executor more details on github README [debug, test, itrop, singularity, local, docker]
+    -profile                    Change the profile of nextflow both the engine and executor more details on github README [debug, slurm, itrop, singularity, local, docker]
 ```
 
 ## Output
