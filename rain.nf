@@ -115,13 +115,25 @@ def helpMSG() {
                                     CSV Input Format:
                                         4 required columns: group, input_1, strandedness and read_type.
                                         3 optional columns: - input_2   : in case of paired-end data
-                                                            - sample    : by default, the sample name is extracted from the filename and would be uniq. However, you must provide this column if you have biological or technical replicates, so that replicates from the same sample are correctly grouped. 
+                                                            - sample    : by default, the sample name is extracted from the filename and would be uniq. However, you must provide this column if you have technical replicates, so that replicates from the same sample are correctly grouped. 
                                                             - replicate : Specifies the replicate number. Otherwise, each sample will be treated as independent and assigned as rep1. Required the sample column.
-                                    Strandedness, read_type expects same values as corresponding AliNe parameter; If a value is provided via AliNe paramter, it will override the value in the csv file.
-                                    Example of csv file:
-                                        sample,input_1,input_2,strandedness,read_type,replicate
-                                        control1,path/to/data1.fastq.bam,,auto,short_single,replicate1
-                                        control2,path/to/data2_R1.fastq.gz,path/to/data2_R2.fastq.gz,auto,short_paired,replicate1
+                                    Strandedness, read_type expects same values as corresponding AliNe parameter; If a value is provided via AliNe parameter, it will override the value in the csv file.
+                                    
+                                    Example of csv file with biological replicates (with paired end data and bam files):
+                                        group,input_1,input_2,strandedness,read_type
+                                        control,path/to/data1.bam,,auto,short_single
+                                        control,path/to/data2.bam,,auto,short_single
+                                        desease,path/to/data3_R1.fastq.gz,path/to/data3_R2.fastq.gz,auto,short_paired
+                                        desease,path/to/data4_R1.fastq.gz,path/to/data4_R2.fastq.gz,auto,short_paired
+                                    
+                                    Example of csv file with techinical replicates (with paired end data and bam files):
+                                        group,input_1,input_2,strandedness,read_type,sample,replicate
+                                        control,path/to/data1.bam,,auto,short_single,control1,replicate1
+                                        control,path/to/data2.bam,,auto,short_single,control1,replicate2
+                                        control,path/to/data3.bam,,auto,short_single,control2,replicate1
+                                        control,path/to/data4.bam,,auto,short_single,control2,replicate2
+                                        desease,path/to/data5_R1.fastq.gz,path/to/data5_R2.fastq.gz,auto,short_paired,desease1,replicate1
+                                        desease,path/to/data6_R1.fastq.gz,path/to/data6_R2.fastq.gz,auto,short_paired,desease1,replicate2
 
         Output:
     --output                    Path to the output directory [default: $params.outdir]
@@ -140,7 +152,7 @@ def helpMSG() {
     --strandedness              Set the strandedness for all your input reads [default: $params.strandedness]. In auto mode salmon will guess the library type for each fastq sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
 
         Nextflow options:
-    -profile                    Change the profile of nextflow both the engine and executor more details on github README [debug, test, itrop, singularity, local, docker]
+    -profile                    Change the profile of nextflow both the engine and executor more details on github README [debug, slurm, itrop, singularity, local, docker]
     """
 }
 
