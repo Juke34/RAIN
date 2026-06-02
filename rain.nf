@@ -381,8 +381,8 @@ workflow {
                                         // Deal with sample and replicate columns
                                         def sample
                                         def replicate
-                                        if(row.sample == null || row.sample.trim() == ''){ 
-                                            if(row.replicate == null || row.replicate.trim() == ''){
+                                        if(row.sample == null || row.sample == ''){ 
+                                            if(row.replicate == null || row.replicate == ''){
                                                 // case no sample column and no replicate column, we consider each file as a sample and assign the sample as the uid
                                                 log.info "No sample column and no replicate column, we consider each file as a sample and assign the sample as <${uid}>!"
                                                 sample = uid
@@ -392,7 +392,8 @@ workflow {
                                             } 
                                         } else {
                                             sample = row.sample.trim()
-                                            if(row.replicate == null && row.replicate.trim() == ''){
+                                            if(row.replicate == null && row.replicate == ''){
+                                                log.info "Sample column exits but no replicate column provided, we consider all files as replicate <rep1>!"
                                                 replicate = "rep1"
                                             } else {
                                                 replicate = row.replicate.trim()
