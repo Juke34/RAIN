@@ -74,11 +74,11 @@ def append_res_df_by_df_via_index (res_df, df, sample_cols, meta_cols_exclude):
     return res_df
 
 # to avoid DtypeWarning
-def slurp_csv(path, sample_cols=None):
+def slurp_file(path, sample_cols=None, separator=None):
     if sample_cols :
         feat_df = pd.read_csv(
             path,
-            sep="\t",
+            sep=separator,
             dtype=str,
             low_memory=False
         )
@@ -89,26 +89,34 @@ def slurp_csv(path, sample_cols=None):
     else:
         feat_df = pd.read_csv(
             path,
-            sep="\t",
+            sep=separator,
             dtype={"SeqID": str, "Start": str, "End": str, "Strand": str},
             low_memory=False
         )
 
     return feat_df
 
-def filter_significant(df_sig, feat_df, agg_df, uid_col="uid"):
+def filter_significant(df_sig, feat_df, agg_df, uid_col="uid", info=None):
     """Filter df to only include rows where uid is in sig_df[uid_col]."""    
     # ── get significant ─────────────────────────────────────────────  
-    sig_uids = df_sig["uid"].tolist()  # les uid significatifs
+    if uid_col not in df_sig.columns:
+        log.error(f"Column '{uid_col}' not found in DataFrame: {info}")
+        return None
+    else:
+        sig_uids = df_sig[uid_col].tolist()
     
     # ── Filtrer les significatifs ─────────────────────────────────────────────
-    feat_df_sig = feat_df[feat_df["uid"].isin(sig_uids)] if feat_df is not None and len(feat_df) > 0 else None
-    agg_df_sig  = agg_df[agg_df["uid"].isin(sig_uids)]   if agg_df  is not None and len(agg_df)  > 0 else None
+    feat_df_sig = feat_df[feat_df[uid_col].isin(sig_uids)] if feat_df is not None and len(feat_df) > 0 else None
+    agg_df_sig  = agg_df[agg_df[uid_col].isin(sig_uids)]   if agg_df  is not None and len(agg_df)  > 0 else None
 
     # ── Jointure  ─────────────────────────────────────────────────
     if feat_df_sig is not None and agg_df_sig is not None:
         # Les deux existent → on fusionne
-        df_sig = pd.merge(feat_df_sig, agg_df_sig, on="uid", how="outer", suffixes=("_feat", "_agg"))
+        common_cols = set(agg_df_sig.columns) & set(feat_df_sig.columns)
+        # garder seulement 'uid' comme clé commune
+        cols_to_drop = [c for c in common_cols if c != uid_col]
+        feat_df_sig_clean = feat_df_sig.drop(columns=cols_to_drop)
+        df_sig = pd.merge(agg_df_sig, feat_df_sig_clean, on=uid_col, how="outer")
         log.info(f"  Merged feat + agg → {len(df_sig)} rows")
 
     elif feat_df_sig is not None:
@@ -126,6 +134,9 @@ def filter_significant(df_sig, feat_df, agg_df, uid_col="uid"):
         log.warning("  No data available (feat_df and agg_df are both empty/None)")
         df_sig = pd.DataFrame()
     
+    #print all column
+    log.debug(f"  Final df_sig columns: {df_sig.columns.tolist()}")
+
     return df_sig
 
 def safe_mkdir(path):
@@ -1580,7 +1591,8 @@ def global_ranking(all_results, outdir):
                 # MEMORY FIX: sdata is now a slim dict with only "differential_table" key
                 diff_path = sdata.get("differential_table")
                 if diff_path and os.path.exists(diff_path):
-                    ddf = pd.read_csv(diff_path)
+
+                    ddf = slurp_file(diff_path, separator=",")
                     # Defragment DataFrame before adding columns to avoid PerformanceWarning
                     ddf = ddf.copy()
                     # Add metadata columns
@@ -1611,11 +1623,11 @@ def global_ranking(all_results, outdir):
                     all_diff["n_sections_significant"] = 0
             else:
                 all_diff["n_sections_significant"] = 0
-        
+
         # Rank by primary_padj
         if "primary_padj" in all_diff.columns:
             ranked = all_diff.dropna(subset=["primary_padj"]).sort_values("primary_padj")
-            ranked.to_csv(os.path.join(outdir, "global_ranking_primary_pval.csv"), index=False)
+            ranked.to_csv(os.path.join(outdir, "global_ranking_primary_padj.csv"), index=False)
             
             # Log statistics
             best_padj = ranked["primary_padj"].min() if len(ranked) > 0 else float('nan')
@@ -1625,6 +1637,7 @@ def global_ranking(all_results, outdir):
             # -----------------------------------------------------------------------
             sig_ranked = ranked[ranked["primary_padj"] < 0.05].copy()
             if len(sig_ranked) > 0:
+
                 sig_ranked.to_csv(os.path.join(outdir, "global_ranking_primary_padj_significant.csv"), index=False)
                 log.info(f"  Saved significant subset: {len(sig_ranked)} biomarkers (primary_padj < 0.05)")
                 # -----------------------------------------------------------------------
@@ -2317,7 +2330,7 @@ EXAMPLES:
             log.error(f"Aggregates file not found: {args.aggregates}")
             sys.exit(1)
         log.info(f"Loading aggregates from {args.aggregates}...")
-        agg_df = slurp_csv(args.aggregates)
+        agg_df = slurp_file(args.aggregates, separator="\t")
         agg_df.columns = agg_df.columns.str.strip()  # Remove leading/trailing whitespace from column names
         agg_df = harmonize_columns(agg_df)  # Ensure column header standardisation
         agg_df = create_uid_column(agg_df)  # Create UID column for unique identification of rows
@@ -2334,7 +2347,7 @@ EXAMPLES:
             log.error(f"Features file not found: {args.features}")
             sys.exit(1)
         log.info(f"Loading features from {args.features}...")
-        feat_df = slurp_csv(args.features) 
+        feat_df = slurp_file(args.features, separator="\t") 
         feat_df.columns = feat_df.columns.str.strip()  # Remove leading/trailing whitespace from column names
         feat_df = harmonize_columns(feat_df)  # Ensure column header standardisation
         feat_df = create_uid_column(feat_df)  # Create UID column for unique identification of rows
@@ -2875,25 +2888,29 @@ EXAMPLES:
         # ===============================================================
         # 2nd Pass for only the top-ranked BMKs 
         # ===============================================================     
-        df_sig = pd.read_csv(os.path.join(vtype_dir, "global_ranking", "global_ranking_primary_padj_significant.csv"))
-        log.info(f"  Running second-pass analysis on all significant BMKs from global ranking ({len(df_sig)} rows)")
-        df_sig = filter_significant(df_sig, feat_df, agg_df, uid_col="uid")
-        output = os.path.join(vtype_dir, "global_ranking", "significant_bmks_all_conditions")
-        results = analyze_section(df_sig, vcols, v_sample_info, output , "Section Significant", stat_test=args.stat_test, bmk_filter_cols=args.bmk_filter, max_bmks=args.max_bmks, enabled_tests=["descriptive", "multivariate", "correlation", "differential", "ranking", "classification", "stability", "heatmap"])
-        # ----------------
-        log.info(f"  Running second-pass analysis on per condition significant BMKs from global ranking")
-        # ── Récupérer tous les chemins ────────────────────────────────────────────
-        base_dir = os.path.join(vtype_dir, "global_ranking", "significant_bmks_by_comparison")
-        all_sig_paths = glob.glob(os.path.join(base_dir, "**", "all_significant.csv"), recursive=True)
-        log.info(f"Found {len(all_sig_paths)} files")
-        # ── Loop ──────────────────────────────────────────────────────────────────
-        for path in sorted(all_sig_paths):
-            folder = os.path.dirname(path)     
-            folder_name = os.path.basename(folder)
-            df_sig = pd.read_csv(path)
-            log.info(f"  Processing {folder_name}({len(df_sig)} rows)")
-            df_sig = filter_significant(df_sig, feat_df, agg_df, uid_col="uid")
-            results = analyze_section(df_sig, vcols, v_sample_info, folder , "Section Significant", stat_test=args.stat_test, bmk_filter_cols=args.bmk_filter, max_bmks=args.max_bmks, enabled_tests=["descriptive", "multivariate", "correlation", "differential", "ranking", "classification", "stability", "heatmap"])
+        df_sig_path = os.path.join(vtype_dir, "global_ranking", "global_ranking_primary_padj_significant.csv")
+        if os.path.isfile(df_sig_path):
+            df_sig = slurp_file(df_sig_path, separator=",")    
+            log.info(f"  Running second-pass analysis on all significant BMKs from global ranking ({len(df_sig)} rows)")
+            df_sig = filter_significant(df_sig, feat_df, agg_df, uid_col="uid", info=os.path.join(vtype_dir, "global_ranking", "global_ranking_primary_padj_significant.csv"))
+            output = os.path.join(vtype_dir, "global_ranking", "significant_bmks_all_conditions")
+            results = analyze_section(df_sig, vcols, v_sample_info, output , "Section Significant", stat_test=args.stat_test, bmk_filter_cols=args.bmk_filter, max_bmks=args.max_bmks, enabled_tests=["descriptive", "multivariate", "correlation", "differential", "ranking", "classification", "stability", "heatmap"])
+            # ----------------
+            log.info(f"  Running second-pass analysis on per condition significant BMKs from global ranking")
+            # ── Récupérer tous les chemins ────────────────────────────────────────────
+            base_dir = os.path.join(vtype_dir, "global_ranking", "significant_bmks_by_comparison")
+            all_sig_paths = glob.glob(os.path.join(base_dir, "**", "all_significant.csv"), recursive=True)
+            log.info(f"Found {len(all_sig_paths)} files")
+            # ── Loop ──────────────────────────────────────────────────────────────────
+            for path in sorted(all_sig_paths):
+                folder = os.path.dirname(path)     
+                folder_name = os.path.basename(folder)
+                df_sig = slurp_file(path, separator=",")
+                log.info(f"  Processing {folder_name}({len(df_sig)} rows)")
+                df_sig = filter_significant(df_sig, feat_df, agg_df, uid_col="uid")
+                results = analyze_section(df_sig, vcols, v_sample_info, folder , "Section Significant", stat_test=args.stat_test, bmk_filter_cols=args.bmk_filter, max_bmks=args.max_bmks, enabled_tests=["descriptive", "multivariate", "correlation", "differential", "ranking", "classification", "stability", "heatmap"])
+        else:
+            log.warning(f"  No significant BMKs found in global ranking for {vtype}, skipping second-pass analysis")
 
         # ===============================================================
         # Save manifest

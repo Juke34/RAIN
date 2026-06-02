@@ -7,3 +7,6 @@ result/*
 .DS_Store
 sif_images/*
 rain_result/*
+# pixi environments
+.pixi/*
+!.pixi/config.toml

@@ -1,4 +1,5 @@
 ![GitHub CI](https://github.com/Juke34/RAIN/actions/workflows/main.yml/badge.svg)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 # RAIN - RNA Alterations Investigation using Nextflow
 
@@ -16,11 +17,13 @@ Its primary goal is to distinguish true RNA editing events from genomic variants
   - [Installation](#installation)
     - [Nextflow](#nextflow)
     - [Container platform](#container-platform)
-    - [Docker](#docker)
-    - [Singularity](#singularity)
+      - [Docker](#docker)
+      - [Singularity](#singularity)
+    - [Softwares](#softwares)
   - [Usage](#usage)
     - [Help](#help)
     - [Profile](#profile)
+    - [Parallelization and resource usage](#parallelization-and-resource-usage)
     - [Test](#test)
   - [Parameters](#parameters)
   - [Output](#output)
@@ -83,15 +86,21 @@ The prerequisites to run the pipeline are:
 
 ### Container platform
 
-To run the workflow you will need a container platform: docker or singularity.
+To run the workflow you will need a container platform: docker or singularity. See below for installation instructions.
 
-### Docker
+#### Docker
 
 Please follow the instructions at the [Docker website](https://docs.docker.com/desktop/)
 
-### Singularity
+#### Singularity
 
 Please follow the instructions at the [Singularity website](https://docs.sylabs.io/guides/latest/admin-guide/installation.html)
+
+### Softwares
+
+Softwares are distributed as container images, ensuring reproducibility and enabling automatic retrieval by the pipeline.
+Version information for each software package is defined in `config/softwares.config`.
+To update a software version, simply modify the corresponding container image reference in that file.
 
 ## Usage
 
@@ -100,37 +109,87 @@ Please follow the instructions at the [Singularity website](https://docs.sylabs.
 You can first check the available options and parameters by running:
 
 ```bash
-nextflow run Juke34/RAIN -r v0.0.2 --help
+nextflow run Juke34/RAIN -r v0.0.3 --help
 ```
 
 ### Profile
 
-To run the workflow you must select a profile according to the container platform you want to use:   
+By default, RAIN uses a local executor for scheduling tasks.
+However, to provide the software environment, you should run with a container profile.
+
+Select a profile according to the container platform you want to use:   
 - `singularity`, a profile using Singularity to run the containers
 - `docker`, a profile using Docker to run the containers
 
 The command will look like that: 
 
 ```bash
-nextflow run Juke34/RAIN -r v0.0.2 -profile docker <rest of paramaters>
+nextflow run Juke34/RAIN -r v0.0.3 -profile docker <rest of paramaters>
 ```
 
-Another profile is available (/!\\ actually not yet implemented):
+Another profile is also available:
 
 - `slurm`, to add if your system has a slurm executor (local by default) 
 
-The use of the `slurm` profile  will give a command like this one:
+The use of the `slurm` profile gives a command like this one:
 
 ```bash
-nextflow run Juke34/RAIN -r v0.0.2 -profile singularity,slurm <rest of paramaters>
+nextflow run Juke34/RAIN -r v0.0.3 -profile singularity,slurm <rest of paramaters>
 ```
+
+Recommended usage is to always include a container profile (`docker` or `singularity`).
+
+### Parallelization and resource usage
+
+RAIN parallelizes execution at two levels:
+
+1. Task-level parallelism: multiple pipeline tasks can run concurrently (controlled by `maxForks`).
+2. Per-task resources: each process can request specific CPU, memory, and time values.
+
+#### Local execution (default)
+
+With the local profile, Nextflow runs tasks on the local machine.
+Resource settings are defined in `config/resources/local.config`.
+
+- Default per task: `cpus = 1`, `time = 1h`
+- Maximum concurrent tasks: `maxForks = 8`
+- Examples of process overrides:
+  - `hisat2`: `cpus = 6`
+  - `aline`: `cpus = 4`, `memory = 16GB`, `time = 2d`
+  - `fastqc`: `cpus = 2`
+  - `drip`: `cpus = 4`
+  - `reditools3`: `cpus = 2`, `memory = 4G`
+
+Local throughput depends on the resources of your workstation.
+
+#### SLURM execution (`-profile slurm`)
+
+With the SLURM profile, tasks are submitted to the scheduler and run as cluster jobs.
+Main settings come from `nextflow.config` and `config/resources/hpc.config`.
+
+- Scheduler settings:
+  - `executor = slurm`
+  - `queue = normal`
+  - `maxForks = 12`
+  - `errorStrategy = retry`, `maxRetries = 3`
+  - `clusterOptions = "--constraint=infiniband"`
+- Default per task in HPC config: `cpus = 1`, `time = 4h`
+- Examples of process overrides:
+  - `fastp`, `jacusa2`, `reditools3`, `samtools`: up to `cpus = 16`
+  - `fastqc`, `pigz`, `pluviometer`: `cpus = 8`
+  - `drip`: `cpus = 16`
+  - `aline`: launcher process in RAIN (`cpus = 1`, `memory = 4GB`), while AliNe manages its own submitted job
+
+In SLURM mode, effective parallelism depends on `maxForks`, cluster availability/quotas, and per-process resource requests.
+
+For details and tuning, see `config/resources/local.config` and `config/resources/hpc.config`.
 
 ### Test
 
 With nextflow and docker available you can run (where vX.X.X is the release version you wish to use):
 
 ```bash
-nextflow run -profile docker,test Juke34/RAIN -r v0.0.2
+nextflow run -profile docker,test Juke34/RAIN -r v0.0.3
 ```
 
 Or via a clone of the repository: 
@@ -144,7 +203,7 @@ nextflow run -profile docker,test rain.nf
 ## Parameters
 
 ```
-RAIN - RNA Alterations Investigation using Nextflow - v0.0.2
+RAIN - RNA Alterations Investigation using Nextflow - v0.0.3
 
         Usage example:
     nextflow run rain.nf -profile docker --genome /path/to/genome.fa --annotation /path/to/annotation.gff3 --reads /path/to/reads_folder --output /path/to/output --aligner hisat2
