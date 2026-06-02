@@ -47,8 +47,9 @@ RAIN was developed to address this need by providing an end-to-end Nextflow work
 The diagram below summarizes the main steps of the RAIN workflow, from input preparation to feature- and aggregate-level editing matrices.
 
 ```mermaid
+%%{init: {"flowchart": {"htmlLabels": true, "useMaxWidth": true, "wrappingWidth": 260}} }%%
 flowchart TD
-  A["Input reads<br/>FASTQ, BAM or CSV sample sheet"] --> B["Input validation and metadata parsing"]
+  A["Input reads<br/>FASTQ, BAM or CSV sample sheet"] --> B["Input validation<br/>and metadata parsing"]
   R["Reference genome<br/>and optional annotation"] --> C["Reference preparation<br/>FASTA unzip and annotation normalization"]
   B --> D["AliNe alignment workflow<br/>and library type handling"]
   C --> D
