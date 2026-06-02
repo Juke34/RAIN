@@ -81,7 +81,8 @@ jobs:
 
       - name: Free disk space
         run: |
-          docker system prune -af || true
+          # Soft cleanup: keep tagged images required by subsequent tests.
+          docker system prune -f || true
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android || true
           sudo apt-get clean
           df -h
@@ -91,13 +92,13 @@ jobs:
         run: nextflow run rain.nf -profile docker,test_short_single_list
 
       - name: Cleanup Docker
-        run: docker system prune -af || true
+        run: docker system prune -f || true
 
       - name: test short paired folder
         run: nextflow run rain.nf -profile docker,test_short_paired_folder
 
       - name: Cleanup Docker
-        run: docker system prune -af || true
+        run: docker system prune -f || true
         
       - name: test csv mix
         run: nextflow run rain.nf -profile docker,test_mix_csv
