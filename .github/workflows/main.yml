@@ -79,13 +79,26 @@ jobs:
         if: steps.cache-dockerfiles.outputs.cache-hit != 'true'
         run: bash build_containers.sh --docker --github_action
 
+      - name: Free disk space
+        run: |
+          docker system prune -af || true
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android || true
+          sudo apt-get clean
+          df -h
+
       # Run test(s)
       - name: test short single list
         run: nextflow run rain.nf -profile docker,test_short_single_list
 
+      - name: Cleanup Docker
+        run: docker system prune -af || true
+
       - name: test short paired folder
         run: nextflow run rain.nf -profile docker,test_short_paired_folder
 
+      - name: Cleanup Docker
+        run: docker system prune -af || true
+        
       - name: test csv mix
         run: nextflow run rain.nf -profile docker,test_mix_csv
 
