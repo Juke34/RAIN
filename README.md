@@ -100,7 +100,7 @@ Please follow the instructions at the [Singularity website](https://docs.sylabs.
 You can first check the available options and parameters by running:
 
 ```bash
-nextflow run Juke34/RAIN -r v1.5.0 --help
+nextflow run Juke34/RAIN -r v0.0.2 --help
 ```
 
 ### Profile
@@ -112,7 +112,7 @@ To run the workflow you must select a profile according to the container platfor
 The command will look like that: 
 
 ```bash
-nextflow run Juke34/RAIN -r vX.X.X -profile docker <rest of paramaters>
+nextflow run Juke34/RAIN -r v0.0.2 -profile docker <rest of paramaters>
 ```
 
 Another profile is available (/!\\ actually not yet implemented):
@@ -122,7 +122,7 @@ Another profile is available (/!\\ actually not yet implemented):
 The use of the `slurm` profile  will give a command like this one:
 
 ```bash
-nextflow run Juke34/RAIN -r vX.X.X -profile singularity,slurm <rest of paramaters>
+nextflow run Juke34/RAIN -r v0.0.2 -profile singularity,slurm <rest of paramaters>
 ```
 
 ### Test
@@ -130,7 +130,7 @@ nextflow run Juke34/RAIN -r vX.X.X -profile singularity,slurm <rest of paramater
 With nextflow and docker available you can run (where vX.X.X is the release version you wish to use):
 
 ```bash
-nextflow run -profile docker,test Juke34/RAIN -r vX.X.X
+nextflow run -profile docker,test Juke34/RAIN -r v0.0.2
 ```
 
 Or via a clone of the repository: 
@@ -144,7 +144,7 @@ nextflow run -profile docker,test rain.nf
 ## Parameters
 
 ```
-RAIN - RNA Alterations Investigation using Nextflow - v0.1
+RAIN - RNA Alterations Investigation using Nextflow - v0.0.2
 
         Usage example:
     nextflow run rain.nf -profile docker --genome /path/to/genome.fa --annotation /path/to/annotation.gff3 --reads /path/to/reads_folder --output /path/to/output --aligner hisat2
