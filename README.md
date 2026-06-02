@@ -38,11 +38,29 @@ Its primary goal is to distinguish true RNA editing events from genomic variants
 
 ## Foreword
 
-...
+RNA editing and other epitranscriptomic alterations are increasingly recognized as important sources of biological regulation and potential biomarkers in health and disease. However, their study remains technically challenging because true RNA modifications must be distinguished from sequencing artefacts, mapping issues, and genomic variants. This makes reproducible and accessible analysis workflows essential for turning raw RNA sequencing data into interpretable biological signals.
+
+RAIN was developed to address this need by providing an end-to-end Nextflow workflow for the detection, aggregation, and downstream exploration of RNA editing events. Starting from FASTQ, BAM, or sample sheet inputs, RAIN combines alignment, quality control, editing-site detection, feature-level aggregation, and downstream filtering into a single reproducible framework. Its goal is to make epitranscriptomic analyses easier to run, easier to reproduce, and more useful for identifying candidate biomarkers from properly designed cohorts.
 
 ## Flowchart
 
-...
+The diagram below summarizes the main steps of the RAIN workflow, from input preparation to feature- and aggregate-level editing matrices.
+
+```mermaid
+flowchart TD
+  A["Input reads<br/>FASTQ, BAM or CSV sample sheet"] --> B["Input validation and metadata parsing"]
+  R["Reference genome<br/>and optional annotation"] --> C["Reference preparation<br/>FASTA unzip and annotation normalization"]
+  B --> D["AliNe alignment workflow<br/>and library type handling"]
+  C --> D
+  D --> E["BAM post-processing<br/>sorting, indexing, optional duplicate removal and clip overlap"]
+  D --> F["Optional QC<br/>FastQC and MultiQC"]
+  E --> G["Editing site detection<br/>Reditools3 by default, or Reditools2, Jacusa2"]
+  E --> H["Optional hyper-editing detection<br/>on unmapped reads"]
+  G --> I["Pluviometer aggregation<br/>feature, transcript, gene, chromosome and genome levels"]
+  H --> I
+  I --> J["Drip filtering and metric computation<br/>ESPF and ESPR tables"]
+  J --> L["Barometer downstream analysis<br/>candidate biomarker detection and reporting"]
+```
 
 ## Installation
 
