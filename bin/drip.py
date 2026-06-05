@@ -502,6 +502,15 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
         )
         print(f'  Found {len(all_seqids)} unique SeqIDs across all samples.')
 
+        if len(all_seqids) == 0:
+            print('  WARNING: No data rows found across input files (headers only or empty content).')
+            for metric in ('espf', 'espr'):
+                out_dir = f'{output_prefix}_{metric}'
+                os.makedirs(out_dir, exist_ok=True)
+            print(f'\nDone. {len(sample_info)} samples, 0 SeqIDs, 0 output files written '
+                  f'in {output_prefix}_espf/ and {output_prefix}_espr/.')
+            return []
+
         # ── Phase 2: process each SeqID (parallel if threads > 1) ─────────────
         col_prefixes = [col_prefix for _, col_prefix in sample_info]
         worker_args = [
@@ -516,7 +525,7 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
         mode = f'{min(threads, len(all_seqids))} workers' if threads > 1 else 'sequential'
         print(f'Phase 2/3 — Processing {len(all_seqids)} SeqID chunks ({mode})...')
 
-        if threads > 1:
+        if threads > 1 and len(all_seqids) > 0:
             with multiprocessing.Pool(processes=min(threads, len(all_seqids))) as pool:
                 results = pool.starmap(_process_seqid_chunk, worker_args)
         else:
