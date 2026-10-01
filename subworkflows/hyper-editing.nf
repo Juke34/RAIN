@@ -5,11 +5,11 @@
  * This approach captures heavily edited reads that may escape standard detection
  */
 
-include { AliNe as ALIGNMENT } from "${baseDir}/modules/aline.nf"
-include { transform_bases_fastq; transform_bases_fasta; create_aline_csv_he; collect_aline_csv} from "${baseDir}/modules/bash.nf"
-include { multiqc } from "${baseDir}/modules/multiqc.nf"
-include { restore_original_sequences } from "${baseDir}/modules/python.nf"
-include { convert_to_fastq; samtools_fasta_index; samtools_split_mapped_unmapped } from "${baseDir}/modules/samtools.nf"
+include { AliNe as ALIGNMENT } from "../modules/aline.nf"
+include { transform_bases_fastq; transform_bases_fasta; create_aline_csv_he; collect_aline_csv} from "../modules/bash.nf"
+include { multiqc } from "../modules/multiqc.nf"
+include { restore_original_sequences } from "../modules/python.nf"
+include { convert_to_fastq; samtools_fasta_index; samtools_split_mapped_unmapped } from "../modules/samtools.nf"
 
 /**
  * Hyper-editing discovery workflow

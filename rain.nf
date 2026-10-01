@@ -200,7 +200,7 @@ include {fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from
 include {gatk_markduplicates } from './modules/gatk.nf'
 include {jacusa2} from "./modules/jacusa2.nf"
 include {multiqc} from './modules/multiqc.nf'
-include {fasta_unzip} from "$baseDir/modules/pigz.nf"
+include {fasta_unzip} from "./modules/pigz.nf"
 include {samtools_index; samtools_fasta_index; samtools_sort_bam as samtools_sort_bam_raw; samtools_sort_bam as samtools_sort_bam_merged; samtools_split_mapped_unmapped; samtools_merge_bams; samtools_calmd} from './modules/samtools.nf'
 include {reditools2} from "./modules/reditools2.nf"
 include {reditools3} from "./modules/reditools3.nf"
