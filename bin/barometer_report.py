@@ -255,29 +255,35 @@ def build_section_content(section_dir, section_name, table_counter):
     return content
 
 
-def build_report_data(results_dir):
-    """Walk the results directory and build the report structure."""
-    manifest_path = os.path.join(results_dir, "manifest.json")
-    manifest = {}
-    if os.path.exists(manifest_path):
-        with open(manifest_path) as f:
-            manifest = json.load(f)
+def build_report_data(results_dirs):
+    """Build the report structure from one or more results directories.
 
-    value_types = manifest.get("value_types", [])
-    if not value_types:
-        # Discover from directory
-        for d in sorted(os.listdir(results_dir)):
-            dp = os.path.join(results_dir, d)
-            if os.path.isdir(dp) and d not in ("global_ranking",):
-                value_types.append(d)
-
+    Args:
+        results_dirs: dict of {vtype: path_to_barometer_results_dir}. Each path may
+                      either be the parent containing a vtype subdirectory, or the
+                      vtype directory itself, with aggregate/, feature/,
+                      global_ranking/, and manifest.json inside.
+    """
     report = OrderedDict()
     table_counter = [0]
+    manifest = {}
+    global_content = ""
 
-    for vtype in value_types:
-        vtype_dir = os.path.join(results_dir, vtype)
+    for vtype, results_dir in results_dirs.items():
+        direct_layout = os.path.isfile(os.path.join(results_dir, "manifest.json")) or any(
+            os.path.isdir(os.path.join(results_dir, name))
+            for name in ("aggregate", "feature", "global_ranking")
+        )
+        vtype_dir = results_dir if direct_layout else os.path.join(results_dir, vtype)
         if not os.path.isdir(vtype_dir):
+            log.warning(f"Directory not found: {vtype_dir}, skipping {vtype}")
             continue
+
+        # Read manifest for this value type
+        manifest_path = os.path.join(vtype_dir, "manifest.json")
+        if os.path.exists(manifest_path):
+            with open(manifest_path) as f:
+                manifest = json.load(f)
 
         report[vtype] = OrderedDict()
 
@@ -426,25 +432,24 @@ def build_report_data(results_dir):
                         else:
                             grp[sg_key]["sections"][rel] = {"name": section_name, "content": content}
 
-    # Global ranking
-    gr_dir = os.path.join(results_dir, "global_ranking")
-    global_content = ""
-    if os.path.isdir(gr_dir):
-        for csv_path in find_csvs(gr_dir):
-            fname = os.path.basename(csv_path).replace(".csv", "")
-            table_counter[0] += 1
-            tid = f"dt_{table_counter[0]}"
-            global_content += f'<div class="table-section"><h5>{fname.replace("_", " ").title()}</h5>\n'
-            global_content += f'<div class="table-responsive">{csv_to_html_table(csv_path, table_id=tid)}</div>\n'
-            global_content += f'<script>$(document).ready(function(){{ if($.fn.DataTable){{ try{{ $("#{tid}").DataTable({{paging:true,pageLength:30,searching:true,ordering:true,scrollX:true}});}}catch(e){{}}}} }});</script>\n'
-            global_content += '</div>\n'
+        # Global ranking for this value type
+        gr_dir = os.path.join(vtype_dir, "global_ranking")
+        if os.path.isdir(gr_dir):
+            for csv_path in find_csvs(gr_dir):
+                fname = os.path.basename(csv_path).replace(".csv", "")
+                table_counter[0] += 1
+                tid = f"dt_{table_counter[0]}"
+                global_content += f'<div class="table-section"><h5>{fname.replace("_", " ").title()}</h5>\n'
+                global_content += f'<div class="table-responsive">{csv_to_html_table(csv_path, table_id=tid)}</div>\n'
+                global_content += f'<script>$(document).ready(function(){{ if($.fn.DataTable){{ try{{ $("#{tid}").DataTable({{paging:true,pageLength:30,searching:true,ordering:true,scrollX:true}});}}catch(e){{}}}} }});</script>\n'
+                global_content += '</div>\n'
 
-        for img_path in find_images(gr_dir):
-            fname = os.path.basename(img_path).replace(".png", "").replace("_", " ").title()
-            b64 = img_src(img_path)
-            if b64:
-                global_content += f'<div class="figure-container"><h6>{fname}</h6>'
-                global_content += f'<img src="{b64}" class="report-img zoomable" alt="{fname}"></div>\n'
+            for img_path in find_images(gr_dir):
+                fname = os.path.basename(img_path).replace(".png", "").replace("_", " ").title()
+                b64 = img_src(img_path)
+                if b64:
+                    global_content += f'<div class="figure-container"><h6>{fname}</h6>'
+                    global_content += f'<img src="{b64}" class="report-img zoomable" alt="{fname}"></div>\n'
 
     return report, manifest, global_content
 
@@ -1096,7 +1101,12 @@ document.querySelectorAll('.tab-pane').forEach(function(pane) {
 
 def main():
     parser = argparse.ArgumentParser(description="Generate barometer Biomarker HTML Report")
-    parser.add_argument("-r", "--results", default="barometer_results", help="Results directory from barometer_analyze.py")
+    parser.add_argument("-r", "--results", default=None,
+                        help="Results directory from barometer_analyze.py (single-dir mode, contains espf/ and espr/ subdirs)")
+    parser.add_argument("--espf", default=None,
+                        help="Path to espf results directory or its parent")
+    parser.add_argument("--espr", default=None,
+                        help="Path to espr results directory or its parent")
     parser.add_argument("-o", "--output", default="barometer_report.html", help="Output HTML report file")
     parser.add_argument("-e", "--embed-images", action="store_true", default=False,
                         help="Embed images as base64 (larger file but self-contained)")
@@ -1104,14 +1114,29 @@ def main():
     # Pass embed flag as module-level so helpers can use it
     global EMBED_IMAGES, RESULTS_DIR
     EMBED_IMAGES = args.embed_images
-    RESULTS_DIR = args.results
 
-    if not os.path.isdir(args.results):
-        log.error(f"Results directory not found: {args.results}")
+    # Build the results_dirs mapping
+    if args.espf or args.espr:
+        results_dirs = {}
+        if args.espf:
+            results_dirs["espf"] = args.espf
+        if args.espr:
+            results_dirs["espr"] = args.espr
+        RESULTS_DIR = args.espf or args.espr
+    elif args.results:
+        results_dirs = {"espf": args.results, "espr": args.results}
+        RESULTS_DIR = args.results
+    else:
+        parser.error("Provide either -r/--results or --espf/--espr")
         sys.exit(1)
 
-    log.info(f"Building report from {args.results}...")
-    report, manifest, global_content = build_report_data(args.results)
+    for vtype, d in results_dirs.items():
+        if not os.path.isdir(d):
+            log.error(f"Results directory not found: {d} ({vtype})")
+            sys.exit(1)
+
+    log.info(f"Building report from: {results_dirs}...")
+    report, manifest, global_content = build_report_data(results_dirs)
 
     log.info(f"Rendering HTML...")
     template = Template(HTML_TEMPLATE)

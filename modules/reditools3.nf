@@ -17,7 +17,7 @@ process reditools3 {
         if (meta.strandedness in ["ISR", "SR"]) {
             // First-strand oriented
             strand_orientation = "2"
-        } else if (meta.libtype in ["ISF", "SF"]) {
+        } else if (meta.strandedness in ["ISF", "SF"]) {
             // Second-strand oriented
             strand_orientation = "1"
         } else if (meta.strandedness in ["IU", "U"]) {

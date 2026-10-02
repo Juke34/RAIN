@@ -56,6 +56,10 @@ dependencies:
   - matplotlib=3.10.8=py312h7900ff3_0
   - seaborn=0.13.2=hd8ed1ab_3
   - scikit-learn=1.8.0=np2py312h3226591_1
+  - scipy=1.16.0=py312hf734454_0
+  - jinja2=3.1.6=pyhcf101f3_1
+  - upsetplot=0.9.0=pyhd8ed1ab_1
+  - statsmodels= 0.14.6=py312h4f23490_0
   - pip:
       - flameprof==0.4
 prefix: /home/earx/miniforge3/envs/rain-stats-scripts

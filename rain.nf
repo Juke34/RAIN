@@ -29,6 +29,9 @@ params.min_samples_pct = 50 // Minimal percentage of samples in which a site mus
 params.min_group_pct = 75 // Minimal percentage of groups in which a site must be edited to be kept in the analysis (drip filtering)
 params.aggregation_mode = "all" // used by pluviometer
 params.skip_hyper_editing = false // Skip hyper-editing detection
+// Barometer params
+params.barometer_stat_test = "nonparametric"
+params.barometer_max_bmks = 500
 // Report params
 params.multiqc_config = "$baseDir/config/multiqc_config.yaml" // MultiQC config file
 
@@ -47,7 +50,7 @@ params.debug = false // Enable debug output
 // Read feature params
 read_type_allowed        = [ 'short_paired', 'short_single', 'pacbio', 'ont' ]
 params.read_type         = null // short_paired, short_single, pacbio, ont
-strandedness_allowed     = [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ] // see https://github.com/Juke34/AliNe for more information
+strandedness_allowed     = [ 'U', 'SF', 'SR', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ] // see https://github.com/Juke34/AliNe for more information
 params.strandedness      = null
 params.fastqc            = false
 
@@ -65,7 +68,7 @@ params.trimming_fastp = false
 align_tools = [ 'bbmap', 'bowtie', 'bowtie2', 'bwaaln', 'bwamem', 'bwamem2', 'bwasw', 'dragmap', 'graphmap2', 'hisat2', 'kallisto', 'last', 'minimap2', 'novoalign', 'nucmer', 'ngmlr', 'salmon', 'star', 'subread', 'sublong' ]
 params.aligner = 'hisat2'
 // AliNe version
-params.aline_version = 'v1.6.4'
+params.aline_version = 'v1.6.5'
 //*************************************************
 // STEP 1 - HELP
 //*************************************************
@@ -193,7 +196,7 @@ Report Parameters
 //*************************************************
 include { AliNe as ALIGNMENT } from "./modules/aline.nf"
 include {normalize_gxf} from "./modules/agat.nf"
-include { extract_libtype; recreate_csv_with_abs_paths; collect_aline_csv; filter_drip_by_aggregation_mode; filter_drip_features_by_type} from "./modules/bash.nf"
+include {extract_libtype; recreate_csv_with_abs_paths; collect_aline_csv; filter_drip_by_aggregation_mode; filter_drip_features_by_type} from "./modules/bash.nf"
 include {bamutil_clipoverlap} from './modules/bamutil.nf'
 include {fastp} from './modules/fastp.nf'
 include {fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from './modules/fastqc.nf'
@@ -204,8 +207,7 @@ include {fasta_unzip} from "./modules/pigz.nf"
 include {samtools_index; samtools_fasta_index; samtools_sort_bam as samtools_sort_bam_raw; samtools_sort_bam as samtools_sort_bam_merged; samtools_split_mapped_unmapped; samtools_merge_bams; samtools_calmd} from './modules/samtools.nf'
 include {reditools2} from "./modules/reditools2.nf"
 include {reditools3} from "./modules/reditools3.nf"
-include {pluviometer} from "./modules/pluviometer.nf"
-include {drip as drip_aggregates; drip as drip_features} from "./modules/python.nf"
+include {pluviometer; drip as drip_aggregates; drip as drip_features; barometer_analyze; barometer_report} from "./modules/water.nf"
 include {sapin} from "./modules/sapin.nf"
 
 include {HYPER_EDITING} from "./subworkflows/hyper-editing.nf"
@@ -811,7 +813,7 @@ workflow {
                     }
                     )
                     .set { features_espf_by_edit_type }
-                    features_espf_by_edit_type.view()
+                    //features_espf_by_edit_type.view()
 
             // -------------------  ESPR JOIN AGGREGATES AND FEATURES -----------------
             drip_aggregates.out.editing_all_espr
@@ -831,9 +833,44 @@ workflow {
                     }
                     )
                     .set { features_espr_by_edit_type }
-                    features_espr_by_edit_type.view()
+                    //features_espr_by_edit_type.view()
 
-        // READY for barometer analysis
+            // ------------------- BAROMETER ANALYSIS -----------------
+            // Run the barometer biomarker analysis on the drip outputs, per edit type
+            // and per value type (espf / espr).
+            features_espf_by_edit_type
+                    .map { editType, agg, feat -> tuple(editType, "espf", agg, feat) }
+                    .set { barometer_espf }
+            features_espr_by_edit_type
+                    .map { editType, agg, feat -> tuple(editType, "espr", agg, feat) }
+                    .set { barometer_espr }
+
+            barometer_espf.mix(barometer_espr).set { barometer_input }
+            //barometer_input.view()
+
+            barometer_analyze(barometer_input)
+            //barometer_analyze.out.results.view()
+
+            // Group analyze results by editType, pair espf + espr, and run the report. Keep order, espf first, second espr
+            barometer_report_input = barometer_analyze.out.results
+                .groupTuple(by: 0)
+                .map { sample, names, paths ->
+
+                    def results = names.withIndex().collectEntries { name, i ->
+                        [(name): paths[i]]
+                    }
+
+                    assert results.containsKey('espf'), "Missing espf result for ${sample}"
+                    assert results.containsKey('espr'), "Missing espr result for ${sample}"
+
+                    tuple(
+                        sample,
+                        results['espf'],
+                        results['espr']
+                    )
+                }
+
+            barometer_report(barometer_report_input)
 
         }
 

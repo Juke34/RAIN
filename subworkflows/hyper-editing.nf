@@ -8,7 +8,7 @@
 include { AliNe as ALIGNMENT } from "../modules/aline.nf"
 include { transform_bases_fastq; transform_bases_fasta; create_aline_csv_he; collect_aline_csv} from "../modules/bash.nf"
 include { multiqc } from "../modules/multiqc.nf"
-include { restore_original_sequences } from "../modules/python.nf"
+include { restore_original_sequences } from "../modules/water.nf"
 include { convert_to_fastq; samtools_fasta_index; samtools_split_mapped_unmapped } from "../modules/samtools.nf"
 
 /**
