@@ -139,14 +139,19 @@ if [ "$build_docker" = true ]; then
         
         # Reditools2 and Pluviometer do not compile on arm64, force using amd64 compilation
         if [[ "$arch" == arm* || "$arch" == "aarch64" ]]; then
-            if [[ $dir =~ "reditools2" ]] || [[ $dir =~ "pluviometer" ]]; then
-                echo "$imgname does not compile on arm64, force using amd64 compilation"
+            if [[ $dir =~ "reditools2" ]] || [[ $dir =~ "pluviometer" ]] || [[ $dir =~ "barometer" ]]; then
+                echo "$imgname requires linux/amd64 packages, force using amd64 compilation"
                 docker_arch_option=" --platform linux/amd64"
             fi
         fi
 
-        # Use containers/ as build context so shared files (e.g. env_*.yml) are accessible
-        docker build ${docker_arch_option} -f "${dir}/Dockerfile" -t ${imgname} containers/common/
+        if [[ "$imgname" == "barometer" ]]; then
+            docker buildx build ${docker_arch_option} --build-context rain-source=bin --load \
+                -f "${dir}/Dockerfile" -t ${imgname} containers/common/
+        else
+            # Use containers/common as context so shared environment files are accessible.
+            docker build ${docker_arch_option} -f "${dir}/Dockerfile" -t ${imgname} containers/common/
+        fi
     done
 
     if [[ ${github_action_mode} == 'github_action' ]]; then

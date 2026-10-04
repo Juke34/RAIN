@@ -5,7 +5,7 @@ From: condaforge/miniforge3:24.7.1-2
     containers/common/env_pluviometer.yml /env_pluviometer.yml
 
 %post
-    conda env update --name base --file env_pluviometer.yml
+    conda env update --name base --file /env_pluviometer.yml
 
 %runscript
     exec bash "$@"

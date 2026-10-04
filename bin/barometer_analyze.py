@@ -21,7 +21,10 @@ import json
 import logging
 import multiprocessing
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 import warnings
 from collections import defaultdict
@@ -63,7 +66,12 @@ log = logging.getLogger(__name__)
 # Helpers
 # ---------------------------------------------------------------------------
 def append_res_df_by_df_via_index (res_df, df, sample_cols, meta_cols_exclude):
-    meta_cols = [c for c in df.columns if c not in sample_cols and c not in meta_cols_exclude]
+    meta_cols = [
+        c for c in df.columns
+        if c not in sample_cols
+        and c not in meta_cols_exclude
+        and not c.endswith(("::successes", "::trials"))
+    ]
     # Merge with original df to get metadata
     res_df = res_df.join(df.loc[res_df.index, meta_cols], how="left")
     # ⭐ RÉORGANISER : mettre les METADATA en PREMIER ⭐
@@ -599,11 +607,112 @@ def test_normality_and_homogeneity(group_values):
     return results
 
 
+def run_beta_binomial_analysis(df, sample_info, groups, outdir):
+    """Fit beta-binomial models using DRIP's unrounded success/trial columns."""
+    pair_keys = [(g1, g2, f"{g1}_vs_{g2}") for g1, g2 in combinations(groups, 2)]
+    output = pd.DataFrame(index=df.index)
+    output["beta_binomial_status"] = "no_covered_samples"
+    output["beta_binomial_stat"] = np.nan
+    output["beta_binomial_pval"] = np.nan
+    output["beta_binomial_dispersion"] = np.nan
+    for group in groups:
+        output[f"beta_binomial_mean_{group}"] = np.nan
+    for _, _, pair_key in pair_keys:
+        output[f"beta_binomial_log_odds_{pair_key}"] = np.nan
+        output[f"beta_binomial_diff_{pair_key}"] = np.nan
+        output[f"beta_binomial_pval_{pair_key}"] = np.nan
+
+    count_frames = []
+    for sample in sample_info:
+        success_col = f"{sample['col']}::successes"
+        trials_col = f"{sample['col']}::trials"
+        if success_col not in df.columns or trials_col not in df.columns:
+            raise ValueError(
+                f"Missing beta-binomial counts for {sample['col']}; "
+                "rerun DRIP with count columns enabled."
+            )
+
+        successes = pd.to_numeric(df[success_col], errors="coerce")
+        trials = pd.to_numeric(df[trials_col], errors="coerce")
+        valid = (
+            successes.notna()
+            & trials.notna()
+            & (trials > 0)
+            & (successes >= 0)
+            & (successes <= trials)
+        )
+        if valid.any():
+            count_frames.append(pd.DataFrame({
+                "row_id": df.index[valid].map(str),
+                "group": sample["group"],
+                "sample": sample["sample"],
+                "replicate": sample["rep"],
+                "successes": successes.loc[valid].astype(int).values,
+                "trials": trials.loc[valid].astype(int).values,
+            }))
+
+    if not count_frames:
+        return output
+
+    counts = pd.concat(count_frames, ignore_index=True)
+    script_path = Path(os.environ.get(
+        "RAIN_BETA_BINOMIAL_SCRIPT",
+        Path(__file__).with_name("barometer_beta_binomial.R"),
+    ))
+    if not script_path.exists():
+        raise FileNotFoundError(f"Beta-binomial R script not found: {script_path}")
+
+    with tempfile.TemporaryDirectory(prefix="barometer_beta_binomial_") as temp_dir:
+        input_path = Path(temp_dir) / "counts.tsv"
+        output_path = Path(temp_dir) / "results.tsv"
+        counts.to_csv(input_path, sep="\t", index=False)
+        try:
+            completed = subprocess.run(
+                ["Rscript", str(script_path), str(input_path), str(output_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(
+                "Beta-binomial model failed: "
+                f"{exc.stderr[-4000:]}"
+            ) from exc
+
+        if not output_path.exists():
+            raise RuntimeError(
+                "Beta-binomial script did not create a results file. "
+                f"{completed.stderr[-4000:]}"
+            )
+        fitted = pd.read_csv(output_path, sep="\t", dtype={"row_id": str})
+
+    index_by_row_id = {str(index): index for index in df.index}
+    for row in fitted.itertuples(index=False):
+        index = index_by_row_id.get(str(row.row_id))
+        if index is None:
+            continue
+        if row.test == "global":
+            output.at[index, "beta_binomial_stat"] = row.statistic
+            output.at[index, "beta_binomial_pval"] = row.p_value
+            output.at[index, "beta_binomial_dispersion"] = row.dispersion
+            output.at[index, "beta_binomial_status"] = row.status
+        elif row.test == "mean":
+            output.at[index, f"beta_binomial_mean_{row.group1}"] = row.mean1
+        elif row.test == "pairwise":
+            pair_key = f"{row.group1}_vs_{row.group2}"
+            if pair_key in {key for _, _, key in pair_keys}:
+                output.at[index, f"beta_binomial_log_odds_{pair_key}"] = row.estimate
+                output.at[index, f"beta_binomial_diff_{pair_key}"] = row.mean1 - row.mean2
+                output.at[index, f"beta_binomial_pval_{pair_key}"] = row.p_value
+
+    return output
+
+
 def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"):
     """Pairwise and global differential tests between groups.
     
     Args:
-        stat_test: 'auto', 'parametric', 'nonparametric', 'welch', 'kruskal'
+        stat_test: 'auto', 'parametric', 'nonparametric', 'welch', 'kruskal', 'beta-binomial'
             - auto: test normality/homogeneity and choose best test
             - parametric: Student t-test / ANOVA (assumes normality + equal variances)
             - nonparametric: Mann-Whitney U / Kruskal-Wallis (no assumptions)
@@ -858,6 +967,10 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
      # Convert rows to DataFrame
     res_df = pd.DataFrame(rows)
     res_df = res_df.set_index("index")
+
+    if stat_test == "beta-binomial":
+        beta_results = run_beta_binomial_analysis(df, sample_info, groups, outdir)
+        res_df = res_df.join(beta_results)
     
     # ============================================================================
     # FDR CORRECTION - Multiple testing correction (FDR Benjamini-Hochberg) for ALL p-value columns
@@ -879,6 +992,18 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
         n_padj_created += 1
     log.info(f"  Created {n_padj_created} adjusted p-value columns")
 
+    if stat_test == "beta-binomial":
+        res_df["primary_stat"] = res_df["beta_binomial_stat"]
+        res_df["primary_pval"] = res_df["beta_binomial_pval"]
+        res_df["primary_padj"] = res_df["beta_binomial_padj"]
+        for g1, g2 in combinations(groups, 2):
+            pair_key = f"{g1}_vs_{g2}"
+            res_df[f"diff_{pair_key}"] = res_df[f"beta_binomial_diff_{pair_key}"]
+            res_df[f"primary_stat_{pair_key}"] = res_df[f"beta_binomial_log_odds_{pair_key}"]
+            res_df[f"primary_pval_{pair_key}"] = res_df[f"beta_binomial_pval_{pair_key}"]
+            res_df[f"primary_padj_{pair_key}"] = res_df[f"beta_binomial_padj_{pair_key}"]
+            res_df[f"primary_test_{pair_key}"] = "beta-binomial"
+
     # ============================================================================
     # ADD ORIGINAL METADATA from input df
     # ============================================================================
@@ -893,7 +1018,11 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
     results["stat_test_method"] = stat_test
 
     # Extract significant biomarkers (padj < 0.05 in ANY test)
-    padj_cols = [c for c in res_df.columns if c.endswith("_padj")]
+    if stat_test == "beta-binomial":
+        padj_cols = [c for c in res_df.columns
+                     if c == "beta_binomial_padj" or c.startswith("beta_binomial_padj_")]
+    else:
+        padj_cols = [c for c in res_df.columns if c.endswith("_padj")]
     if padj_cols:
         # Create boolean mask: True if ANY padj column is < 0.05
         sig_mask = res_df[padj_cols].lt(0.05).any(axis=1)
@@ -922,7 +1051,12 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
         diff_col = f"diff_{pair_key}"
         
         # Choose p-value column based on test method
-        if stat_test == "parametric":
+        if stat_test == "beta-binomial":
+            diff_col = f"beta_binomial_diff_{pair_key}"
+            pval_col = f"beta_binomial_pval_{pair_key}"
+            padj_col = f"beta_binomial_padj_{pair_key}"
+            test_label = "Beta-binomial"
+        elif stat_test == "parametric":
             pval_col = f"student_pval_{pair_key}"
             padj_col = f"student_padj_{pair_key}"
             test_label = "Student"
@@ -1902,7 +2036,7 @@ def analyze_section(df, sample_cols, sample_info, outdir, section_name, stat_tes
     safe_mkdir(outdir)    
     results = {"n_bmks": len_df, "n_samples": len_sample_cols, "section": section_name}
     
-    if is_active("filter1"):
+    if is_active("filter1") and stat_test != "beta-binomial":
         # PRE-FILTER #1: Remove BMKs with near-zero variance FIRST (before any size limit)
         # This prevents numerical issues and removes uninformative BMKs early
         ndf_prefilter = numeric_df(df, sample_cols)
@@ -1921,6 +2055,8 @@ def analyze_section(df, sample_cols, sample_info, outdir, section_name, stat_tes
         if len_df == 0:
             log.warning(f"{log_prefix} No variable BMKs remaining after removing constants")
             return results
+    elif stat_test == "beta-binomial":
+        log.info(f"{log_prefix} Skipping proportion-variance prefilter for count-based inference")
     
     if is_active("filter2"):
         # PRE-FILTER #2: For very large sections, reduce to top 10k by variance
@@ -1928,11 +2064,17 @@ def analyze_section(df, sample_cols, sample_info, outdir, section_name, stat_tes
         MAX_BMKS_FOR_ANALYSIS = 10000
         if len_df > MAX_BMKS_FOR_ANALYSIS:
             log.info(f"{log_prefix} {len_df} BMKs exceeds {MAX_BMKS_FOR_ANALYSIS} limit")
-            log.info(f"{log_prefix} Selecting top {MAX_BMKS_FOR_ANALYSIS} BMKs by variance...")
-            # Recalculate variance on already-filtered data
-            ndf_size_limit = numeric_df(df, sample_cols)
-            variance_size_limit = ndf_size_limit[sample_cols].var(axis=1)
-            top_indices = variance_size_limit.nlargest(MAX_BMKS_FOR_ANALYSIS).index
+            if stat_test == "beta-binomial":
+                log.info(f"{log_prefix} Selecting top {MAX_BMKS_FOR_ANALYSIS} BMKs by total trials...")
+                trial_cols = [f"{sample['col']}::trials" for sample in sample_info
+                              if f"{sample['col']}::trials" in df.columns]
+                coverage = df[trial_cols].apply(pd.to_numeric, errors="coerce").sum(axis=1)
+                top_indices = coverage.nlargest(MAX_BMKS_FOR_ANALYSIS).index
+            else:
+                log.info(f"{log_prefix} Selecting top {MAX_BMKS_FOR_ANALYSIS} BMKs by variance...")
+                ndf_size_limit = numeric_df(df, sample_cols)
+                variance_size_limit = ndf_size_limit[sample_cols].var(axis=1)
+                top_indices = variance_size_limit.nlargest(MAX_BMKS_FOR_ANALYSIS).index
             df = df.loc[top_indices].reset_index(drop=True).copy()
             len_df = len(df)
             log.info(f"{log_prefix} Reduced to {len_df} BMKs")
@@ -1980,6 +2122,8 @@ def analyze_section(df, sample_cols, sample_info, outdir, section_name, stat_tes
             log.info(f"{log_prefix} Differential analysis...")
             results["differential"] = differential_analysis(df, sample_cols, sample_info, os.path.join(outdir, "5_differential"), stat_test=stat_test)
         except Exception as e:
+            if stat_test == "beta-binomial":
+                raise
             log.warning(f"{log_prefix} Differential analysis failed: {e}")
 
     # 6. Correlation / Network Analysis
@@ -2292,13 +2436,23 @@ EXAMPLES:
     parser.add_argument("--agg-levels", nargs="+", default=None, help="Aggregate levels to analyze: global, sequence, feature. If not specified, all levels are analyzed.")
     parser.add_argument("--feature-types", nargs="+", default=None, help="Feature types to analyze (e.g., gene exon RNA). If not specified, all feature types are analyzed.")
     parser.add_argument("--stat-test", default="nonparametric", 
-                        choices=["auto", "parametric", "nonparametric", "welch", "kruskal"],
-                        help="Statistical test selection: auto (test assumptions), parametric (Student/ANOVA), nonparametric (Mann-Whitney/Kruskal-Wallis, default), welch (Welch t-test/ANOVA)")
-    parser.add_argument("--bmk-filter", nargs="+", default=["primary_padj", "kruskal_padj", "welch_padj", "anova_padj"],
-                        help="Priority list of column names for filtering significant BMKs (default: primary_padj kruskal_padj welch_padj anova_padj). BMKs are collected in cascade until --max-bmks is reached.")
+                        choices=["auto", "parametric", "nonparametric", "welch", "kruskal", "beta-binomial"],
+                        help="Statistical test selection: beta-binomial (requires DRIP counts), auto, parametric, nonparametric, welch or kruskal")
+    parser.add_argument("--bmk-filter", nargs="+", default=None,
+                        help="Priority list for significant BMK selection (default: primary_padj only for beta-binomial; legacy cascade otherwise).")
     parser.add_argument("--max-bmks", type=int, default=500,
                         help="Maximum number of BMKs to use for RandomForest and classification (default: 500). Prevents memory crashes with large datasets.")
     args = parser.parse_args()
+
+    if args.stat_test == "beta-binomial" and shutil.which("Rscript") is None:
+        parser.error("Beta-binomial analysis requires Rscript and glmmTMB; use the Barometer container.")
+
+    if args.bmk_filter is None:
+        args.bmk_filter = (
+            ["primary_padj"]
+            if args.stat_test == "beta-binomial"
+            else ["primary_padj", "kruskal_padj", "welch_padj", "anova_padj"]
+        )
     
     # Determine number of workers
     if args.jobs == -1:
@@ -2361,6 +2515,23 @@ EXAMPLES:
     # Parse sample information from whichever file is available
     sample_df = agg_df if agg_df is not None else feat_df
     sample_info = parse_sample_columns(sample_df.columns)
+    if args.stat_test == "beta-binomial":
+        missing_counts = []
+        for data_frame in (agg_df, feat_df):
+            if data_frame is None:
+                continue
+            frame_samples = parse_sample_columns(data_frame.columns)
+            missing_counts.extend(
+                f"{sample['col']}::{suffix}"
+                for sample in frame_samples
+                for suffix in ("successes", "trials")
+                if f"{sample['col']}::{suffix}" not in data_frame.columns
+            )
+        if missing_counts:
+            parser.error(
+                "Beta-binomial analysis requires count columns in DRIP TSVs; "
+                f"missing examples: {', '.join(missing_counts[:4])}. Rerun DRIP."
+            )
     all_value_types = get_value_types(sample_info)
     
     # Filter value types if specified

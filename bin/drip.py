@@ -49,6 +49,9 @@ ARGUMENTS:
                      Include rows where all metric values are NA (default: omit them).
                      By default, rows where every sample has NA for the given base pair
                      are skipped (not covered or not qualified in any sample).
+    --preserve-covered-features
+                     Keep rows with coverage in any sample, regardless of the number
+                     of non-zero proportions; intended for count-based differential tests.
     --min-samples-pct X
                      Keep a row only if at least X% of all samples have a qualified value
                      (non-NA, non-zero) for the base pair.  A sample "has a value" when
@@ -94,11 +97,19 @@ CALCULATED METRICS:
     1. XY_espf (edited_sites_proportion_feature) - Proportion of XY sites in the DNA feature:
        Formula: XY_SiteBasePairingsQualified / X_QualifiedBases
        This represents the proportion of qualified X positions that show X-to-Y variation in the feature.
-    
+         Count columns preserve XY_SiteBasePairingsQualified as successes and X_QualifiedBases as trials.
+         In other terms for A-to-G example:
+         - successes = number of reference sites A where a G edit was observed;
+         - trials = total number of reference sites A qualified in the feature, whether they harbor editing or not.
+
     2. XY_espr (edited_sites_proportion_reads) - Proportion of XY pairing in reads:
        Formula: XY_ReadBasePairings / (XA + XC + XG + XT)_ReadBasePairings
        This represents the proportion of X-position reads that show Y in the reads.
-    
+         Count columns preserve XY_ReadBasePairings as successes and the X-read sum as trials.
+         In other terms for A-to-G example:
+            - successes = reads that cover a position where the reference is A and that observe G;
+            - trials = all reads covering these positions where the reference is A, regardless of whether they observe A, C, G, or T.
+         
     All 12 combinations are calculated: AC, AG, AT, CA, CG, CT, GA, GC, GT, TA, TC, TG
 
 OUTPUT FORMAT:
@@ -133,6 +144,7 @@ OUTPUT FORMAT:
     Metric columns (one per sample):
     - GROUP::SAMPLE::REPLICATE::<metric>            (without --with-file-id)
     - GROUP::SAMPLE::REPLICATE::FILE_ID::<metric>  (with --with-file-id)
+    - GROUP::SAMPLE::REPLICATE::<metric>::successes and ::trials for count-based models
 
     Where:
     - GROUP: Group/condition name provided in arguments
@@ -225,12 +237,16 @@ def parse_tsv_file_for_bp(filepath, bp, group_name, sample_name, replicate, file
                   else f'{group_name}::{sample_name}::{replicate}')
 
     mask_f = x_count >= min_cov
+    result[f'{col_prefix}::espf::successes'] = bp_sites.where(mask_f)
+    result[f'{col_prefix}::espf::trials'] = x_count.where(mask_f)
     result[f'{col_prefix}::espf'] = np.where(
         mask_f, bp_sites / x_count.where(mask_f, 1), np.nan
     )
     result[f'{col_prefix}::espf'] = result[f'{col_prefix}::espf'].round(decimals)
 
     mask_r = total_reads >= min_cov
+    result[f'{col_prefix}::espr::successes'] = bp_reads.where(mask_r)
+    result[f'{col_prefix}::espr::trials'] = total_reads.where(mask_r)
     result[f'{col_prefix}::espr'] = np.where(
         mask_r, bp_reads / total_reads.where(mask_r, 1), np.nan
     )
@@ -264,11 +280,15 @@ def _compute_bp_from_df(df, bp, bp_idx, gb_idx, gb_offset, col_prefix, min_cov, 
     result = df[metadata_cols].copy()
 
     mask_f = x_count >= min_cov
+    result[f'{col_prefix}::espf::successes'] = bp_sites.where(mask_f)
+    result[f'{col_prefix}::espf::trials'] = x_count.where(mask_f)
     result[f'{col_prefix}::espf'] = np.where(
         mask_f, bp_sites / x_count.where(mask_f, 1), np.nan
     ).round(decimals)
 
     mask_r = total_reads >= min_cov
+    result[f'{col_prefix}::espr::successes'] = bp_reads.where(mask_r)
+    result[f'{col_prefix}::espr::trials'] = total_reads.where(mask_r)
     result[f'{col_prefix}::espr'] = np.where(
         mask_r, bp_reads / total_reads.where(mask_r, 1), np.nan
     ).round(decimals)
@@ -281,7 +301,8 @@ def _write_one_bp(bp, accumulated, output_prefix, metadata_cols, report_non_qual
     merged = accumulated.sort_values(['SeqID', 'ParentIDs', 'Mode'])
 
     if not report_non_qualified:
-        metric_cols = [c for c in merged.columns if c not in metadata_cols]
+        metric_cols = [c for c in merged.columns
+                       if c not in metadata_cols and c.endswith(('::espf', '::espr'))]
         merged = merged[
             (merged[metric_cols].notna() & (merged[metric_cols] != 0)).any(axis=1)
         ]
@@ -320,7 +341,8 @@ def _split_file_by_seqid(filepath, temp_dir, sample_idx, needed_cols, mixed_dtyp
 
 def _process_seqid_chunk(seqid, chunk_paths_by_sample, col_prefixes, temp_out_dir,
                          metadata_cols, bp_meta, all_bps, min_cov, decimals,
-                         report_non_qualified, min_samples_pct=None, min_group_pct=None):
+                         report_non_qualified, min_samples_pct=None, min_group_pct=None,
+                         preserve_covered_features=False):
     """Compute 12 BPs for one SeqID and write 12 per-BP chunk files.
 
     Each element in chunk_paths_by_sample is a path (str) or None when that
@@ -340,7 +362,15 @@ def _process_seqid_chunk(seqid, chunk_paths_by_sample, col_prefixes, temp_out_di
                 # On crée un DataFrame avec une seule ligne, toutes les métadonnées à seqid ou '.' et la colonne metric à NA
                 meta = {k: seqid if k == 'SeqID' else '.' for k in metadata_cols}
                 # Une seule ligne
-                row = {**meta, f'{col_prefix}::espf': np.nan, f'{col_prefix}::espr': np.nan}
+                row = {
+                    **meta,
+                    f'{col_prefix}::espf': np.nan,
+                    f'{col_prefix}::espf::successes': np.nan,
+                    f'{col_prefix}::espf::trials': np.nan,
+                    f'{col_prefix}::espr': np.nan,
+                    f'{col_prefix}::espr::successes': np.nan,
+                    f'{col_prefix}::espr::trials': np.nan,
+                }
                 bp_data = pd.DataFrame([row])
                 if bp_accumulators[i] is None:
                     bp_accumulators[i] = bp_data
@@ -383,14 +413,23 @@ def _process_seqid_chunk(seqid, chunk_paths_by_sample, col_prefixes, temp_out_di
                            if c not in metadata_cols and c.endswith(f'::{metric}')]
             if not metric_cols:
                 continue
-            acc_metric = acc[metadata_cols + metric_cols]
+            count_cols = [c for c in acc.columns
+                          if c not in metadata_cols
+                          and c.endswith((f'::{metric}::successes', f'::{metric}::trials'))]
+            acc_metric = acc[metadata_cols + metric_cols + count_cols]
 
             if not report_non_qualified:
-                # Step 1 — cell-level: "has a value" = non-NA AND non-zero.
+                if preserve_covered_features:
+                    trial_cols = [c for c in count_cols if c.endswith(f'::{metric}::trials')]
+                    coverage = acc_metric[trial_cols].apply(pd.to_numeric, errors='coerce')
+                    keep = coverage.gt(0).any(axis=1)
+                    acc_metric = acc_metric[keep]
+                else:
+                    # Step 1 — cell-level: "has a value" = non-NA AND non-zero.
                 #   NA means the position was not covered (or below min_cov, or
                 #   absent from this sample via the outer join).
                 #   0.0 means covered but no editing event observed.
-                has_value = acc_metric[metric_cols].notna() & (acc_metric[metric_cols] != 0)
+                    has_value = acc_metric[metric_cols].notna() & (acc_metric[metric_cols] != 0)
 
                 # Step 2 — row-level decision, applied independently per metric
                 #   type (espf rows and espr rows are filtered separately):
@@ -407,23 +446,23 @@ def _process_seqid_chunk(seqid, chunk_paths_by_sample, col_prefixes, temp_out_di
                 #     Example: "ctrl" group has 2/3 espf values → 67%; Y=60 → keep.
                 #
                 #   Both flags → OR: keep if either condition is satisfied.
-                if min_samples_pct is None and min_group_pct is None:
-                    keep = has_value.any(axis=1)
-                else:
-                    keep = pd.Series(False, index=acc_metric.index)
-                    if min_samples_pct is not None:
-                        n = len(metric_cols)
-                        keep |= has_value.sum(axis=1) / n >= min_samples_pct / 100.0
-                    if min_group_pct is not None:
-                        groups: dict[str, list[str]] = {}
-                        for c in metric_cols:
-                            groups.setdefault(c.split('::')[0], []).append(c)
-                        for g_cols in groups.values():
-                            keep |= (
-                                has_value[g_cols].sum(axis=1) / len(g_cols)
-                                >= min_group_pct / 100.0
-                            )
-                acc_metric = acc_metric[keep]
+                    if min_samples_pct is None and min_group_pct is None:
+                        keep = has_value.any(axis=1)
+                    else:
+                        keep = pd.Series(False, index=acc_metric.index)
+                        if min_samples_pct is not None:
+                            n = len(metric_cols)
+                            keep |= has_value.sum(axis=1) / n >= min_samples_pct / 100.0
+                        if min_group_pct is not None:
+                            groups: dict[str, list[str]] = {}
+                            for c in metric_cols:
+                                groups.setdefault(c.split('::')[0], []).append(c)
+                            for g_cols in groups.values():
+                                keep |= (
+                                    has_value[g_cols].sum(axis=1) / len(g_cols)
+                                    >= min_group_pct / 100.0
+                                )
+                    acc_metric = acc_metric[keep]
 
             if len(acc_metric) > 0:
                 out_path = os.path.join(temp_out_dir, metric, f'{metric}_{bp}_{safe}.tsv')
@@ -438,7 +477,7 @@ def _process_seqid_chunk(seqid, chunk_paths_by_sample, col_prefixes, temp_out_di
 
 def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id=False,
                   min_cov=1, threads=1, decimals=4, report_non_qualified=False,
-                  min_samples_pct=None, min_group_pct=None):
+                  min_samples_pct=None, min_group_pct=None, preserve_covered_features=False):
     """Produce one output file per base pair combination.
 
     Memory strategy — three phases:
@@ -453,6 +492,8 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
     """
     ALL_BPS = ['AC', 'AG', 'AT', 'CA', 'CG', 'CT',
                'GA', 'GC', 'GT', 'TA', 'TC', 'TG']
+    ALL_PAIRINGS = ['AA', 'AC', 'AG', 'AT', 'CA', 'CC', 'CG', 'CT',
+                    'GA', 'GC', 'GG', 'GT', 'TA', 'TC', 'TG', 'TT']
     BASES = ['A', 'C', 'G', 'T']
     metadata_cols = ['SeqID', 'ParentIDs', 'ID', 'Mtype', 'Ptype', 'Type',
                      'Ctype', 'Mode', 'Start', 'End', 'Strand']
@@ -460,7 +501,7 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
                                    'SiteBasePairingsQualified',
                                    'ReadBasePairingsQualified']
     mixed_dtypes = {'SeqID': str, 'Start': str, 'End': str, 'Strand': str}
-    bp_meta = [(ALL_BPS.index(bp), BASES.index(bp[0]), BASES.index(bp[0]) * 4)
+    bp_meta = [(ALL_PAIRINGS.index(bp), BASES.index(bp[0]), BASES.index(bp[0]) * 4)
                for bp in ALL_BPS]
 
     sample_info = []
@@ -518,7 +559,7 @@ def merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_
              [ssp.get(seqid) for ssp in sample_seqid_paths],
              col_prefixes, temp_out_dir,
              metadata_cols, bp_meta, ALL_BPS, min_cov, decimals, report_non_qualified,
-             min_samples_pct, min_group_pct)
+             min_samples_pct, min_group_pct, preserve_covered_features)
             for seqid in all_seqids
         ]
 
@@ -589,6 +630,7 @@ if __name__ == "__main__":
     threads = 1  # Default: sequential writing
     decimals = 4  # Default: round to 4 decimal places
     report_non_qualified = False  # Default: skip rows where all metric values are NA
+    preserve_covered_features = False
     min_samples_pct = None   # Default: no global-sample-% filter
     min_group_pct   = None   # Default: no per-group-% filter
 
@@ -617,6 +659,10 @@ if __name__ == "__main__":
         # Check for --report-non-qualified-features flag
         if arg == '--report-non-qualified-features':
             report_non_qualified = True
+            continue
+
+        if arg == '--preserve-covered-features':
+            preserve_covered_features = True
             continue
 
         # Check for --min-samples-pct flag
@@ -765,6 +811,10 @@ if __name__ == "__main__":
         sys.exit(1)
     
     # Process all samples
-    result = merge_samples(file_group_sample_replicate_dict, output_prefix, include_file_id, min_cov, threads, decimals, report_non_qualified, min_samples_pct, min_group_pct)
+    result = merge_samples(
+        file_group_sample_replicate_dict, output_prefix, include_file_id, min_cov,
+        threads, decimals, report_non_qualified, min_samples_pct, min_group_pct,
+        preserve_covered_features
+    )
     
     print("\nAnalysis complete!")

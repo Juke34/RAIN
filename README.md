@@ -63,6 +63,12 @@ flowchart TD
   J --> L["Barometer downstream analysis<br/>candidate biomarker detection and reporting"]
 ```
 
+## Differential Editing Statistics
+
+For CSV-based runs, Barometer uses a beta-binomial model by default. DRIP keeps the existing ESPF/ESPR proportion columns and adds per-sample `successes` and `trials` columns to the same TSV files. Technical replicates are summed by biological sample before fitting; uncovered observations remain missing, while covered zero-edit observations are retained. At least two biological samples per condition are required to estimate between-sample overdispersion.
+
+The test is performed at Barometer's existing feature/aggregate level, not per editing site. Set `--barometer_stat_test nonparametric` to use the legacy proportion-based tests instead. In beta-binomial mode, DRIP preserves covered features rather than filtering them by the percentage of samples with non-zero editing.
+
 ## Installation
 
 The prerequisites to run the pipeline are:  
@@ -353,8 +359,8 @@ The two output formats are tables of comma-separated values with a header.
 | End              | Positive integer                  | Ending position of the feature (inclusive)                                                                                                                 |
 | Strand           | `1` or `-1`                       | Whether the features is located on the positive (5'->3') or negative (3'->5') strand                                                                       |
 | TotalSites       | Positive integer                  | Number of sites in the feature                                                                                                                             |
-| ObservedBases    | Comma-separated positive integers | Number and type of the bases in the feature in the reference genome (order: A, C, G, T) observed. The total of the 4 values corresponds to the total observed sites (reported by the editing tools e.g. Reditools3)  |
-| QualifiedBases   | Comma-separated positive integers | Number and type of of the bases in the feature in the reference genome (order: A, C, G, T) that satisfy the minimum level of coverage and editing. The total of the 4 values corresponds to the total qualified sites (> cov) |
+| ObservedBases    | Comma-separated positive integers | Number and type of the bases in the feature in the reference genome (order: A, C, G, T) observed. The total of the 4 values corresponds to the total observed sites (reported by the editing tools e.g. Reditools3). Each position is counted once, regardless of depth  |
+| QualifiedBases   | Comma-separated positive integers | Number and type of of the bases in the feature in the reference genome (order: A, C, G, T) that satisfy the minimum level of coverage and editing. The total of the 4 values corresponds to the total qualified sites (> cov). Each position is counted once, regardless of depth |
 | SiteBasePairingsQualified| Comma-separated positive integers | Number of sites in which each genome-variant base pairings is found at reference level in the feature (order: AA, AC, AG, AT, CA, CC, CG, CT, GA, GC, GG, GT, TA, TC, TG, TT) that satisfy the minimum level of coverage and editing |
 | ReadBasePairingsQualified | Comma-separated positive integers | Number of sites in which each genome-variant base pairings is found at reads level in the feature (order: AA, AC, AG, AT, CA, CC, CG, CT, GA, GC, GG, GT, TA, TC, TG, TT) that satisfy the minimum level of coverage and editing |
 

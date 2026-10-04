@@ -30,7 +30,7 @@ params.min_group_pct = 75 // Minimal percentage of groups in which a site must b
 params.aggregation_mode = "all" // used by pluviometer
 params.skip_hyper_editing = false // Skip hyper-editing detection
 // Barometer params
-params.barometer_stat_test = "nonparametric"
+params.barometer_stat_test = "beta-binomial"
 params.barometer_max_bmks = 500
 // Report params
 params.multiqc_config = "$baseDir/config/multiqc_config.yaml" // MultiQC config file
@@ -151,6 +151,7 @@ def helpMSG() {
     --edit_site_tool            Tool used for detecting edited sites. [default: $params.edit_site_tool]
     --edit_threshold            Minimal number of edited reads to count a site as edited [default: $params.edit_threshold]
     --fastqc                    run fastqc on main steps [default: $params.fastqc]
+    --barometer_stat_test       Differential test: beta-binomial (default) or a legacy proportion test [default: $params.barometer_stat_test]
     --skip_hyper_editing        Skip hyper-editing detection step for unmapped reads. [default: $params.skip_hyper_editing]
     --strandedness              Set the strandedness for all your input reads [default: $params.strandedness]. In auto mode salmon will guess the library type for each fastq sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
 
@@ -198,6 +199,8 @@ include { AliNe as ALIGNMENT } from "./modules/aline.nf"
 include {normalize_gxf} from "./modules/agat.nf"
 include {extract_libtype; recreate_csv_with_abs_paths; collect_aline_csv; filter_drip_by_aggregation_mode; filter_drip_features_by_type} from "./modules/bash.nf"
 include {bamutil_clipoverlap} from './modules/bamutil.nf'
+include {barometer_analyze; barometer_report} from "./modules/barometer.nf"
+include {drip as drip_aggregates; drip as drip_features} from "./modules/drip.nf"
 include {fastp} from './modules/fastp.nf'
 include {fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from './modules/fastqc.nf'
 include {gatk_markduplicates } from './modules/gatk.nf'
@@ -207,7 +210,7 @@ include {fasta_unzip} from "./modules/pigz.nf"
 include {samtools_index; samtools_fasta_index; samtools_sort_bam as samtools_sort_bam_raw; samtools_sort_bam as samtools_sort_bam_merged; samtools_split_mapped_unmapped; samtools_merge_bams; samtools_calmd} from './modules/samtools.nf'
 include {reditools2} from "./modules/reditools2.nf"
 include {reditools3} from "./modules/reditools3.nf"
-include {pluviometer; drip as drip_aggregates; drip as drip_features; barometer_analyze; barometer_report} from "./modules/water.nf"
+include {pluviometer} from "./modules/pluviometer.nf"
 include {sapin} from "./modules/sapin.nf"
 
 include {HYPER_EDITING} from "./subworkflows/hyper-editing.nf"
