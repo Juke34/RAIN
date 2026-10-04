@@ -28,7 +28,7 @@ params.cov_threshold = 10 // Minimal coverage to consider a site for editing det
 params.min_samples_pct = 50 // Minimal percentage of samples in which a site must be edited to be kept in the analysis (drip filtering)
 params.min_group_pct = 75 // Minimal percentage of groups in which a site must be edited to be kept in the analysis (drip filtering)
 params.aggregation_mode = "all" // used by pluviometer
-params.skip_hyper_editing = false // Skip hyper-editing detection
+params.hyper_editing = "with" // with (normal + hyper-editing reads), without (normal only) or only (hyper-editing only)
 // Barometer params
 params.barometer_stat_test = "beta-binomial"
 params.barometer_max_bmks = 500
@@ -97,6 +97,13 @@ if( !params.edit_site_tool ){
     }
 }
 
+// Check hyper-editing mode
+hyper_editing_allowed = [ 'with', 'without', 'only' ]
+if ( ! (params.hyper_editing in hyper_editing_allowed) ) {
+    exit 1, "Error: <${params.hyper_editing}> hyper_editing not accepted, please provide a value among this list ${hyper_editing_allowed}.\n"
+}
+def run_hyper_editing = params.hyper_editing != 'without'
+
 // Help Message
 def helpMSG() {
     log.info """
@@ -152,7 +159,7 @@ def helpMSG() {
     --edit_threshold            Minimal number of edited reads to count a site as edited [default: $params.edit_threshold]
     --fastqc                    run fastqc on main steps [default: $params.fastqc]
     --barometer_stat_test       Differential test: beta-binomial (default) or a legacy proportion test [default: $params.barometer_stat_test]
-    --skip_hyper_editing        Skip hyper-editing detection step for unmapped reads. [default: $params.skip_hyper_editing]
+    --hyper_editing             Hyper-editing handling: with (normal reads + hyper-editing reads when present), without (normal reads only, hyper-editing detection not run) or only (hyper-editing reads only) [default: $params.hyper_editing]
     --strandedness              Set the strandedness for all your input reads [default: $params.strandedness]. In auto mode salmon will guess the library type for each fastq sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
 
         Nextflow options:
@@ -169,7 +176,7 @@ General Parameters
     genome                     : ${params.genome}
     strandedness               : ${params.strandedness}
     read_type                  : ${params.read_type}
-    hyper-editing              : ${params.skip_hyper_editing ? "skipped" : "performed"}
+    hyper_editing              : ${params.hyper_editing}
     clip_overlap               : ${params.clip_overlap}
     clean_duplicate            : ${params.clean_duplicate}
     outdir                     : ${params.outdir}
@@ -685,7 +692,7 @@ workflow {
 
         // Process hyper-editing if not skipped
         Channel.empty().set{all_bam}
-        if (!params.skip_hyper_editing) {
+        if (run_hyper_editing) {
             
             HYPER_EDITING(
                 samtools_split_mapped_unmapped.out.unmapped_bam,
@@ -700,16 +707,27 @@ workflow {
             hyperedit_bam_mapped = HYPER_EDITING.out.bam_mapped
             bam_unmapped = HYPER_EDITING.out.bam_unmapped
          
-            // create a channel of tuples with (meta, bam, bam_he) joined by the id
+            // remainder: true keeps samples that have no hyper-editing BAM
             samtools_split_mapped_unmapped.out.mapped_bam.map { meta, bam -> tuple(meta.uid, meta, bam) }
                         .join(
-                            hyperedit_bam_mapped.map { meta2, bam_he -> tuple(meta2.uid, meta2, bam_he) }
+                            hyperedit_bam_mapped.map { meta2, bam_he -> tuple(meta2.uid, bam_he) },
+                            remainder: true
                         )
-                        .map { id, meta, bam, meta2, bam_he -> tuple(meta, bam, bam_he) }
-                        .set { meta_bam_bamhe } 
-            
-            // Merge the final bam with the original bam in case of hyper-editing to keep all reads for edition site detection
-            all_bam = samtools_merge_bams(meta_bam_bamhe, "bam_appended_with_he")
+                        .filter { id, meta, bam, bam_he -> meta != null }
+                        .map { id, meta, bam, bam_he -> tuple(meta, bam, bam_he) }
+                        .branch { meta, bam, bam_he ->
+                            with_he: bam_he != null
+                            without_he: true
+                        }
+                        .set { he_split }
+
+            if (params.hyper_editing == 'only') {
+                all_bam = he_split.with_he.map { meta, bam, bam_he -> tuple(meta, bam_he) }
+            } else {
+                // Merge normal and hyper-editing reads; samples without hyper-editing reads keep their mapped reads
+                all_bam = samtools_merge_bams(he_split.with_he, "bam_appended_with_he")
+                            .mix( he_split.without_he.map { meta, bam, bam_he -> tuple(meta, bam) } )
+            }
             
             // Add hyper-editing sample to analysis
             // Here we have bam containing normal and hyper_editing reads and bam containing only hyper-editing reads.

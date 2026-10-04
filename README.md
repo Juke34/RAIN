@@ -311,7 +311,7 @@ nextflow run -profile docker,test_short_single_list rain.nf
     --edit_site_tool            Tool used for detecting edited sites. [default: reditools3]
     --edit_threshold            Minimal number of edited reads to count a site as edited [default: 1]
     --fastqc                    run fastqc on main steps [default: false]
-    --skip_hyper_editing        Skip hyper-editing detection step for unmapped reads. [default: false]
+    --hyper_editing             Hyper-editing handling: with (normal reads + hyper-editing reads when present), without (normal reads only, hyper-editing detection not run) or only (hyper-editing reads only) [default: with]
     --strandedness              Set the strandedness for all your input reads [default: null]. In auto mode salmon will guess the library type for each fastq sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
 
         Nextflow options:
