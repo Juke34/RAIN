@@ -1,5 +1,14 @@
 Bootstrap: docker
-From: pluviometer
+From: ghcr.io/prefix-dev/pixi:0.81.0
+
+%files
+    containers/common/pluviometer/pixi.toml /app/pixi.toml
+    containers/common/pluviometer/pixi.lock /app/pixi.lock
+
+%post
+    cd /app
+    pixi install --locked
+    ln -sf /app/.pixi/envs/default/bin/* /usr/local/bin/
 
 %runscript
     exec bash "$@"
