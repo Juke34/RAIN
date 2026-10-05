@@ -21,7 +21,7 @@ process barometer_analyze {
     script:
         """
         barometer_analyze.py \\
-            -a ${aggregates} \\barometer_analyze_sites
+            -a ${aggregates} \\
             -f ${features} \\
             -o barometer_results \\
             -j ${task.cpus} \\

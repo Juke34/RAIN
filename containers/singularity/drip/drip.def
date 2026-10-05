@@ -1,12 +1,5 @@
 Bootstrap: docker
-From: condaforge/miniforge3:24.7.1-2
-
-%files
-    containers/common/env_drip.yml /env_drip.yml
-
-%post
-    conda env update --name base --file /env_drip.yml
-    conda clean --all --yes
+From: drip
 
 %runscript
     exec bash "$@"

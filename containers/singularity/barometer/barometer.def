@@ -1,17 +1,5 @@
 Bootstrap: docker
-From: condaforge/miniforge3:24.7.1-2
-
-%files
-    containers/common/env_barometer.yml /env_barometer.yml
-    bin/barometer_beta_binomial.R /opt/rain/barometer_beta_binomial.R
-
-%environment
-    export RAIN_BETA_BINOMIAL_SCRIPT=/opt/rain/barometer_beta_binomial.R
-
-%post
-    conda env update --name base --file /env_barometer.yml
-    Rscript -e 'library(glmmTMB)'
-    conda clean --all --yes
+From: barometer
 
 %runscript
     exec bash "$@"

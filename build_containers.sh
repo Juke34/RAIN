@@ -136,21 +136,26 @@ if [ "$build_docker" = true ]; then
         
         # Set architecture to docker buildx
         docker_arch_option=""
-        
-        # Reditools2 and Pluviometer do not compile on arm64, force using amd64 compilation
+
+        # The pixi-based images (pluviometer, drip, barometer, reditools2) declare
+        # platforms = ["linux-64"] in their pixi.toml, so they must be built for
+        # linux/amd64 even on arm64 hosts.
         if [[ "$arch" == arm* || "$arch" == "aarch64" ]]; then
-            if [[ $dir =~ "reditools2" ]] || [[ $dir =~ "pluviometer" ]] || [[ $dir =~ "barometer" ]]; then
+            if [[ $dir =~ "reditools2" ]] || [[ $dir =~ "pluviometer" ]] || [[ $dir =~ "barometer" ]] || [[ $dir =~ "drip" ]]; then
                 echo "$imgname requires linux/amd64 packages, force using amd64 compilation"
                 docker_arch_option=" --platform linux/amd64"
             fi
         fi
 
+        # Use buildx for all images: it supports --platform (needed to force
+        # linux/amd64 on arm64 hosts), unlike plain `docker build`.
         if [[ "$imgname" == "barometer" ]]; then
             docker buildx build ${docker_arch_option} --build-context rain-source=bin --load \
                 -f "${dir}/Dockerfile" -t ${imgname} containers/common/
         else
             # Use containers/common as context so shared environment files are accessible.
-            docker build ${docker_arch_option} -f "${dir}/Dockerfile" -t ${imgname} containers/common/
+            docker buildx build ${docker_arch_option} --load \
+                -f "${dir}/Dockerfile" -t ${imgname} containers/common/
         fi
     done
 

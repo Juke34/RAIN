@@ -1,47 +1,8 @@
 Bootstrap: docker
-From: condaforge/miniforge3:24.7.1-2
-
-%files
-    containers/singularity/common/env_reditools2.yml ./env_reditools2.yml
-
-%post
-    # Activer conda dans l'environnement shell
-    conda config --add channels bioconda
-    conda config --add channels conda-forge
-
-    # Créer l'environnement Conda
-    conda create -n myenv python=2.7 -y
-    echo "conda init" >> /root/.bashrc
-    echo "conda activate myenv" >> /root/.bashrc
-
-    # Mettre à jour avec le fichier YAML
-    conda env update -n myenv --file env_reditools2.yml
-    conda clean --all -f -y
-
-    # Cloner REDItools2
-    git clone --depth=1 https://github.com/BioinfoUNIBA/REDItools2.git /opt/reditools2
-    chmod +x /opt/reditools2/src/cineca/reditools.py
-
-    # Liens symboliques pour les exécutables
-    ln -s /opt/reditools2/src/cineca/reditools.py /usr/local/bin/reditools.py
-    ln -s /opt/reditools2/src/cineca/parallel_reditools.py /usr/local/bin/parallel_reditools.py
-
-    # Patch hostname retrieval in Reditools2
-    sed -i.bak '849c\
-    addresses = netifaces.ifaddresses(interface)\
-    if netifaces.AF_INET in addresses:\
-        ip_address = addresses[netifaces.AF_INET][0]["addr"]\
-        hostname = socket.gethostbyaddr(ip_address)[0]\
-    else:\
-        hostname = socket.gethostname()' /opt/reditools2/src/cineca/reditools.py
-
-%environment
-    export PATH=/usr/local/bin:$PATH
-    export CONDA_DEFAULT_ENV=myenv
-    export PATH=/opt/conda/envs/myenv/bin:$PATH
+From: reditools2
 
 %runscript
-    exec /bin/bash
+    exec bash "$@"
 
 %labels
     Author jacques.dainat@ird.fr
@@ -49,5 +10,5 @@ From: condaforge/miniforge3:24.7.1-2
     Tool REDItools2
 
 %help
-    REDItools2 installed with Python 2.7 environment via Conda.
+    REDItools2 installed with Python 2.7 environment via pixi.
     Run the container with 'reditools.py' or 'parallel_reditools.py'.
