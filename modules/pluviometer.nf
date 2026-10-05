@@ -11,9 +11,11 @@ process pluviometer {
         tuple(val(meta), val(tool_format), path("*features.tsv"), emit: tuple_sample_feature)
         tuple(val(meta), val(tool_format), path("*aggregates.tsv"), emit: tuple_sample_aggregate)
         tuple(val(meta), val(tool_format), path("*pluviometer.log"), emit: tuple_sample_log)
+        tuple(val(meta), val(tool_format), path("*_sites.tsv"), optional: true, emit: tuple_sample_sites)
 
     script:
         base_name = site_edits.BaseName
+        def siteArgs = params.site_analysis ? "--site-output --site_cov ${params.site_cov_threshold} --site_edit_threshold ${params.site_edit_threshold}" : ""
         """    
         pluviometer_wrapper.py \
             --sites ${site_edits} \
@@ -23,6 +25,7 @@ process pluviometer {
             --edit_threshold ${params.edit_threshold} \
             --threads ${task.cpus} \
             --aggregation_mode ${params.aggregation_mode} \
+            ${siteArgs} \
             --output "${meta.uid}_${tool_format}"
         """
 }

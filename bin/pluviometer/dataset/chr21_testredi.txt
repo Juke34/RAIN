@@ -1,0 +1,12 @@
+Region	Position	Reference	Strand	Coverage	MeanQ	BaseCount[A,C,G,T]	AllSubs	Frequency	gCoverage	gMeanQ	gBaseCount[A,C,G,T]	gAllSubs	gFrequency
+21	1	A	*	10	37.00	[10, 0, 0, 0]	AG	0	-	-	-	-	-
+21	2	C	*	12	37.00	[0, 9, 0, 3]	CT	0.2	-	-	-	-	-
+21	3	T	*	10	37.00	[1, 0, 0, 9]	TA	0.1	-	-	-	-	-
+21	4	A	*	10	37.00	[9, 1, 0, 0]	AC	0.1	-	-	-	-	-
+21	5	A	*	10	37.00	[6, 0, 4, 0]	AG	0.40	-	-	-	-	-
+21	6	G	*	10	37.00	[0, 0, 5, 5]	GT	0.50	-	-	-	-	-
+21	7	A	*	12	37.00	[6, 0, 0, 6]	AT	0.50	-	-	-	-	-
+21	8	A	*	10	37.00	[5, 0, 5, 0]	AG	0.50	-	-	-	-	-
+21	9	T	*	10	37.00	[9, 0, 1, 0]	AG	0.10	-	-	-	-	-
+21	10	T	*	10	37.00	[1, 0, 9, 0]	AG	0.90	-	-	-	-	-
+21	11	T	*	10	37.00	[1, 0, 9, 0]	AG	0.90	-	-	-	-	-

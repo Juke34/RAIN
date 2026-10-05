@@ -312,6 +312,9 @@ nextflow run -profile docker,test_short_single_list rain.nf
     --edit_threshold            Minimal number of edited reads to count a site as edited [default: 1]
     --fastqc                    run fastqc on main steps [default: false]
     --hyper_editing             Hyper-editing handling: with (normal reads + hyper-editing reads when present), without (normal reads only, hyper-editing detection not run) or only (hyper-editing reads only) [default: with]
+    --site_analysis             Also run a per-site differential analysis (beta-binomial on ESPR) on all sites, inside or outside GFF features. [default: false]
+    --site_cov_threshold        Minimal coverage of a site in a sample for the per-site analysis (stricter than --cov_threshold) [default: 30]
+    --site_edit_threshold       Minimal number of edited reads at a site for the per-site analysis [default: 3]
     --strandedness              Set the strandedness for all your input reads [default: null]. In auto mode salmon will guess the library type for each fastq sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
 
         Nextflow options:

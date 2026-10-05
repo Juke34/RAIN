@@ -21,7 +21,7 @@ process barometer_analyze {
     script:
         """
         barometer_analyze.py \\
-            -a ${aggregates} \\
+            -a ${aggregates} \\barometer_analyze_sites
             -f ${features} \\
             -o barometer_results \\
             -j ${task.cpus} \\
@@ -58,5 +58,33 @@ process barometer_report {
             -o barometer_report.html \\
             --embed-images \\
             &> barometer_report.log
+        """
+}
+
+/*
+ * Barometer on per-site ESPR matrices (beta-binomial); one invocation per edit type.
+ * Input: standard drip.py ESPR TSVs computed on the per-site pluviometer output.
+ */
+process barometer_analyze_sites {
+    label "barometer"
+    tag "${editType}_sites"
+    publishDir("${params.outdir}/barometer/${editType}_sites", mode: "copy")
+
+    input:
+        tuple val(editType), path(sites)
+
+    output:
+        path("barometer_results/*"), emit: results
+        path("barometer_*.log"), emit: log
+
+    script:
+        """
+        barometer_analyze.py \\
+            --sites ${sites} \\
+            -o barometer_results \\
+            -j ${task.cpus} \\
+            --stat-test ${params.barometer_stat_test} \\
+            --max-bmks ${params.barometer_max_bmks} \\
+            &> barometer_analyze_sites.log
         """
 }

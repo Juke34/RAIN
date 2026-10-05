@@ -1,0 +1,2 @@
+SeqID	ParentIDs	ID	Mtype	Ptype	Type	Ctype	Mode	Start	End	Strand	TotalSites	ObservedBases	QualifiedBases	SiteBasePairingsQualified	ReadBasePairingsQualified
+21	.	genetest	feature	.	gene	.	.	1	4	1	4	2,1,0,1	2,1,0,1	2,1,0,0,0,1,0,1,0,0,0,0,1,0,0,1	19,1,0,0,0,9,0,3,0,0,0,0,1,0,0,9

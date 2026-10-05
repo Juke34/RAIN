@@ -1,0 +1,28 @@
+2026-03-23 21:22:43,529 - INFO - Pluviometer started. Log file: pluviometer.log
+2026-03-23 21:22:43,529 - INFO - Options:
+2026-03-23 21:22:43,529 - INFO -   Sites file: chr21_testredi.txt
+2026-03-23 21:22:43,529 - INFO -   GFF file: chr21_test.gff3
+2026-03-23 21:22:43,529 - INFO -   Output prefix: default
+2026-03-23 21:22:43,529 - INFO -   Format: reditools3
+2026-03-23 21:22:43,529 - INFO -   Coverage threshold: 1
+2026-03-23 21:22:43,529 - INFO -   Edit threshold: 1
+2026-03-23 21:22:43,529 - INFO -   Aggregation mode: all
+2026-03-23 21:22:43,529 - INFO -   Threads: 1
+2026-03-23 21:22:43,529 - INFO -   Progress bar: False
+2026-03-23 21:22:43,529 - INFO -   GFF feature types filter: none (all types)
+2026-03-23 21:22:43,529 - INFO -   Log level: INFO
+2026-03-23 21:22:43,530 - INFO - Processing records sequentially...
+2026-03-23 21:22:43,530 - INFO - Record 21 · Counting begins.
+2026-03-23 21:22:43,532 - INFO - Switching to record 21
+2026-03-23 21:22:43,532 - INFO - Pre-processing features
+2026-03-23 21:22:43,532 - INFO - Pre-processing complete. Action positions detected: 4
+2026-03-23 21:22:43,532 - INFO - Site variant data found matching the record 21
+2026-03-23 21:22:43,532 - INFO - Record 21 · Found site variant data matching the record
+2026-03-23 21:22:43,533 - INFO - Record 21, gene genetest: The longest isoform is .
+2026-03-23 21:22:43,533 - INFO - Record 21 · Last position in genome reached: 10
+2026-03-23 21:22:43,533 - INFO - Actions remaining in action queue: 2. Flushing action queue
+2026-03-23 21:22:43,533 - INFO - Record 21, gene genetest2: The longest isoform is .
+2026-03-23 21:22:43,533 - INFO - Actions remaining in action queue: 0 after flushing action queue
+2026-03-23 21:22:43,534 - INFO - Record 21 · Writing output and merging totals...
+2026-03-23 21:22:43,538 - INFO - Writing genome totals...
+2026-03-23 21:22:43,538 - INFO - Program finished

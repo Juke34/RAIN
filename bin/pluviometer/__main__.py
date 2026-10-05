@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from .multi_counter import MultiCounter
 from Bio.SeqRecord import SeqRecord
 from .site_filter import SiteFilter
+from .site_file_writer import SiteFileWriter
 from .rna_site_variant_readers import (
     RNASiteVariantReader,
     Reditools2Reader,
@@ -18,9 +19,11 @@ from .utils import RNASiteVariantData
 from natsort import natsorted
 import multiprocessing
 from BCBio import GFF
+from contextlib import nullcontext
 from os import remove
 import progressbar
 import subprocess
+import shutil
 import tempfile
 import argparse
 import logging
@@ -97,7 +100,11 @@ class RecordCountingContext:
         filter: SiteFilter,
         use_progress_bar: bool,
         report_non_qualified: bool = False,
+        site_writer: Optional[SiteFileWriter] = None,
     ):
+        self.site_writer: Optional[SiteFileWriter] = site_writer
+        """If set, every site passing the site-level filters is written, inside or outside features"""
+
         self.aggregate_writer: AggregateFileWriter = aggregate_writer
         """Aggregate counting output is written to a temporary file through this object"""
 
@@ -772,6 +779,11 @@ class RecordCountingContext:
             self.state_update_cycle(self.svdata.position)
             self.update_active_counters(self.svdata)
             self.total_counter.update(self.svdata)
+            if self.site_writer:
+                self.site_writer.write_site(
+                    self.svdata,
+                    [f.id for f in self.active_features.values() if f.level == 1],
+                )
             next_svdata: Optional[RNASiteVariantData] = reader.read()
 
         if self.svdata:
@@ -863,6 +875,24 @@ def parse_cli_input() -> argparse.Namespace:
         type=int,
         default=1,
         help="Minimum number of edited reads for counting a site as edited",
+    )
+    parser.add_argument(
+        "--site-output",
+        action="store_true",
+        default=False,
+        help="Also write per-site counts (<output>_sites.tsv) for all sites, inside or outside GFF features.",
+    )
+    parser.add_argument(
+        "--site_cov",
+        type=int,
+        default=30,
+        help="Coverage threshold for per-site output (independent from --cov)",
+    )
+    parser.add_argument(
+        "--site_edit_threshold",
+        type=int,
+        default=3,
+        help="Minimum number of edited reads for a non-reference base to be kept in per-site output (independent from --edit_threshold)",
     )
     parser.add_argument(
         "--aggregation_mode",
@@ -1011,11 +1041,13 @@ def _do_counting(record: SeqRecord) -> dict[str, Any]:
 
     tmp_feature_output_file: str = tempfile.mkstemp()[1]
     tmp_aggregate_output_file: str = tempfile.mkstemp()[1]
+    tmp_site_output_file: Optional[str] = tempfile.mkstemp()[1] if args.site_output else None
 
     with (
         open(args.sites) as sv_handle,
         open(tmp_feature_output_file, "w") as tmp_feature_output_handle,
         open(tmp_aggregate_output_file, "w") as tmp_aggregate_output_handle,
+        open(tmp_site_output_file, "w") if tmp_site_output_file else nullcontext() as tmp_site_output_handle,
     ):
         # Set up output
         feature_writer: FeatureFileWriter = FeatureFileWriter(tmp_feature_output_handle)
@@ -1024,9 +1056,16 @@ def _do_counting(record: SeqRecord) -> dict[str, Any]:
         # Set up context
         filter: SiteFilter = SiteFilter(cov_threshold=args.cov, edit_threshold=args.edit_threshold)
 
+        site_writer: Optional[SiteFileWriter] = (
+            SiteFileWriter(tmp_site_output_handle, args.site_cov, args.site_edit_threshold)
+            if tmp_site_output_file and tmp_site_output_handle
+            else None
+        )
+
         record_ctx: RecordCountingContext = RecordCountingContext(
             feature_writer, aggregate_writer, filter, args.progress,
             report_non_qualified=args.report_non_qualified_features,
+            site_writer=site_writer,
         )
 
         # Count
@@ -1110,6 +1149,7 @@ def _do_counting(record: SeqRecord) -> dict[str, Any]:
         "record_id": record.id,
         "tmp_feature_output_file": tmp_feature_output_file,
         "tmp_aggregate_output_file": tmp_aggregate_output_file,
+        "tmp_site_output_file": tmp_site_output_file,
         "chimaera_aggregate_counters": record_ctx.chimaera_aggregate_counters.copy(),
         "longest_isoform_aggregate_counters": record_ctx.longest_isoform_aggregate_counters.copy(),
         "all_isoforms_aggregate_counters": record_ctx.all_isoforms_aggregate_counters.copy(),
@@ -1171,6 +1211,7 @@ def process_and_write_record_data(
     genome_longest_isoform_aggregate_positions: dict[str, AggregatePositions],
     genome_all_isoforms_aggregate_positions: dict[str, AggregatePositions],
     genome_chimaera_aggregate_positions: dict[str, AggregatePositions],
+    site_output_handle: Optional[TextIO] = None,
 ) -> None:
     """
     Process a single record's data: write its output and merge counters into genome totals.
@@ -1186,6 +1227,13 @@ def process_and_write_record_data(
     with open(record_data["tmp_aggregate_output_file"]) as tmp_output_handle:
         aggregate_output_handle.write(tmp_output_handle.read())
     remove(record_data["tmp_aggregate_output_file"])
+
+    tmp_site_file: Optional[str] = record_data.get("tmp_site_output_file")
+    if tmp_site_file:
+        if site_output_handle:
+            with open(tmp_site_file) as tmp_output_handle:
+                shutil.copyfileobj(tmp_output_handle, site_output_handle)
+        remove(tmp_site_file)
 
     # Update the genome's aggregate counters from the record data aggregate counters
     for record_aggregate_type, record_aggregate_counter in record_data[
@@ -1302,6 +1350,7 @@ def main():
     aggregate_output_filename: str = (
         args.output + "_aggregates.tsv" if args.output else "aggregates.tsv"
     )
+    site_output_filename: str = args.output + "_sites.tsv" if args.output else "sites.tsv"
 
     # Determine reader factory based on format
     match args.format:
@@ -1317,6 +1366,7 @@ def main():
     with (
         open(feature_output_filename, "w") as feature_output_handle,
         open(aggregate_output_filename, "w") as aggregate_output_handle,
+        open(site_output_filename, "w") if args.site_output else nullcontext() as site_output_handle,
     ):
         # Initialize genome-level counters (only these will be kept in memory)
         genome_filter: SiteFilter = SiteFilter(
@@ -1355,6 +1405,8 @@ def main():
         aggregate_writer: AggregateFileWriter = AggregateFileWriter(aggregate_output_handle)
         feature_writer.write_header()
         aggregate_writer.write_header()
+        if site_output_handle:
+            SiteFileWriter(site_output_handle, args.site_cov, args.site_edit_threshold).write_header()
 
         # Process records and write output immediately
         if args.threads > 1:
@@ -1395,6 +1447,7 @@ def main():
                     genome_longest_isoform_aggregate_positions,
                     genome_all_isoforms_aggregate_positions,
                     genome_chimaera_aggregate_positions,
+                    site_output_handle,
                 )
                 del record_data
                 # Force flush to disk after each chromosome
@@ -1434,6 +1487,7 @@ def main():
                     genome_longest_isoform_aggregate_positions,
                     genome_all_isoforms_aggregate_positions,
                     genome_chimaera_aggregate_positions,
+                    site_output_handle,
                 )
                 del result
                 feature_output_handle.flush()

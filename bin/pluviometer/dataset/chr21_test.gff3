@@ -1,0 +1,3 @@
+##gff-version 3
+21	AGAT	gene	1	4	.	+	.	ID=genetest
+21	AGAT	gene	100	200	.	+	.	ID=genetest2

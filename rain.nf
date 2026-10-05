@@ -29,6 +29,10 @@ params.min_samples_pct = 50 // Minimal percentage of samples in which a site mus
 params.min_group_pct = 75 // Minimal percentage of groups in which a site must be edited to be kept in the analysis (drip filtering)
 params.aggregation_mode = "all" // used by pluviometer
 params.hyper_editing = "with" // with (normal + hyper-editing reads), without (normal only) or only (hyper-editing only)
+// Site-level differential analysis (supplementary, covers all sites, inside or outside GFF features)
+params.site_analysis = true
+params.site_cov_threshold = 30 // Minimal coverage of a site in a sample (stricter than cov_threshold)
+params.site_edit_threshold = 3 // Minimal number of edited reads for a non-reference base at a site
 // Barometer params
 params.barometer_stat_test = "beta-binomial"
 params.barometer_max_bmks = 500
@@ -159,6 +163,9 @@ def helpMSG() {
     --edit_threshold            Minimal number of edited reads to count a site as edited [default: $params.edit_threshold]
     --fastqc                    run fastqc on main steps [default: $params.fastqc]
     --barometer_stat_test       Differential test: beta-binomial (default) or a legacy proportion test [default: $params.barometer_stat_test]
+    --site_analysis             Also run the per-site differential analysis (beta-binomial, ESPR) on all sites [default: $params.site_analysis]
+    --site_cov_threshold        Minimal coverage of a site in a sample for the per-site analysis [default: $params.site_cov_threshold]
+    --site_edit_threshold       Minimal number of edited reads at a site for the per-site analysis [default: $params.site_edit_threshold]
     --hyper_editing             Hyper-editing handling: with (normal reads + hyper-editing reads when present), without (normal reads only, hyper-editing detection not run) or only (hyper-editing reads only) [default: $params.hyper_editing]
     --strandedness              Set the strandedness for all your input reads [default: $params.strandedness]. In auto mode salmon will guess the library type for each fastq sample. [ 'U', 'IU', 'MU', 'OU', 'ISF', 'ISR', 'MSF', 'MSR', 'OSF', 'OSR', 'auto' ]
 
@@ -206,8 +213,8 @@ include { AliNe as ALIGNMENT } from "./modules/aline.nf"
 include {normalize_gxf} from "./modules/agat.nf"
 include {extract_libtype; recreate_csv_with_abs_paths; collect_aline_csv; filter_drip_by_aggregation_mode; filter_drip_features_by_type} from "./modules/bash.nf"
 include {bamutil_clipoverlap} from './modules/bamutil.nf'
-include {barometer_analyze; barometer_report} from "./modules/barometer.nf"
-include {drip as drip_aggregates; drip as drip_features} from "./modules/drip.nf"
+include {barometer_analyze; barometer_report; barometer_analyze_sites} from "./modules/barometer.nf"
+include {drip as drip_aggregates; drip as drip_features; drip as drip_sites} from "./modules/drip.nf"
 include {fastp} from './modules/fastp.nf'
 include {fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from './modules/fastqc.nf'
 include {gatk_markduplicates } from './modules/gatk.nf'
@@ -892,6 +899,17 @@ workflow {
                 }
 
             barometer_report(barometer_report_input)
+
+            // ------------------- SITE-LEVEL ANALYSIS (supplementary) -----------------
+            if (params.site_analysis) {
+                sites_by_tool = pluviometer.out.tuple_sample_sites.map { meta, tool, file -> tuple(tool, [meta, file]) }.groupTuple()
+                drip_sites(sites_by_tool, "sites", params.min_samples_pct, params.min_group_pct)
+                drip_sites.out.editing_all_espr
+                        .flatten()
+                        .map { file -> tuple(file.baseName.tokenize('_').last(), file) }
+                        .set { barometer_sites_input }
+                barometer_analyze_sites(barometer_sites_input)
+            }
 
         }
 

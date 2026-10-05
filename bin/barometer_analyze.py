@@ -2431,6 +2431,7 @@ EXAMPLES:
     parser.add_argument("-a", "--aggregates", default=None, help="Aggregates TSV file (optional)")
     parser.add_argument("-f", "--features", default=None, help="Features TSV file (optional)")
     parser.add_argument("-o", "--outdir", default="barometer_results", help="Output directory")
+    parser.add_argument("--sites", default=None, help="Per-site DRIP TSV (drip.py on the per-site pluviometer output); analysed as a single section, in place of --features")
     parser.add_argument("-j", "--jobs", type=int, default=1, help="Number of parallel jobs (default: 1, use -1 for all CPUs)")
     parser.add_argument("-v", "--value-types", nargs="+", default=None, help="Value types to analyze (e.g., espf espr). If not specified, all value types are analyzed.")
     parser.add_argument("--agg-levels", nargs="+", default=None, help="Aggregate levels to analyze: global, sequence, feature. If not specified, all levels are analyzed.")
@@ -2468,8 +2469,13 @@ EXAMPLES:
     log.info(f"Max BMKs for ML models: {args.max_bmks}")
 
     # Check that at least one input file is provided
-    if not args.aggregates and not args.features:
-        parser.error("At least one of --aggregates or --features must be provided")
+    if not args.aggregates and not args.features and not args.sites:
+        parser.error("At least one of --aggregates, --features or --sites must be provided")
+    if args.sites and args.features:
+        parser.error("--sites cannot be combined with --features")
+    site_mode = bool(args.sites)
+    if site_mode:
+        args.features = args.sites
 
     outdir = args.outdir
     safe_mkdir(outdir)
@@ -2800,11 +2806,23 @@ EXAMPLES:
             feat_data = feat_df.copy()  # Mtype is always "feature" in features file
             feat_dir = os.path.join(vtype_dir, "feature")
 
-            # Build hierarchy
-            tree, top_ids = build_feature_tree(feat_data)
+            if site_mode:
+                tasks.append((
+                    prepare_df_for_task(feat_data), vcols, v_sample_info,
+                    os.path.join(vtype_dir, "site", "all_sites"),
+                    "Sites - all",
+                    ("feature", "sites_all"),
+                    args.stat_test,
+                    args.bmk_filter,
+                    args.max_bmks
+                ))
+                tree, top_ids = {}, []
+                top_features = feat_data.iloc[0:0]
+            else:
+                # Build hierarchy
+                tree, top_ids = build_feature_tree(feat_data)
+                top_features = feat_data[feat_data["ParentIDs"] == "."]
 
-            # Group top features by Type
-            top_features = feat_data[feat_data["ParentIDs"] == "."]
             available_feature_types = top_features["Type"].unique().tolist()
             
             # Filter feature types if specified

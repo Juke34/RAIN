@@ -1,0 +1,3 @@
+SeqID	ParentIDs	ID	Mtype	Ptype	Type	Ctype	Mode	Start	End	Strand	TotalSites	ObservedBases	QualifiedBases	SiteBasePairingsQualified	ReadBasePairingsQualified
+21	.	sequence_all_sites	aggregate	.	sequence	.	all_sites	.	.	.	.	5,1,1,4	5,1,1,4	5,1,2,1,0,1,0,1,0,0,1,1,4,0,3,1	36,1,9,6,0,9,0,3,0,0,5,5,12,0,19,9
+.	.	global_all_sites	aggregate	.	global	.	all_sites	.	.	.	.	5,1,1,4	5,1,1,4	5,1,2,1,0,1,0,1,0,0,1,1,4,0,3,1	36,1,9,6,0,9,0,3,0,0,5,5,12,0,19,9

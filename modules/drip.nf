@@ -1,6 +1,6 @@
 process drip {
     label "drip"
-    tag "drip_${tool}"
+    tag "drip_${prefix}_${tool}"
     publishDir("${params.outdir}/drip/${prefix}", mode:"copy", pattern: "*/*")
     
     input:
