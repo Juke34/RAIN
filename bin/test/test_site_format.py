@@ -2,7 +2,7 @@
 Tests for the per-site pluviometer output format (standard 16-column format)
 and its downstream processing by drip.py.
 
-Run with: python -m pytest bin/test_site_format.py -v
+Run with: python -m pytest bin/test/test_site_format.py -v
 """
 
 import subprocess
@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 # pluviometer.utils imports Bio.SeqFeature at module level (only for type
 # annotations on location helpers, unused by RNASiteVariantData). Stub it so
@@ -122,7 +122,7 @@ def test_drip_on_site_files(tmp_path: Path) -> None:
     ])
 
     import os
-    script = Path(__file__).parent / "drip.py"
+    script = Path(__file__).resolve().parent.parent / "drip.py"
     cwd = os.getcwd()
     os.chdir(tmp_path)
     try:

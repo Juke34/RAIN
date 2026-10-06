@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import barometer_analyze
 
 
