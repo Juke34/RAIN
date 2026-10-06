@@ -257,6 +257,17 @@ cd rain
 nextflow run -profile docker,test_short_single_list rain.nf
 ```
 
+### Logs and reports
+
+Execution reports (timeline, report, trace, DAG) are written to the `pipeline_report/` directory (see `params.pipeline_report` in `nextflow.config`).
+
+By default, Nextflow writes its own log (`.nextflow.log`) in the current working directory. To keep it together with the other traces and reports, set the `NXF_LOG_FILE` environment variable before launching the pipeline:
+
+```bash
+export NXF_LOG_FILE=pipeline_report/nextflow.log
+nextflow run -profile docker,test_short_single_list rain.nf
+```
+
 ## Parameters
 
 ```
