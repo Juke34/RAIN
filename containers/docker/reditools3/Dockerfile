@@ -5,7 +5,7 @@ RUN apt update
 # Install procps to provide ps, required by Nextflow
 RUN apt install -y procps
 
-RUN pip install REDItools3==3.6
+RUN pip install REDItools3==3.7
 
 # Patch reditools.logger: on HPC compute nodes the hostname is often not
 # resolvable in DNS, so socket.gethostbyname() raises socket.gaierror and

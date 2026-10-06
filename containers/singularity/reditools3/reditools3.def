@@ -3,7 +3,7 @@ From: python:slim-bullseye
 
 %post
     apt-get update && apt-get install -y procps
-    pip install REDItools3==3.6
+    pip install REDItools3==3.7
     # Patch reditools.logger: on HPC compute nodes the hostname is often not
     # resolvable in DNS, so socket.gethostbyname() raises socket.gaierror and
     # crashes `python -m reditools analyze` at startup. Wrap it in try/except,
