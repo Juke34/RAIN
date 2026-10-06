@@ -65,7 +65,7 @@ params.fastqc            = false
 // Aline profiles
 aline_profile_allowed = [ 'docker', 'singularity', 'local', 'itrop' ]
 // Aline ressource config used
-params.aline_profiles = "$baseDir/nextflow_aline.config" // e.g. "docker, singularity,itrop,local"
+params.aline_config = "$baseDir/nextflow_aline.config" // e.g. "docker, singularity,itrop,local"
 // made in aline but params here because it is main step
 params.trimming_fastp = false
 // Aligner params
@@ -189,7 +189,7 @@ General Parameters
     outdir                     : ${params.outdir}
 
 Alignment Parameters
-    aline_config               : ${params.aline_profiles}
+    aline_config               : ${params.aline_config}
     aligner                    : ${params.aligner}
     
 
@@ -620,7 +620,7 @@ workflow {
             ALIGNMENT (
                 "Juke34/AliNe -r ${params.aline_version}", // Select pipeline
                 "${workflow.resume?'-resume':''} -profile ${aline_profile}", // workflow opts supplied as params for flexibility
-                "-config ${params.aline_profiles}",
+                "-config ${params.aline_config}",
                 aline_data_in,
                 genome,
                 "--read_type ${params.read_type}",

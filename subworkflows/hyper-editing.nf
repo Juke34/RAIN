@@ -24,11 +24,11 @@ include { convert_to_fastq; samtools_fasta_index; samtools_split_mapped_unmapped
 workflow HYPER_EDITING {
     
     take:
-        unmapped_bams    // Unmapped read chunks from primary alignment
-        genome        // Genomic reference sequence
-        aline_profile // AliNe profile in coma-separated format
-        clean_annotation // Annotation file for AliNe
-        quality_threshold       // Quality score filter threshold
+        unmapped_bams     // Unmapped read chunks from primary alignment
+        genome            // Genomic reference sequence
+        aline_profile     // AliNe profile in coma-separated format
+        clean_annotation  // Annotation file for AliNe
+        quality_threshold // Quality score filter threshold
         output_he         // output directory path  ier
     
     main:
@@ -60,7 +60,7 @@ workflow HYPER_EDITING {
         ALIGNMENT (
             "Juke34/AliNe -r ${params.aline_version}", // Select pipeline
             "${workflow.resume?'-resume':''} -profile ${aline_profile}", // workflow opts supplied as params for flexibility
-            "-config ${params.aline_profiles}",
+            "-config ${params.aline_config}",
             aline_csv,
             converted_reference,
             "--read_type ${params.read_type}",
