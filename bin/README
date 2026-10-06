@@ -28,6 +28,31 @@ Post-processing tool for pluviometer feature output. Analyzes RNA editing from f
 ./drip.py OUTPUT_PREFIX FILE1:GROUP1:SAMPLE1:REPLICATE1 FILE2:GROUP1:SAMPLE2:REPLICATE1 [...]
 ```
 
+### barometer_analyze.py
+Exhaustive analysis pipeline for barometer (biomarker) data. Loads the drip aggregates/features TSV files and performs QC, descriptive statistics, differential editing analysis (including a beta-binomial GLMM via R), multivariate analysis, correlation/network analysis, biomarker ranking, classification, and stability analysis. Generates all tables and matplotlib figures, structured by value_type → mtype → section.
+
+**Usage:**
+```bash
+python barometer_analyze.py -a barometer_aggregates_AG.tsv -f barometer_features_AG.tsv -o barometer_results/
+# Options: --sites (per-site DRIP TSV), -j JOBS, -v espf espr, --stat-test, --max-bmks, ...
+```
+
+### barometer_report.py
+Generates an interactive multi-tab HTML report from `barometer_analyze.py` results, using Jinja2 templating with interactive DataTables and Plotly image zoom.
+
+**Usage:**
+```bash
+python barometer_report.py -r barometer_results/ -o barometer_report.html
+```
+
+### barometer_beta_binomial.R
+R script (glmmTMB) used by `barometer_analyze.py` for beta-binomial differential editing analysis: global, per-group mean, and pairwise tests on per-sample successes/trials counts.
+
+**Usage:**
+```bash
+Rscript barometer_beta_binomial.R INPUT_COUNTS_TSV OUTPUT_RESULTS_TSV
+```
+
 ### restore_sequences.py
 Utility to restore original sequences in BAM files from original unmapped BAM. Replaces modified sequences with their original counterparts using indexed lookup.
 
@@ -35,12 +60,3 @@ Utility to restore original sequences in BAM files from original unmapped BAM. R
 ```bash
 ./restore_sequences.py --aligned ALIGNED_BAM --unmapped UNMAPPED_BAM --output OUTPUT_BAM
 ```
-
-### quickstats.sh
-Quick statistics tool for variant calling output files. Counts A→G and C→T edits per contig/chromosome from Reditools or Jacusa2 output files.
-
-**Usage:**
-```bash
-./quickstats.sh -i INPUT_FILE -f FORMAT
-# FORMAT: "jacusa2" or "reditools"
-``` 
