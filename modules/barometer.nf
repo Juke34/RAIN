@@ -68,7 +68,7 @@ process barometer_report {
 process barometer_analyze_sites {
     label "barometer"
     tag "${editType}_sites"
-    publishDir("${params.outdir}/barometer/${editType}_sites", mode: "copy")
+    publishDir("${params.outdir}/barometer/${editType}", mode: "copy")
 
     input:
         tuple val(editType), path(sites)

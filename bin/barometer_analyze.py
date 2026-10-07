@@ -228,6 +228,7 @@ def create_uid_column(df=None, meta_cols=["SeqID", "ParentIDs", "ID", "Mtype", "
     # Supprimer doubles tirets et tirets devant/derrière
     uid = uid.str.replace(r"-+", "-", regex=True).str.strip("-")
 
+    df = df.copy()  # Defragment DataFrame before adding columns to avoid PerformanceWarning
     df["uid"] = uid
     
     # Mettre uid en première colonne
@@ -710,7 +711,7 @@ def run_beta_binomial_analysis(df, sample_info, groups, outdir):
 
 def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"):
     """Pairwise and global differential tests between groups.
-    
+
     Args:
         stat_test: 'auto', 'parametric', 'nonparametric', 'welch', 'kruskal', 'beta-binomial'
             - auto: test normality/homogeneity and choose best test
@@ -718,7 +719,52 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
             - nonparametric: Mann-Whitney U / Kruskal-Wallis (no assumptions)
             - welch: Welch t-test / Welch ANOVA (assumes normality, unequal variances OK)
             - kruskal: alias for nonparametric (backward compatibility)
-    
+            - beta-binomial: model the DRIP success/trial COUNTS directly with a
+              beta-binomial GLMM (see below).
+
+    Beta-binomial mode (stat_test == "beta-binomial")
+    -------------------------------------------------
+    The other modes test the *rounded proportions* (the aggregate values in the
+    sample columns). The beta-binomial mode instead uses the raw, unrounded
+    counts that DRIP emits per sample:
+
+        {sample}::successes  -> number of reads showing the edited base
+        {sample}::trials     -> total number of reads covering the site
+
+    For each biomarker a single beta-binomial GLMM is fitted (via R/glmmTMB,
+    script selected by the RAIN_BETA_BINOMIAL_SCRIPT env var, default
+    barometer_beta_binomial.R):
+
+        cbind(successes, trials - successes) ~ condition
+
+    The beta-binomial family adds a dispersion parameter on top of the
+    binomial, which absorbs the extra-binomial overdispersion that is typical
+    of sequencing/editing data (reads are not independent Bernoulli trials).
+    This makes the p-values far more reliable than a plain binomial or a test
+    on rounded proportions.
+
+    From that single model two kinds of Wald tests are derived:
+
+      * GLOBAL test  (1 per BMK): "does condition have ANY effect?"
+          -> beta_binomial_stat / beta_binomial_pval
+             -> beta_binomial_padj (FDR BH)
+          This is the beta-binomial equivalent of an ANOVA F-test.
+
+      * PAIRWISE tests (C(n_groups, 2) per BMK): one Wald contrast per pair
+          -> beta_binomial_pval_{g1}_vs_{g2}
+             -> beta_binomial_padj_{g1}_vs_{g2} (FDR BH)
+
+    A BMK can be significant in one pairwise contrast while the global test is
+    not (the effect is concentrated on a single pair and diluted over the
+    global degrees of freedom), and vice-versa. Significance is therefore
+    defined as "padj < 0.05 in ANY test (global or pairwise)", consistent with
+    the section-level logic.
+
+    In this mode the primary_* columns are populated from the beta-binomial
+    results (primary_padj = beta_binomial_padj, primary_padj_{pair} =
+    beta_binomial_padj_{pair}), and the near-zero-variance prefilter is
+    skipped (counts, not proportions, drive the inference).
+
     Note: Expects df to already be pre-filtered for variable BMKs (done in analyze_section)
     """
     safe_mkdir(outdir)
@@ -979,6 +1025,7 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
 
     pval_cols = [c for c in res_df.columns if "pval" in str(c).lower()]
     
+    res_df = res_df.copy()  # Defragment DataFrame before adding padj columns to avoid PerformanceWarning
     n_padj_created = 0
     for col in pval_cols:  # FIXED: Iterate over filtered list instead of checking endswith
         adj_col = col.replace("_pval", "_padj")
@@ -1713,7 +1760,7 @@ def section_heatmap(df, sample_cols, sample_info, outdir, title="", max_rows=100
 # Global Biomarker Ranking (across all sections)
 # ---------------------------------------------------------------------------
 
-def global_ranking(all_results, outdir):
+def global_ranking(all_results, outdir, stat_test="auto"):
     """Aggregate rankings across sections to produce a global ranking with cross-validation metrics."""
     safe_mkdir(outdir)
 
@@ -1766,37 +1813,15 @@ def global_ranking(all_results, outdir):
             # Log statistics
             best_padj = ranked["primary_padj"].min() if len(ranked) > 0 else float('nan')
             log.info(f"  Saved global ranking: {len(ranked)} biomarkers (best padj: {best_padj:.2e})")
-            # -----------------------------------------------------------------------
-            # Create filtered version: only significant (padj < 0.05 in kruskal test)
-            # -----------------------------------------------------------------------
-            sig_ranked = ranked[ranked["primary_padj"] < 0.05].copy()
-            if len(sig_ranked) > 0:
 
-                sig_ranked.to_csv(os.path.join(outdir, "global_ranking_primary_padj_significant.csv"), index=False)
-                log.info(f"  Saved significant subset: {len(sig_ranked)} biomarkers (primary_padj < 0.05)")
-                # -----------------------------------------------------------------------
-                # Create figure from global_ranking_significant.csv
-                # -----------------------------------------------------------------------
-                try:
-                    generate_diagram(os.path.join(outdir, "global_ranking_primary_padj_significant.csv"), outdir)
-                except Exception as e:
-                    log.warning(f" generate_diagram failed: {e}")
-                # -----------------------------------------------------------------------
-                # Create structure folder with unique/common splits for each comparison
-                # -----------------------------------------------------------------------
-                try:
-                    split_significant_bmks(os.path.join(outdir, "global_ranking_primary_padj_significant.csv"), os.path.join(outdir,"significant_bmks_by_comparison"))
-                except Exception as e:
-                    log.warning(f"  split_significant_bmks failed: {e}")
-            else:
-                log.info(f"  No significant biomarkers found (all primary_padj >= 0.05)")
-            
-            # Top 50 plot with cross-validation info
+            # -----------------------------------------------------------------------
+            # Top 50 plot (ranking complet) — reste au top-level
+            # -----------------------------------------------------------------------
             top_n = min(50, len(ranked))
             top = ranked.head(top_n)
             fig, ax = plt.subplots(figsize=(8, max(4, top_n * 0.3)))
             neg_log_p = -np.log10(top["primary_padj"].clip(lower=1e-300))
-            
+
             # Enhanced labels with n_sections_significant
             if "n_sections_significant" in top.columns:
                 labels = [f"{row['uid']} [{row['section']}] (×{int(row['n_sections_significant'])} sec)" 
@@ -1804,19 +1829,106 @@ def global_ranking(all_results, outdir):
                           for _, row in top.iterrows()]
             else:
                 labels = top["uid"].astype(str) + " [" + top["section"].astype(str) + "]"
-            
+
             ax.barh(range(top_n), neg_log_p.values[::-1])
             ax.set_yticks(range(top_n))
             ax.set_yticklabels(labels[::-1], fontsize=6)
             ax.set_xlabel("-log10(adjusted p-value)")
             ax.set_title("Global BMK Ranking by Significance (top 50)\n(×N sec = significant in N sections)")
-            
+
             # Add reference lines for p-value thresholds
             ax.axvline(-np.log10(0.05), color='red', linestyle='--', linewidth=1, alpha=0.7, label='p=0.05')
             ax.axvline(-np.log10(0.1), color='orange', linestyle='--', linewidth=1, alpha=0.7, label='p=0.1')
             ax.legend(loc='lower right', fontsize=8)
-            
+
             save_fig(fig, os.path.join(outdir, "global_ranking_plot.png"))
+            plt.close(fig)
+
+            # -----------------------------------------------------------------------
+            # ANY comparison (union global ∪ pairwise)
+            # → significant_bmks_any_comparison/
+            # Consistent with the section-level "Found N significant biomarkers"
+            # logic: significant if padj < 0.05 in ANY test (global or pairwise).
+            # Both branches check the GLOBAL padj AND all PAIRWISE padjs:
+            #   beta-binomial: beta_binomial_padj (global) + beta_binomial_padj_{pair} (pairwise)
+            #   other tests:   primary_padj (global)       + primary_padj_{pair} (pairwise)
+            # The only difference is the column prefix (beta_binomial_ vs primary_).
+            # -----------------------------------------------------------------------
+            any_dir = os.path.join(outdir, "significant_bmks_any_comparison")
+            safe_mkdir(any_dir)
+
+            if stat_test == "beta-binomial":
+                sig_padj_cols = [c for c in ranked.columns
+                                 if c == "beta_binomial_padj" or c.startswith("beta_binomial_padj_")]
+                sig_mask = ranked[sig_padj_cols].lt(0.05).any(axis=1)
+                sig_ranked = ranked[sig_mask].copy()
+                sig_desc = "padj < 0.05 in any beta-binomial test (global or pairwise)"
+            else:
+                sig_padj_cols = [c for c in ranked.columns
+                                 if c == "primary_padj" or c.startswith("primary_padj_")]
+                sig_mask = ranked[sig_padj_cols].lt(0.05).any(axis=1)
+                sig_ranked = ranked[sig_mask].copy()
+                sig_desc = "padj < 0.05 in any test (global or pairwise)"
+
+            if len(sig_ranked) > 0:
+                sig_csv_path = os.path.join(any_dir, "significant_bmks.csv")
+                sig_ranked.to_csv(sig_csv_path, index=False)
+                log.info(f"  Saved any-comparison subset: {len(sig_ranked)} biomarkers ({sig_desc})")
+                # -----------------------------------------------------------------------
+                # Create figure from significant_bmks.csv
+                # -----------------------------------------------------------------------
+                try:
+                    generate_diagram(sig_csv_path, any_dir)
+                except Exception as e:
+                    log.warning(f"  generate_diagram failed: {e}")
+                # -----------------------------------------------------------------------
+                # Create structure folder with unique/common splits for each comparison
+                # -----------------------------------------------------------------------
+                try:
+                    split_significant_bmks(sig_csv_path, os.path.join(outdir, "significant_bmks_pairwise_comparison"))
+                except Exception as e:
+                    log.warning(f"  split_significant_bmks failed: {e}")
+            else:
+                log.info(f"  No significant biomarkers found ({sig_desc})")
+
+            # -----------------------------------------------------------------------
+            # GLOBAL test only (omnibus)
+            # → significant_bmks_global_comparison/
+            # primary_padj is ALWAYS the global test padj (Kruskal/ANOVA/Welch in
+            # normal modes, beta_binomial_padj in beta-binomial mode), so this is
+            # mode-agnostic: significant if the global test padj < 0.05.
+            # -----------------------------------------------------------------------
+            global_dir = os.path.join(outdir, "significant_bmks_global_comparison")
+            safe_mkdir(global_dir)
+
+            global_sig = ranked[ranked["primary_padj"] < 0.05].copy()
+            if len(global_sig) > 0:
+                global_sig.to_csv(os.path.join(global_dir, "significant_bmks.csv"), index=False)
+                log.info(f"  Saved global-significant subset: {len(global_sig)} biomarkers (primary_padj < 0.05)")
+
+                # Top 50 plot for global-significant BMKs
+                top_n_g = min(50, len(global_sig))
+                top_g = global_sig.head(top_n_g)
+                fig_g, ax_g = plt.subplots(figsize=(8, max(4, top_n_g * 0.3)))
+                neg_log_p_g = -np.log10(top_g["primary_padj"].clip(lower=1e-300))
+                if "n_sections_significant" in top_g.columns:
+                    labels_g = [f"{row['uid']} [{row['section']}] (×{int(row['n_sections_significant'])} sec)" 
+                                if row['n_sections_significant'] > 1 else f"{row['uid']} [{row['section']}]"
+                                for _, row in top_g.iterrows()]
+                else:
+                    labels_g = top_g["uid"].astype(str) + " [" + top_g["section"].astype(str) + "]"
+                ax_g.barh(range(top_n_g), neg_log_p_g.values[::-1])
+                ax_g.set_yticks(range(top_n_g))
+                ax_g.set_yticklabels(labels_g[::-1], fontsize=6)
+                ax_g.set_xlabel("-log10(adjusted p-value)")
+                ax_g.set_title("Global-Significant BMKs (top 50)\n(primary_padj < 0.05)")
+                ax_g.axvline(-np.log10(0.05), color='red', linestyle='--', linewidth=1, alpha=0.7, label='p=0.05')
+                ax_g.axvline(-np.log10(0.1), color='orange', linestyle='--', linewidth=1, alpha=0.7, label='p=0.1')
+                ax_g.legend(loc='lower right', fontsize=8)
+                save_fig(fig_g, os.path.join(global_dir, "global_ranking_plot.png"))
+                plt.close(fig_g)
+            else:
+                log.info(f"  No global-significant biomarkers (primary_padj < 0.05)")
 
     return outdir
 
@@ -2360,6 +2472,33 @@ STATISTICAL TESTS:
   All tests receive FDR correction (Benjamini-Hochberg) → *_padj columns
   All results are saved in differential_results.csv
   
+  BETA-BINOMIAL MODE (--stat-test beta-binomial)
+    Instead of testing the rounded proportions, this mode models the raw,
+    unrounded DRIP counts per sample:
+        {sample}::successes  = reads showing the edited base
+        {sample}::trials     = total reads covering the site
+    (These count columns must be present, i.e. DRIP must have been run with
+    count columns enabled. Requires Rscript + glmmTMB → use the Barometer
+    container.)
+    
+    For each biomarker a single beta-binomial GLMM is fitted (R/glmmTMB):
+        cbind(successes, trials - successes) ~ condition
+    The beta-binomial dispersion parameter absorbs the extra-binomial
+    overdispersion typical of sequencing data, giving more reliable p-values
+    than a plain binomial or a test on rounded proportions.
+    
+    Two kinds of Wald tests are derived from that one model:
+      • GLOBAL   (1 per BMK): "does condition have ANY effect?"
+          → beta_binomial_pval / beta_binomial_padj   (like an ANOVA F-test)
+      • PAIRWISE (C(n,2) per BMK): one contrast per group pair
+          → beta_binomial_pval_{g1}_vs_{g2} / beta_binomial_padj_{g1}_vs_{g2}
+    
+    A BMK can be significant in one pairwise contrast while the global test is
+    not (effect concentrated on a single pair). Significance = padj < 0.05 in
+    ANY test (global or pairwise). In this mode primary_* columns are populated
+    from the beta-binomial results and the near-zero-variance prefilter is
+    skipped.
+  
   OPTION 1: --stat-test (controls which test is emphasized in plots)
     This creates primary_pval and primary_padj columns that COPY the selected test:
     
@@ -2368,6 +2507,7 @@ STATISTICAL TESTS:
     welch         : primary_* = welch_*
     auto          : primary_* = auto-selected test (varies per BMK)
     kruskal       : alias for nonparametric
+    beta-binomial : primary_* = beta_binomial_* (see BETA-BINOMIAL MODE above)
   
   Example: --stat-test welch creates primary_padj as a copy of welch_padj
   Volcano plots use the primary_* columns for visualization.
@@ -2427,6 +2567,9 @@ EXAMPLES:
   
   # Aggressive: maximize BMK collection with high limit:
   ./barometer_analyze.py -a data.tsv -o results/ --max-bmks 1500
+  
+  # Beta-binomial on raw DRIP counts (needs Rscript + glmmTMB, Barometer container):
+  ./barometer_analyze.py -a data.tsv -o results/ --stat-test beta-binomial
         """)
     parser.add_argument("-a", "--aggregates", default=None, help="Aggregates TSV file (optional)")
     parser.add_argument("-f", "--features", default=None, help="Features TSV file (optional)")
@@ -2569,7 +2712,9 @@ EXAMPLES:
         log.info(f"VALUE TYPE: {vtype}")
         log.info(f"{'='*60}")
 
-        vtype_dir = os.path.join(outdir, vtype)
+        # In site mode, write to a dedicated "site" folder (not the vtype name)
+        # so results land in barometer_results/site/ alongside espf/ and espr/.
+        vtype_dir = os.path.join(outdir, "site") if site_mode else os.path.join(outdir, vtype)
         safe_mkdir(vtype_dir)
         vcols = cols_for_vtype(sample_info, vtype)
         v_sample_info = sample_info_for_vtype(sample_info, vtype)
@@ -2809,7 +2954,7 @@ EXAMPLES:
             if site_mode:
                 tasks.append((
                     prepare_df_for_task(feat_data), vcols, v_sample_info,
-                    os.path.join(vtype_dir, "site", "all_sites"),
+                    os.path.join(vtype_dir, "all_sites"),
                     "Sites - all",
                     ("feature", "sites_all"),
                     args.stat_test,
@@ -3072,30 +3217,39 @@ EXAMPLES:
         log.info(f"\n--- GLOBAL RANKING for {vtype} ---")
         # Create a subset of results for this value_type only
         vtype_results = {vtype: all_results[vtype]}
-        global_ranking(vtype_results, os.path.join(vtype_dir, "global_ranking"))
+        global_ranking(vtype_results, os.path.join(vtype_dir, "global_ranking"), stat_test=args.stat_test)
 
         # ===============================================================
         # 2nd Pass for only the top-ranked BMKs 
         # ===============================================================     
-        df_sig_path = os.path.join(vtype_dir, "global_ranking", "global_ranking_primary_padj_significant.csv")
+        # --- ANY comparison (union) ---
+        df_sig_path = os.path.join(vtype_dir, "global_ranking", "significant_bmks_any_comparison", "significant_bmks.csv")
         if os.path.isfile(df_sig_path):
             df_sig = slurp_file(df_sig_path, separator=",")    
-            log.info(f"  Running second-pass analysis on all significant BMKs from global ranking ({len(df_sig)} rows)")
-            df_sig = filter_significant(df_sig, feat_df, agg_df, uid_col="uid", info=os.path.join(vtype_dir, "global_ranking", "global_ranking_primary_padj_significant.csv"))
-            output = os.path.join(vtype_dir, "global_ranking", "significant_bmks_all_conditions")
+            log.info(f"  Running second-pass analysis on any-comparison significant BMKs ({len(df_sig)} rows)")
+            df_sig = filter_significant(df_sig, feat_df, agg_df, uid_col="uid", info=df_sig_path)
+            output = os.path.join(vtype_dir, "global_ranking", "significant_bmks_any_comparison")
             results = analyze_section(df_sig, vcols, v_sample_info, output , "Section Significant", stat_test=args.stat_test, bmk_filter_cols=args.bmk_filter, max_bmks=args.max_bmks, enabled_tests=["descriptive", "multivariate", "correlation", "differential", "ranking", "classification", "stability", "heatmap"])
-            # ----------------
-            log.info(f"  Running second-pass analysis on per condition significant BMKs from global ranking")
-            # ── Récupérer tous les chemins ────────────────────────────────────────────
-            base_dir = os.path.join(vtype_dir, "global_ranking", "significant_bmks_by_comparison")
+
+            # --- GLOBAL test only (omnibus) ---
+            df_global_path = os.path.join(vtype_dir, "global_ranking", "significant_bmks_global_comparison", "significant_bmks.csv")
+            if os.path.isfile(df_global_path):
+                df_global = slurp_file(df_global_path, separator=",")
+                log.info(f"  Running second-pass analysis on global-significant BMKs ({len(df_global)} rows)")
+                df_global = filter_significant(df_global, feat_df, agg_df, uid_col="uid", info=df_global_path)
+                output_global = os.path.join(vtype_dir, "global_ranking", "significant_bmks_global_comparison")
+                results = analyze_section(df_global, vcols, v_sample_info, output_global, "Section Significant", stat_test=args.stat_test, bmk_filter_cols=args.bmk_filter, max_bmks=args.max_bmks, enabled_tests=["descriptive", "multivariate", "correlation", "differential", "ranking", "classification", "stability", "heatmap"])
+
+            # --- Per-pairwise comparison ---
+            log.info(f"  Running second-pass analysis on per-condition significant BMKs from global ranking")
+            base_dir = os.path.join(vtype_dir, "global_ranking", "significant_bmks_pairwise_comparison")
             all_sig_paths = glob.glob(os.path.join(base_dir, "**", "all_significant.csv"), recursive=True)
             log.info(f"Found {len(all_sig_paths)} files")
-            # ── Loop ──────────────────────────────────────────────────────────────────
             for path in sorted(all_sig_paths):
                 folder = os.path.dirname(path)     
                 folder_name = os.path.basename(folder)
                 df_sig = slurp_file(path, separator=",")
-                log.info(f"  Processing {folder_name}({len(df_sig)} rows)")
+                log.info(f"  Processing {folder_name} ({len(df_sig)} rows)")
                 df_sig = filter_significant(df_sig, feat_df, agg_df, uid_col="uid")
                 results = analyze_section(df_sig, vcols, v_sample_info, folder , "Section Significant", stat_test=args.stat_test, bmk_filter_cols=args.bmk_filter, max_bmks=args.max_bmks, enabled_tests=["descriptive", "multivariate", "correlation", "differential", "ranking", "classification", "stability", "heatmap"])
         else:
