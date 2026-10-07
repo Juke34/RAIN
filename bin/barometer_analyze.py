@@ -3204,8 +3204,10 @@ EXAMPLES:
                 results = analyze_section(df, cols, info, section_outdir, name, stat_test=stat_test, bmk_filter_cols=bmk_filter, max_bmks=max_bmks)
                 
                 # Create slim results dict (same as parallel mode for consistency)
+                # NOTE: must match the parallel-mode path (5_differential/), which is where
+                # differential_analysis() actually writes differential_results.csv.
                 slim_results = {
-                    "differential_table": os.path.join(section_outdir, "differential", "differential_results.csv")
+                    "differential_table": os.path.join(section_outdir, "5_differential", "differential_results.csv")
                 }
                 
                 mtype, section_key = key

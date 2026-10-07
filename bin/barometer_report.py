@@ -202,8 +202,6 @@ def _prettify_ptype(ptype_raw):
 def build_section_content(section_dir, section_name, table_counter):
     """Build HTML content for a single analysis section."""
     content = ""
-    subdirs = ["qc", "descriptive", "differential", "multivariate",
-               "correlation", "ranking", "classification", "stability", "batch"]
 
     analysis_labels = {
         "qc": "1. Quality Control",
@@ -216,18 +214,41 @@ def build_section_content(section_dir, section_name, table_counter):
         "stability": "12. Stability / Robustness Analysis",
         "batch": "11. Batch Effect Detection",
     }
+    # Display order for the analysis blocks (canonical, unnumbered keys)
+    analysis_order = ["qc", "batch", "descriptive", "multivariate",
+                      "differential", "correlation", "ranking",
+                      "classification", "stability"]
 
-    # Section-level heatmap
-    heatmap_path = os.path.join(section_dir, "heatmap.png")
-    if os.path.exists(heatmap_path):
+    # Section-level heatmap. analyze_section writes it as "10_heatmap.png"; older
+    # runs may have "heatmap.png". Accept both.
+    heatmap_path = None
+    for cand in ("10_heatmap.png", "heatmap.png"):
+        p = os.path.join(section_dir, cand)
+        if os.path.exists(p):
+            heatmap_path = p
+            break
+    if heatmap_path:
         b64 = img_src(heatmap_path)
         content += f'<div class="figure-container"><h5>13. Visualization – Overview Heatmap</h5>'
         content += f'<img src="{b64}" class="report-img zoomable" alt="Heatmap"></div>\n'
 
-    for subdir in subdirs:
-        sub_path = os.path.join(section_dir, subdir)
-        if not os.path.isdir(sub_path):
+    # Scan the actual analysis subdirectories. analyze_section writes them with a
+    # numeric prefix (e.g. "1_qc", "5_differential"); older runs may be unnumbered
+    # ("qc", "differential"). Strip the leading "N_" prefix to map to the canonical key.
+    found = {}
+    for entry in os.listdir(section_dir):
+        full = os.path.join(section_dir, entry)
+        if not os.path.isdir(full):
             continue
+        key = re.sub(r'^\d+(_\d+)*_', '', entry)
+        if key in analysis_labels:
+            found[key] = full
+
+    for key in analysis_order:
+        if key not in found:
+            continue
+        sub_path = found[key]
+        subdir = key
 
         label = analysis_labels.get(subdir, subdir.title())
         content += f'<div class="analysis-block"><h5>{label}</h5>\n'
@@ -287,15 +308,25 @@ def build_report_data(results_dirs):
 
         report[vtype] = OrderedDict()
 
-        # Aggregate and Feature tabs
-        for mtype in ["aggregate", "feature"]:
-            mtype_dir = os.path.join(vtype_dir, mtype)
+        # Aggregate and Feature tabs. In site mode the layout is flat: the
+        # section lives directly in vtype_dir (e.g. site/all_sites), not under
+        # a feature/ subdirectory.
+        if vtype == "site":
+            mtype_dirs = [("feature", vtype_dir)]
+        else:
+            mtype_dirs = [("aggregate", os.path.join(vtype_dir, "aggregate")),
+                          ("feature", os.path.join(vtype_dir, "feature"))]
+        for mtype, mtype_dir in mtype_dirs:
             if not os.path.isdir(mtype_dir):
                 continue
 
             report[vtype][mtype] = OrderedDict()
             # Walk all section directories
             for root, dirs, files in os.walk(mtype_dir):
+                # Skip global_ranking (handled separately by the gr_dir block)
+                if os.path.basename(root) == "global_ranking":
+                    dirs[:] = []
+                    continue
                 # Only process leaf directories that contain actual results
                 if any(f.endswith(".csv") or f.endswith(".png") for f in files):
                     rel = os.path.relpath(root, mtype_dir)
@@ -1107,6 +1138,8 @@ def main():
                         help="Path to espf results directory or its parent")
     parser.add_argument("--espr", default=None,
                         help="Path to espr results directory or its parent")
+    parser.add_argument("--site", default=None,
+                        help="Path to site results directory or its parent (per-site ESPR analysis)")
     parser.add_argument("-o", "--output", default="barometer_report.html", help="Output HTML report file")
     parser.add_argument("-e", "--embed-images", action="store_true", default=False,
                         help="Embed images as base64 (larger file but self-contained)")
@@ -1116,13 +1149,15 @@ def main():
     EMBED_IMAGES = args.embed_images
 
     # Build the results_dirs mapping
-    if args.espf or args.espr:
+    if args.espf or args.espr or args.site:
         results_dirs = {}
         if args.espf:
             results_dirs["espf"] = args.espf
         if args.espr:
             results_dirs["espr"] = args.espr
-        RESULTS_DIR = args.espf or args.espr
+        if args.site:
+            results_dirs["site"] = args.site
+        RESULTS_DIR = args.espf or args.espr or args.site
     elif args.results:
         results_dirs = {"espf": args.results, "espr": args.results}
         RESULTS_DIR = args.results

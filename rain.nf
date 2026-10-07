@@ -879,6 +879,17 @@ workflow {
             barometer_analyze(barometer_input)
             //barometer_analyze.out.results.view()
 
+            // ------------------- SITE-LEVEL ANALYSIS (supplementary) -----------------
+            if (params.site_analysis) {
+                sites_by_tool = pluviometer.out.tuple_sample_sites.map { meta, tool, file -> tuple(tool, [meta, file]) }.groupTuple()
+                drip_sites(sites_by_tool, "sites", params.min_samples_pct, params.min_group_pct)
+                drip_sites.out.editing_all_espr
+                        .flatten()
+                        .map { file -> tuple(file.baseName.tokenize('_').last(), file) }
+                        .set { barometer_sites_input }
+                barometer_analyze_sites(barometer_sites_input)
+            }
+
             // Group analyze results by editType, pair espf + espr, and run the report. Keep order, espf first, second espr
             barometer_report_input = barometer_analyze.out.results
                 .groupTuple(by: 0)
@@ -898,18 +909,16 @@ workflow {
                     )
                 }
 
-            barometer_report(barometer_report_input)
-
-            // ------------------- SITE-LEVEL ANALYSIS (supplementary) -----------------
+            // Join the per-site results (keyed by editType) so the report can render a "site" tab.
+            // barometer_report expects a 4-element tuple (editType, espf, espr, site); when site
+            // analysis is off we pad with null so the process input always has 4 elements.
             if (params.site_analysis) {
-                sites_by_tool = pluviometer.out.tuple_sample_sites.map { meta, tool, file -> tuple(tool, [meta, file]) }.groupTuple()
-                drip_sites(sites_by_tool, "sites", params.min_samples_pct, params.min_group_pct)
-                drip_sites.out.editing_all_espr
-                        .flatten()
-                        .map { file -> tuple(file.baseName.tokenize('_').last(), file) }
-                        .set { barometer_sites_input }
-                barometer_analyze_sites(barometer_sites_input)
+                barometer_report_input = barometer_report_input.join(barometer_analyze_sites.out.results)
+            } else {
+                barometer_report_input = barometer_report_input.map { et, espf, espr -> tuple(et, espf, espr, null) }
             }
+
+            barometer_report(barometer_report_input)
 
         }
 

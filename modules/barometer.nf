@@ -44,7 +44,7 @@ process barometer_report {
     publishDir("${params.outdir}/barometer/${editType}", mode: "copy")
 
     input:
-        tuple val(editType), path(espf), path(espr)
+        tuple val(editType), path(espf), path(espr), val(site)
 
     output:
         path("barometer_report.html"), emit: report
@@ -55,6 +55,7 @@ process barometer_report {
         barometer_report.py \\
             --espf ${espf} \\
             --espr ${espr} \\
+            ${site ? "--site ${site}" : ""} \\
             -o barometer_report.html \\
             --embed-images \\
             &> barometer_report.log
@@ -74,7 +75,7 @@ process barometer_analyze_sites {
         tuple val(editType), path(sites)
 
     output:
-        path("barometer_results/*"), emit: results
+        tuple val(editType), path("barometer_results/*"), emit: results
         path("barometer_*.log"), emit: log
 
     script:
