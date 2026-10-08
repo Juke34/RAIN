@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import barometer_analyze
+from barometer import analysis as barometer_analyze
 
 
 class BetaBinomialBridgeTest(unittest.TestCase):
@@ -79,7 +79,7 @@ class BetaBinomialBridgeTest(unittest.TestCase):
                     "trials": 100,
                 })
 
-        script_path = Path(barometer_analyze.__file__).with_name("barometer_beta_binomial.R")
+        script_path = Path(barometer_analyze.__file__).resolve().with_name("barometer_beta_binomial.R")
         with tempfile.TemporaryDirectory() as temp_dir:
             input_path = Path(temp_dir) / "counts.tsv"
             output_path = Path(temp_dir) / "results.tsv"

@@ -1,42 +1,91 @@
 /*
  * Barometer - Exhaustive biomarker analysis of RAIN editing data.
  *
- * Consumes the drip aggregates + features TSV files (per edit type, e.g. AG, AC,
- * and per value type espf/espr) and runs barometer_analyze.py (differential /
- * multivariate / ML analysis) followed by barometer_report.py (interactive HTML
- * report). One invocation per (editType, valueType) pair.
+ * Each DRIP output (aggregates / features / sites × espf / espr) is analysed
+ * independently by a single barometer_analyze invocation. Six runs per edit
+ * type, fully parallel. Results are then pooled by barometer_merge into a
+ * truly-global ranking, and barometer_report renders the interactive HTML.
  */
 process barometer_analyze {
     label "barometer"
-    tag "${editType}_${valueType}"
-    publishDir("${params.outdir}/barometer/${editType}", mode: "copy")
+    tag "${editType}_${vtype}_${mtype}"
+    publishDir("${params.outdir}/barometer/${editType}/barometer_analyze/${vtype}", mode: "copy")
 
     input:
-        tuple val(editType), val(valueType), path(aggregates), path(features)
+        tuple val(editType), val(vtype), val(mtype), path(input_file)
 
     output:
-        tuple val(editType), val(valueType), path("barometer_results/*"), emit: results
+        tuple val(editType), val(vtype), val(mtype), path("barometer_${vtype}_${mtype}"), emit: results
         path("barometer_*.log"), emit: log
 
     script:
+        def flag = mtype == "aggregate" ? "-a" : (mtype == "feature" ? "-f" : "--sites")
         """
-        barometer_analyze.py \\
-            -a ${aggregates} \\
-            -f ${features} \\
-            -o barometer_results \\
+        barometer_wrapper.py \\
+            ${flag} ${input_file} \\
+            -o barometer_${vtype}_${mtype} \\
             -j ${task.cpus} \\
             --stat-test ${params.barometer_stat_test} \\
             --max-bmks ${params.barometer_max_bmks} \\
-            &> barometer_analyze_${valueType}.log
+            &> barometer_${vtype}_${mtype}.log
         """
 }
 
 /*
- * Barometer - Exhaustive biomarker analysis of RAIN editing data.
+ * Barometer - "truly global" cross-mtype / cross-vtype ranking.
  *
- * Consumes the drip aggregates + features TSV files (per edit type, e.g. AG, AC,
- * and per value type espf/espr) and runs barometer_report.py (interactive HTML
- * report). One invocation per (editType).
+ * Consumes the per-mtype global_ranking CSVs produced by the six independent
+ * barometer_analyze runs, merges them into a single global ranking, and runs
+ * a second-pass analysis by redistributing the significant biomarkers back
+ * to their value type. One invocation per edit type.
+ *
+ * The raw DRIP TSVs are passed so the second pass can rebuild the full rows.
+ */
+process barometer_merge {
+    label "barometer"
+    tag "${editType}_merge"
+    publishDir("${params.outdir}/barometer/${editType}", mode: "copy")
+
+    input:
+        tuple val(editType), path(results), path(raw_files), val(raw_keys)
+
+    output:
+        tuple val(editType), path("barometer_merged"), emit: results
+        path("barometer_*.log"), emit: log
+
+    script:
+        // Local work-dir paths of the raw DRIP TSVs (Nextflow interpolates the
+        // list to space-separated local paths), aligned with raw_keys.
+        def localPaths = "${raw_files}".split(/\s+/)
+        def rawMap = [:]
+        for (i in 0..<raw_keys.size()) {
+            def vt = raw_keys[i].split('/')[0]
+            def mtype = raw_keys[i].split('/')[1]
+            def key = mtype == "aggregate" ? "aggregates" : (mtype == "feature" ? "features" : "sites")
+            rawMap[vt] = rawMap[vt] ?: [:]
+            rawMap[vt][key] = localPaths[i]
+        }
+        // Valid JSON object: { "espf": {"aggregates": "...", ...}, "espr": {...} }
+        def rawInputsJson = groovy.json.JsonOutput.toJson(rawMap)
+        def resultsStr = results.collect { it.toString() }.join(" ")
+        """
+        barometer_wrapper.py \\
+            --merge \\
+            --results-dir ${resultsStr} \\
+            --raw-inputs '${rawInputsJson}' \\
+            -o barometer_merged \\
+            --stat-test ${params.barometer_stat_test} \\
+            --max-bmks ${params.barometer_max_bmks} \\
+            &> barometer_merge.log
+        """
+}
+
+/*
+ * Barometer - Interactive HTML report.
+ *
+ * Consumes the per-vtype result directories (aggregates + features + sites)
+ * and the merged (truly-global) ranking directory. One invocation per edit
+ * type.
  */
 process barometer_report {
     label "barometer"
@@ -44,48 +93,23 @@ process barometer_report {
     publishDir("${params.outdir}/barometer/${editType}", mode: "copy")
 
     input:
-        tuple val(editType), path(espf), path(espr), val(site)
+        tuple val(editType), path(espf), path(espr), path(merged)
 
     output:
         path("barometer_report.html"), emit: report
         path("barometer_*.log"), emit: log
 
     script:
+        def espfStr = espf.collect { it.toString() }.join(" ")
+        def esprStr = espr.collect { it.toString() }.join(" ")
         """
-        barometer_report.py \\
-            --espf ${espf} \\
-            --espr ${espr} \\
-            ${site ? "--site ${site}" : ""} \\
+        barometer_wrapper.py \\
+            --report \\
+            --espf ${espfStr} \\
+            --espr ${esprStr} \\
+            --merged ${merged} \\
             -o barometer_report.html \\
             --embed-images \\
             &> barometer_report.log
-        """
-}
-
-/*
- * Barometer on per-site ESPR matrices (beta-binomial); one invocation per edit type.
- * Input: standard drip.py ESPR TSVs computed on the per-site pluviometer output.
- */
-process barometer_analyze_sites {
-    label "barometer"
-    tag "${editType}_sites"
-    publishDir("${params.outdir}/barometer/${editType}", mode: "copy")
-
-    input:
-        tuple val(editType), path(sites)
-
-    output:
-        tuple val(editType), path("barometer_results/*"), emit: results
-        path("barometer_*.log"), emit: log
-
-    script:
-        """
-        barometer_analyze.py \\
-            --sites ${sites} \\
-            -o barometer_results \\
-            -j ${task.cpus} \\
-            --stat-test ${params.barometer_stat_test} \\
-            --max-bmks ${params.barometer_max_bmks} \\
-            &> barometer_analyze_sites.log
         """
 }

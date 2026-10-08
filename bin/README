@@ -45,12 +45,12 @@ Generates an interactive multi-tab HTML report from `barometer_analyze.py` resul
 python barometer_report.py -r barometer_results/ -o barometer_report.html
 ```
 
-### barometer_beta_binomial.R
-R script (glmmTMB) used by `barometer_analyze.py` for beta-binomial differential editing analysis: global, per-group mean, and pairwise tests on per-sample successes/trials counts.
+### barometer/barometer_beta_binomial.R
+R script (glmmTMB) used by the `barometer` package for beta-binomial differential editing analysis: global, per-group mean, and pairwise tests on per-sample successes/trials counts.
 
 **Usage:**
 ```bash
-Rscript barometer_beta_binomial.R INPUT_COUNTS_TSV OUTPUT_RESULTS_TSV
+Rscript barometer/barometer_beta_binomial.R INPUT_COUNTS_TSV OUTPUT_RESULTS_TSV
 ```
 
 ### restore_sequences.py

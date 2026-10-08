@@ -8,7 +8,7 @@ RUN pixi install --locked \
     && ln -sf /app/.pixi/envs/default/bin/* /usr/local/bin/ \
     && Rscript -e 'library(glmmTMB)'
 
-COPY --from=rain-source barometer_beta_binomial.R /opt/rain/barometer_beta_binomial.R
+COPY --from=rain-source barometer/barometer_beta_binomial.R /opt/rain/barometer_beta_binomial.R
 ENV RAIN_BETA_BINOMIAL_SCRIPT=/opt/rain/barometer_beta_binomial.R
 
 CMD ["bash"]

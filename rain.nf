@@ -213,7 +213,7 @@ include { AliNe as ALIGNMENT } from "./modules/aline.nf"
 include {normalize_gxf} from "./modules/agat.nf"
 include {extract_libtype; recreate_csv_with_abs_paths; collect_aline_csv; filter_drip_by_aggregation_mode; filter_drip_features_by_type} from "./modules/bash.nf"
 include {bamutil_clipoverlap} from './modules/bamutil.nf'
-include {barometer_analyze; barometer_report; barometer_analyze_sites} from "./modules/barometer.nf"
+include {barometer_analyze; barometer_merge; barometer_report} from "./modules/barometer.nf"
 include {drip as drip_aggregates; drip as drip_features; drip as drip_sites} from "./modules/drip.nf"
 include {fastp} from './modules/fastp.nf'
 include {fastqc as fastqc_ali; fastqc as fastqc_dup; fastqc as fastqc_clip} from './modules/fastqc.nf'
@@ -823,100 +823,83 @@ workflow {
             drip_aggregates(aggregates_by_tool, "aggregates", params.min_samples_pct, params.min_group_pct)
             drip_features(features_by_tool, "features", params.min_samples_pct, params.min_group_pct)
 
-            // -------------------  ESPF JOIN AGGREGATES AND FEATURES -----------------
-            drip_aggregates.out.editing_all_espf
+            // ------------------- BAROMETER ANALYSIS (independent runs) -----------------
+            // Each DRIP output is analysed independently: 6 runs per edit type
+            // (espf / espr × aggregates / features / sites), fully parallel.
+            barom_espf_agg = drip_aggregates.out.editing_all_espf
                     .flatten()
-                    .map { file -> 
-                        // Extract editing type from filename (e.g., "drip_aggregates_espf_AC.tsv" -> "AC")
-                        def editType = file.baseName.tokenize('_').last()
-                        tuple(editType, file)
-                    }
-                    .join(
-                        drip_features.out.editing_all_espf
-                        .flatten()
-                        .map { file -> 
-                        // Extract editing type from filename (e.g., "drip_aggregates_espf_AC.tsv" -> "AC")
-                        def editType = file.baseName.tokenize('_').last()
-                        tuple(editType, file)
-                    }
-                    )
-                    .set { features_espf_by_edit_type }
-                    //features_espf_by_edit_type.view()
-
-            // -------------------  ESPR JOIN AGGREGATES AND FEATURES -----------------
-            drip_aggregates.out.editing_all_espr
+                    .map { file -> tuple(file.baseName.tokenize('_').last(), "espf", "aggregate", file) }
+            barom_espf_feat = drip_features.out.editing_all_espf
                     .flatten()
-                    .map { file -> 
-                        // Extract editing type from filename (e.g., "drip_aggregates_espr_AC.tsv" -> "AC")
-                        def editType = file.baseName.tokenize('_').last()
-                        tuple(editType, file)
-                    }
-                    .join(
-                        drip_features.out.editing_all_espr
-                        .flatten()
-                        .map { file -> 
-                        // Extract editing type from filename (e.g., "drip_aggregates_espr_AC.tsv" -> "AC")
-                        def editType = file.baseName.tokenize('_').last()
-                        tuple(editType, file)
-                    }
-                    )
-                    .set { features_espr_by_edit_type }
-                    //features_espr_by_edit_type.view()
+                    .map { file -> tuple(file.baseName.tokenize('_').last(), "espf", "feature", file) }
+            barom_espr_agg = drip_aggregates.out.editing_all_espr
+                    .flatten()
+                    .map { file -> tuple(file.baseName.tokenize('_').last(), "espr", "aggregate", file) }
+            barom_espr_feat = drip_features.out.editing_all_espr
+                    .flatten()
+                    .map { file -> tuple(file.baseName.tokenize('_').last(), "espr", "feature", file) }
 
-            // ------------------- BAROMETER ANALYSIS -----------------
-            // Run the barometer biomarker analysis on the drip outputs, per edit type
-            // and per value type (espf / espr).
-            features_espf_by_edit_type
-                    .map { editType, agg, feat -> tuple(editType, "espf", agg, feat) }
-                    .set { barometer_espf }
-            features_espr_by_edit_type
-                    .map { editType, agg, feat -> tuple(editType, "espr", agg, feat) }
-                    .set { barometer_espr }
-
-            barometer_espf.mix(barometer_espr).set { barometer_input }
-            //barometer_input.view()
-
-            barometer_analyze(barometer_input)
-            //barometer_analyze.out.results.view()
+            barometer_input = barom_espf_agg.mix(barom_espf_feat).mix(barom_espr_agg).mix(barom_espr_feat)
 
             // ------------------- SITE-LEVEL ANALYSIS (supplementary) -----------------
             if (params.site_analysis) {
                 sites_by_tool = pluviometer.out.tuple_sample_sites.map { meta, tool, file -> tuple(tool, [meta, file]) }.groupTuple()
                 drip_sites(sites_by_tool, "sites", params.min_samples_pct, params.min_group_pct)
-                drip_sites.out.editing_all_espr
+                barom_espf_sites = drip_sites.out.editing_all_espf
                         .flatten()
-                        .map { file -> tuple(file.baseName.tokenize('_').last(), file) }
-                        .set { barometer_sites_input }
-                barometer_analyze_sites(barometer_sites_input)
+                        .map { file -> tuple(file.baseName.tokenize('_').last(), "espf", "sites", file) }
+                barom_espr_sites = drip_sites.out.editing_all_espr
+                        .flatten()
+                        .map { file -> tuple(file.baseName.tokenize('_').last(), "espr", "sites", file) }
+                barometer_input = barometer_input.mix(barom_espf_sites).mix(barom_espr_sites)
             }
 
-            // Group analyze results by editType, pair espf + espr, and run the report. Keep order, espf first, second espr
-            barometer_report_input = barometer_analyze.out.results
+            barometer_analyze(barometer_input)
+
+            // ------------------- BAROMETER MERGE (truly global ranking) -----------------
+            // Pool the per-mtype global rankings (espf + espr) into a single
+            // truly-global ranking, then run a second pass by redistribution per vtype.
+            // Group the raw DRIP TSVs by edit type; the raw-inputs JSON is built in the
+            // merge process script (so it uses the local work-dir paths of the copied TSVs).
+            barometer_raw_by_edit = barometer_input
                 .groupTuple(by: 0)
-                .map { sample, names, paths ->
-
-                    def results = names.withIndex().collectEntries { name, i ->
-                        [(name): paths[i]]
-                    }
-
-                    assert results.containsKey('espf'), "Missing espf result for ${sample}"
-                    assert results.containsKey('espr'), "Missing espr result for ${sample}"
-
-                    tuple(
-                        sample,
-                        results['espf'],
-                        results['espr']
-                    )
+                .map { et, vtypes, mtypes, files ->
+                    // Stable order (groupTuple follows arrival order) so the task hash is cacheable
+                    def idx = (0..<vtypes.size()).sort { vtypes[it] + '/' + mtypes[it] }
+                    tuple(et, idx.collect { files[it] }, idx.collect { vtypes[it] + '/' + mtypes[it] })
                 }
 
-            // Join the per-site results (keyed by editType) so the report can render a "site" tab.
-            // barometer_report expects a 4-element tuple (editType, espf, espr, site); when site
-            // analysis is off we pad with null so the process input always has 4 elements.
-            if (params.site_analysis) {
-                barometer_report_input = barometer_report_input.join(barometer_analyze_sites.out.results)
-            } else {
-                barometer_report_input = barometer_report_input.map { et, espf, espr -> tuple(et, espf, espr, null) }
-            }
+            barometer_merge_input = barometer_analyze.out.results
+                .groupTuple(by: 0)
+                .map { et, vtypes, mtypes, paths ->
+                    def idx = (0..<vtypes.size()).sort { vtypes[it] + '/' + mtypes[it] }
+                    tuple(et, idx.collect { paths[it] })
+                }
+                .join(barometer_raw_by_edit)
+                .map { et, results, raw_files, raw_keys -> tuple(et, results, raw_files, raw_keys) }
+
+            barometer_merge(barometer_merge_input)
+
+            // ------------------- BAROMETER REPORT -----------------
+            // Group analyze results by edit type: each vtype (espf / espr) gets a
+            // list of result dirs (aggregates, features, sites). Join the merged
+            // (truly-global) results so the report can render a "Global" tab.
+            barometer_report_input = barometer_analyze.out.results
+                .groupTuple(by: 0)
+                .map { et, vtypes, mtypes, paths ->
+                    def espf = []
+                    def espr = []
+                    def order = (0..<vtypes.size()).sort { vtypes[it] + '/' + mtypes[it] }
+                    for (i in order) {
+                        if (vtypes[i] == "espf") espf << paths[i]
+                        else if (vtypes[i] == "espr") espr << paths[i]
+                    }
+                    assert espf.size() >= 2, "Missing espf results for ${et}"
+                    assert espr.size() >= 2, "Missing espr results for ${et}"
+                    tuple(et, espf, espr)
+                }
+                .join(barometer_merge.out.results)
+                .map { et, espf, espr, merged -> tuple(et, espf, espr, merged) }
 
             barometer_report(barometer_report_input)
 
