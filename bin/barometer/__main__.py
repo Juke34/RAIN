@@ -26,6 +26,10 @@ os.environ.setdefault('VECLIB_MAXIMUM_THREADS', '1')
 os.environ.setdefault('NUMEXPR_NUM_THREADS', '1')
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
+# On Python < 3.11, concurrent.futures.TimeoutError is a DIFFERENT class from
+# the builtin TimeoutError (unified only in 3.11). as_completed()/result()
+# raise the futures one, so we must catch both to be version-agnostic.
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 
 try:
     import psutil
@@ -62,10 +66,11 @@ def analyze_section_wrapper(args_tuple):
     """Wrapper for analyze_section to be used with ProcessPoolExecutor.
     
     Args:
-        args_tuple: (df_source, sample_cols, sample_info, outdir, section_name, result_key, stat_test, bmk_filter_cols, max_bmks)
+        args_tuple: (df_source, sample_cols, sample_info, outdir, section_name, result_key, stat_test, bmk_filter_cols, max_bmks, task_timeout)
             where df_source can be:
             - dict: legacy format, converted back to DataFrame
             - tuple: ('pickled', bytes_data) for memory-efficient transfer
+            task_timeout: per-task SIGALRM budget in seconds (doubled on retry)
         
     Returns:
         (result_key, results_dict)
@@ -76,7 +81,7 @@ def analyze_section_wrapper(args_tuple):
     import pickle
     import random
     import time as time_module
-    df_source, sample_cols, sample_info, outdir, section_name, result_key, stat_test, bmk_filter_cols, max_bmks = args_tuple
+    df_source, sample_cols, sample_info, outdir, section_name, result_key, stat_test, bmk_filter_cols, max_bmks, task_timeout = args_tuple
     
     # OPTIMIZATION: Add startup jitter to avoid synchronized worker restarts.
     # With spawn + max_tasks_per_child=20, all workers start together and may
@@ -97,14 +102,13 @@ def analyze_section_wrapper(args_tuple):
     else:
         log.info(f"  ▶ START [PID {pid}]: {section_name}")
     
-    # Setup timeout alarm (120 seconds max per task)
+    # Setup timeout alarm (per-task budget, doubled by the supervisor on retry)
     def timeout_handler(signum, frame):
-        raise TimeoutError(f"Task exceeded 120 seconds: {section_name}")
+        raise TimeoutError(f"Task exceeded {task_timeout} seconds: {section_name}")
     
     try:
-        # Set alarm for 120 seconds
         signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(120)
+        signal.alarm(task_timeout)
         
         # Reconstruct DataFrame from source (dict or pickled bytes)
         if isinstance(df_source, tuple) and df_source[0] == 'pickled':
@@ -118,7 +122,10 @@ def analyze_section_wrapper(args_tuple):
             log.info(f"  ▶ [PID {pid}] DataFrame reconstructed: {len(df)} rows")
         
         # Run analysis
-        results = analyze_section(df, sample_cols, sample_info, outdir, section_name, stat_test=stat_test, bmk_filter_cols=bmk_filter_cols, max_bmks=max_bmks, enabled_tests=["differential"])
+        # First pass now runs ALL steps per section (QC/batch/descriptive on
+        # all BMKs, then differential, then selection-dependent steps on the
+        # differential BMKs — see analyze_section).
+        results = analyze_section(df, sample_cols, sample_info, outdir, section_name, stat_test=stat_test, bmk_filter_cols=bmk_filter_cols, max_bmks=max_bmks, enabled_tests=None)
         
         # Cancel alarm
         signal.alarm(0)
@@ -333,7 +340,29 @@ EXAMPLES:
                              '\'{"espf": {"aggregates": "a.tsv", "features": "f.tsv", "sites": "s.tsv"}, '
                              '"espr": {"aggregates": "a.tsv", "features": "f.tsv", "sites": "s.tsv"}}\'. '
                              "Used to rebuild full rows for the second pass.")
+    parser.add_argument("--resume", default=None,
+                        help="Resume mode: path to a failed_analyses.tsv from a previous run. "
+                             "Only the listed sections (vtype + mtype + section_key) are re-run. "
+                             "The new failed_analyses.tsv then contains only the sections that "
+                             "still failed, so --resume can be iterated until it is empty.")
     args = parser.parse_args()
+
+    # Resume mode: load the set of (vtype, mtype, section_key) to re-run.
+    resume_keys = None
+    if args.resume:
+        if not os.path.isfile(args.resume):
+            log.error(f"--resume file not found: {args.resume}")
+            sys.exit(1)
+        df_failed = pd.read_csv(args.resume, sep="\t", low_memory=False)
+        required_cols = {"vtype", "mtype", "section_key"}
+        missing = required_cols - set(df_failed.columns)
+        if missing:
+            log.error(f"--resume file {args.resume} is missing columns: {sorted(missing)}")
+            sys.exit(1)
+        resume_keys = set(zip(df_failed["vtype"].astype(str),
+                              df_failed["mtype"].astype(str),
+                              df_failed["section_key"].astype(str)))
+        log.info(f"RESUME MODE: {len(resume_keys)} sections to re-run from {args.resume}")
 
     # ------------------------------------------------------------------
     # MERGE MODE: combine per-mtype global rankings into a truly-global one.
@@ -503,6 +532,9 @@ EXAMPLES:
     log.info(f"Samples: {unique_samples} unique samples across {len(all_value_types)} value types ({len(sample_info)} total columns)")
 
     all_results = {}
+    # Accumulates every failed/cancelled section so the user can re-run them
+    # later. Written to <outdir>/failed_analyses.tsv at the end of the run.
+    failed_analyses = []
 
     for vtype in value_types:
         log.info(f"\n{'='*60}")
@@ -543,7 +575,7 @@ EXAMPLES:
             if not glob_agg.empty:
                 # All BMKs together (no Ptype/Ctype/Mode filter)
                 tasks.append((
-                    prepare_df_for_task(glob_agg), vcols, v_sample_info,
+                    glob_agg, vcols, v_sample_info,
                     os.path.join(agg_dir, "global", "all_global_bmks"),
                     "Global - All BMKs",
                     ("aggregate", "global_all_bmks"),
@@ -555,7 +587,7 @@ EXAMPLES:
                 # all sites (Mode == all_sites)
                 section = glob_agg[glob_agg["Mode"] == "all_sites"]
                 tasks.append((
-                    prepare_df_for_task(section), vcols, v_sample_info,
+                    section, vcols, v_sample_info,
                     os.path.join(agg_dir, "global", "all_sites"),
                     "Global - All Sites",
                     ("aggregate", "global_all_sites"),
@@ -568,7 +600,7 @@ EXAMPLES:
                 for mode in ["all_isoforms", "chimaera", "longest_isoform"]:
                     section = glob_agg[(glob_agg["Ptype"] == ".") & (glob_agg["Mode"] == mode)]
                     tasks.append((
-                        prepare_df_for_task(section), vcols, v_sample_info,
+                        section, vcols, v_sample_info,
                         os.path.join(agg_dir, "global", f"-{mode}"),
                         f"Global - By Ctype - {mode}",
                         ("aggregate", f"global_ctype_{mode}"),
@@ -583,7 +615,7 @@ EXAMPLES:
                     for mode in ["all_isoforms", "chimaera", "longest_isoform"]:
                         section = glob_agg[(glob_agg["Ptype"] == ptype) & (glob_agg["Mode"] == mode)]
                         tasks.append((
-                            prepare_df_for_task(section), vcols, v_sample_info,
+                            section, vcols, v_sample_info,
                             os.path.join(agg_dir, "global", f"{ptype}-{mode}"),
                             f"Global - Ptype={ptype} - {mode}",
                             ("aggregate", f"global_ptype_{ptype}_{mode}"),
@@ -606,7 +638,7 @@ EXAMPLES:
                     # All sites
                     section = chr_data[chr_data["Mode"] == "all_sites"]
                     tasks.append((
-                        prepare_df_for_task(section), vcols, v_sample_info,
+                        section, vcols, v_sample_info,
                         os.path.join(agg_dir, f"sequence/{chrom}", "all_sites"),
                         f"Chr {chrom} - All Sites",
                         ("aggregate", f"chr{chrom}_all_sites"),
@@ -619,7 +651,7 @@ EXAMPLES:
                     for mode in ["all_isoforms", "chimaera", "longest_isoform"]:
                         section = chr_data[(chr_data["Ptype"] == ".") & (chr_data["Mode"] == mode)]
                         tasks.append((
-                            prepare_df_for_task(section), vcols, v_sample_info,
+                            section, vcols, v_sample_info,
                             os.path.join(agg_dir, f"sequence/{chrom}", f"{mode}"),
                             f"Chr {chrom} - By Ctype - {mode}",
                             ("aggregate", f"chr{chrom}_ctype_{mode}"),
@@ -634,7 +666,7 @@ EXAMPLES:
                         for mode in ["all_isoforms", "chimaera", "longest_isoform"]:
                             section = chr_data[(chr_data["Ptype"] == ptype) & (chr_data["Mode"] == mode)]
                             tasks.append((
-                                prepare_df_for_task(section), vcols, v_sample_info,
+                                section, vcols, v_sample_info,
                                 os.path.join(agg_dir, f"sequence/{chrom}", f"{ptype}-{mode}"),
                                 f"Chr {chrom} - Ptype={ptype} - {mode}",
                                 ("aggregate", f"chr{chrom}_ptype_{ptype}_{mode}"),
@@ -647,7 +679,7 @@ EXAMPLES:
                 # all_sites
                 section = seq_agg[seq_agg["Mode"] == "all_sites"]
                 tasks.append((
-                    prepare_df_for_task(section), vcols, v_sample_info,
+                    section, vcols, v_sample_info,
                     os.path.join(agg_dir, "sequence", "all_sequence_bmks", "all_sites"),
                     "All Sequences - All Sites",
                     ("aggregate", "allseq_all_sites"),
@@ -659,7 +691,7 @@ EXAMPLES:
                 for mode in ["all_isoforms", "chimaera", "longest_isoform"]:
                     section = seq_agg[(seq_agg["Ptype"] == ".") & (seq_agg["Mode"] == mode)]
                     tasks.append((
-                        prepare_df_for_task(section), vcols, v_sample_info,
+                        section, vcols, v_sample_info,
                         os.path.join(agg_dir, "sequence", "all_sequence_bmks", f"{mode}"),
                         f"All Sequences - By Ctype - {mode}",
                         ("aggregate", f"allseq_ctype_{mode}"),
@@ -673,7 +705,7 @@ EXAMPLES:
                     for mode in ["all_isoforms", "chimaera", "longest_isoform"]:
                         section = seq_agg[(seq_agg["Ptype"] == ptype) & (seq_agg["Mode"] == mode)]
                         tasks.append((
-                            prepare_df_for_task(section), vcols, v_sample_info,
+                            section, vcols, v_sample_info,
                             os.path.join(agg_dir, "sequence", "all_sequence_bmks", f"{ptype}-{mode}"),
                             f"All Sequences - Ptype={ptype} - {mode}",
                             ("aggregate", f"allseq_ptype_{ptype}_{mode}"),
@@ -704,7 +736,7 @@ EXAMPLES:
                             ]
                             safe_name = f"{ptype}_{ctype}_{mode}".replace(".", "all").replace("-", "_")
                             tasks.append((
-                                prepare_df_for_task(section), vcols, v_sample_info,
+                                section, vcols, v_sample_info,
                                 os.path.join(agg_dir, "feature", "all_feature_together", safe_name),
                                 f"Feature Agg - Ptype={ptype}, Ctype={ctype}, Mode={mode}",
                                 ("aggregate", f"featagg_{safe_name}"),
@@ -730,7 +762,7 @@ EXAMPLES:
                                 ]
                                 safe_name = f"{ptype}_{ctype}_{mode}".replace(".", "all").replace("-", "_")
                                 tasks.append((
-                                    prepare_df_for_task(section), vcols, v_sample_info,
+                                    section, vcols, v_sample_info,
                                     os.path.join(agg_dir, "feature", "by_sequence", str(chrom), safe_name),
                                     f"Feature Agg - Chr {chrom} - Ptype={ptype}, Ctype={ctype}, Mode={mode}",
                                     ("aggregate", f"featagg_chr{chrom}_{safe_name}"),
@@ -790,7 +822,7 @@ EXAMPLES:
 
                 type_all_df = feat_data[feat_data["ID"].isin(all_ids_of_type)]
                 tasks.append((
-                    prepare_df_for_task(type_all_df), vcols, v_sample_info,
+                    type_all_df, vcols, v_sample_info,
                     os.path.join(type_dir, "_all"),
                     f"Features - {ttype} (all)",
                     ("feature", f"type_{ttype}_all"),
@@ -812,7 +844,7 @@ EXAMPLES:
                     sub_df = feat_data[feat_data["ID"].isin(sub_ids)]
                     safe_fid = fid.replace(":", "_").replace("/", "_")
                     tasks.append((
-                        prepare_df_for_task(sub_df), vcols, v_sample_info,
+                        sub_df, vcols, v_sample_info,
                         os.path.join(type_dir, safe_fid),
                         f"Feature: {fid}",
                         ("feature", f"feature_{safe_fid}"),
@@ -830,7 +862,7 @@ EXAMPLES:
             log.info(f"\n--- SITES for {vtype} ---")
             sites_data = sites_df
             tasks.append((
-                prepare_df_for_task(sites_data), vcols, v_sample_info,
+                sites_data, vcols, v_sample_info,
                 os.path.join(vtype_dir, "sites", "all_sites"),
                 "Sites - all",
                 ("sites", "sites_all"),
@@ -840,6 +872,24 @@ EXAMPLES:
             ))
         else:
             log.info(f"\n--- Skipping SITES for {vtype} (no sites file) ---")
+
+        # Resume mode: keep only the sections listed in failed_analyses.tsv.
+        if resume_keys is not None:
+            n_before = len(tasks)
+            tasks = [t for t in tasks if (vtype, str(t[5][0]), str(t[5][1])) in resume_keys]
+            log.info(f"  RESUME: {len(tasks)}/{n_before} sections selected for {vtype}")
+            if not tasks:
+                log.info(f"  RESUME: nothing to re-run for {vtype}, skipping")
+                continue
+
+        # MEMORY: tasks hold raw section DataFrames (views of the already-held
+        # frames, no extra data). Pickling is deferred to submission time so
+        # only max_pending_tasks pickled blobs exist in memory at once.
+        if psutil is not None:
+            try:
+                log.info(f"  Parent RSS after task building: {psutil.Process().memory_info().rss / (1024 * 1024):.0f}MB ({len(tasks)} tasks)")
+            except Exception:
+                pass
 
         # Execute tasks (parallel or sequential)
         log.info(f"Executing {len(tasks)} analysis tasks...")
@@ -863,38 +913,129 @@ EXAMPLES:
             max_pending_tasks = n_jobs * 3  # Keep 3x workers worth of tasks in flight
             log.info(f"  Lazy submission: Max {max_pending_tasks} tasks in memory at once (was {len(tasks)})")
             
+            def record_failure(section_name, key, section_outdir, reason, detail=""):
+                """Append a failed/cancelled section to the resume log."""
+                mtype, section_key = key
+                failed_analyses.append({
+                    "vtype": vtype,
+                    "mtype": mtype,
+                    "section_key": section_key,
+                    "section_name": section_name,
+                    "section_outdir": section_outdir,
+                    "reason": reason,
+                    "detail": detail,
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                })
+
+            # --- Retry policy -------------------------------------------------
+            # A section that fails for a TIME-related reason (timeout, slow,
+            # deadlock, orphaned) is retried up to MAX_RETRIES times, doubling
+            # its per-task timeout each time: 300s -> 600s -> 1200s -> 2400s.
+            # Code errors (error, crash) are NOT retried — more time won't fix
+            # a bug. Only definitive failures (after retries exhausted) are
+            # written to failed_analyses.tsv.
+            BASE_TASK_TIMEOUT = 300
+            MAX_RETRIES = 3
+            TIME_RELATED_REASONS = {"timeout", "slow", "deadlock", "orphaned"}
+
             with ProcessPoolExecutor(max_workers=n_jobs, max_tasks_per_child=20, mp_context=mp_context) as executor:
                 future_to_key = {}
                 task_iter = iter(tasks)
+                retry_queue = []          # 9-tuples re-submitted with a doubled timeout
+                retry_count = {}          # key -> number of retries already used
+                task_timeout_by_key = {}  # key -> current per-task timeout (doubled on retry)
                 completed = 0
                 failed = 0
                 submitted_count = 0
                 last_progress_time = time.time()
-                stall_timeout = 90  # Increased from 40s for spawn startup delay (imports take ~2-5s per worker)
                 last_worker_check = time.time()
                 worker_check_interval = 15  # Check worker health every 15 seconds
-                
-                # Initial submission of first batch
-                initial_batch = min(max_pending_tasks, len(tasks))
-                log.info(f"  Submitting initial batch of {initial_batch} tasks...")
-                for _ in range(initial_batch):
-                    try:
-                        df_source, cols, info, outdir, name, key, stat_test, bmk_filter, max_bmks = next(task_iter)
-                        future = executor.submit(analyze_section_wrapper, (df_source, cols, info, outdir, name, key, stat_test, bmk_filter, max_bmks))
-                        future_to_key[future] = (key, name)
-                        submitted_count += 1
-                        # Explicitly free the df_source reference to help GC
-                        del df_source
-                    except StopIteration:
-                        break
-                
-                log.info(f"  Initial batch submitted. Processing with {n_jobs} workers...")
-                log.info(f"  Note: Tasks have a 2-minute timeout. Anti-deadlock active.")
-                
+                # Track submission time per future for per-future timeout
+                submit_time = {}
+
+                def current_future_timeout():
+                    # Per-future timeout = the LARGEST per-task timeout currently
+                    # in flight + grace for spawn/pickle overhead. A single slow
+                    # task must NOT cancel the whole batch — only the future that
+                    # actually exceeded its own budget is cancelled.
+                    in_flight = [task_timeout_by_key.get(k, BASE_TASK_TIMEOUT) for k, _, _ in future_to_key.values()]
+                    return (max(in_flight) if in_flight else BASE_TASK_TIMEOUT) + 30
+
+                def current_stall_timeout():
+                    # Global stall safety net: only fires if NO future completed
+                    # for longer than the per-future timeout (true deadlock, e.g.
+                    # all workers stuck). Must be > future_timeout.
+                    return current_future_timeout() + 60
+
+                def submit_task(task_tuple):
+                    """Submit one 9-tuple task, applying its (possibly doubled) timeout."""
+                    nonlocal submitted_count
+                    df_source, cols, info, outdir, name, key, stat_test, bmk_filter, max_bmks = task_tuple
+                    tto = task_timeout_by_key.get(key, BASE_TASK_TIMEOUT)
+                    # Pickle at submission time (not up-front) to keep
+                    # parent memory bounded to max_pending_tasks blobs.
+                    future = executor.submit(analyze_section_wrapper, (prepare_df_for_task(df_source), cols, info, outdir, name, key, stat_test, bmk_filter, max_bmks, tto))
+                    future_to_key[future] = (key, name, outdir)
+                    submit_time[future] = time.time()
+                    pending_futures.add(future)
+                    submitted_count += 1
+                    # Explicitly free the df_source reference to help GC
+                    del df_source
+                    return future
+
+                def next_task():
+                    """Pop the next task to submit: retries first, then the main queue."""
+                    if retry_queue:
+                        return retry_queue.pop(0)
+                    return next(task_iter)
+
+                def handle_time_failure(key, section_name, section_outdir, reason, detail):
+                    """Retry a time-related failure (doubling the timeout) or record it.
+
+                    Returns True if the task was re-queued for retry, False if it
+                    was recorded as a definitive failure.
+                    """
+                    nonlocal failed
+                    n = retry_count.get(key, 0)
+                    if n < MAX_RETRIES:
+                        retry_count[key] = n + 1
+                        task_timeout_by_key[key] = BASE_TASK_TIMEOUT * (2 ** (n + 1))
+                        # Rebuild the 9-tuple from the original task list by key.
+                        retry_queue.append(task_by_key[key])
+                        log.warning(f"  ↻ RETRY ({n+1}/{MAX_RETRIES}) with {task_timeout_by_key[key]}s timeout: {section_name} ({reason})")
+                        return True
+                    failed += 1
+                    record_failure(section_name, key, section_outdir, reason, detail)
+                    return False
+
+                # Index tasks by key so a retry can re-fetch its original 9-tuple
+                # (the df view is still alive in the parent; pickling is idempotent).
+                task_by_key = {t[5]: t for t in tasks}
+
                 # Process futures with stall detection
-                pending_futures = set(future_to_key.keys())
+                pending_futures = set()
+
+                def refill():
+                    """Submit tasks until max_pending_tasks are in flight (or queues empty)."""
+                    while len(pending_futures) < max_pending_tasks:
+                        try:
+                            submit_task(next_task())
+                        except StopIteration:
+                            break
+
+                # Initial submission of first batch
+                log.info(f"  Submitting initial batch (up to {max_pending_tasks} tasks)...")
+                refill()
+
+                log.info(f"  Initial batch submitted ({submitted_count} tasks). Processing with {n_jobs} workers...")
+                log.info(f"  Note: Tasks have a {BASE_TASK_TIMEOUT // 60}-minute base timeout (doubled up to {MAX_RETRIES}x on retry). Per-future anti-deadlock active.")
                 
-                while pending_futures:
+                while pending_futures or retry_queue:
+                    # Refill: after a batch of cancellations (e.g. all pending
+                    # futures re-queued for retry) pending_futures may be empty
+                    # while retry_queue still holds work to submit.
+                    if not pending_futures and retry_queue:
+                        refill()
                     # Periodically check if workers have died
                     current_time = time.time()
                     if psutil is not None and (current_time - last_worker_check) > worker_check_interval:
@@ -910,24 +1051,74 @@ EXAMPLES:
                                 log.error(f"     Cancelling all pending tasks to prevent infinite hang")
                                 log.error(f"     TIP: Restart with fewer workers (--n-jobs 2 or --n-jobs 3)")
                                 
-                                # Cancel all pending futures
+                                # Cancel all pending futures. No retry here: with
+                                # the workers dead there is nothing to run them on,
+                                # so every in-flight and not-yet-submitted task is
+                                # recorded as a definitive failure (resumable via
+                                # --resume failed_analyses.tsv).
                                 for future in list(pending_futures):
                                     future.cancel()
-                                    key, section_name = future_to_key[future]
+                                    key, section_name, section_outdir = future_to_key[future]
                                     log.error(f"     ✗ CANCELLED (orphaned): {section_name}")
+                                    record_failure(section_name, key, section_outdir, "orphaned", "worker death detected (likely OOM)")
                                     failed += 1
+                                # Drain the retry queue and the main queue so the
+                                # tasks that never ran are also logged for resume.
+                                for task_tuple in list(retry_queue):
+                                    _, _, _, _, name, key, _, _, _ = task_tuple
+                                    record_failure(name, key, task_tuple[3], "orphaned", "worker death detected (likely OOM)")
+                                    failed += 1
+                                retry_queue.clear()
+                                while True:
+                                    try:
+                                        task_tuple = next(task_iter)
+                                    except StopIteration:
+                                        break
+                                    _, _, _, _, name, key, _, _, _ = task_tuple
+                                    record_failure(name, key, task_tuple[3], "orphaned", "worker death detected (likely OOM)")
+                                    failed += 1
+                                submit_time.clear()
                                 break
                             
                             last_worker_check = current_time
                         except Exception as e:
                             log.debug(f"Worker health check failed: {e}")
                     
+                    # Per-future timeout: cancel ONLY the futures that exceeded
+                    # their own budget (a single slow section must not cancel
+                    # the whole batch). The SIGALRM in the worker should have
+                    # killed the task at task_timeout; this is the backstop for
+                    # futures that never report back (e.g. worker stuck in C
+                    # code where signals don't fire).
+                    now = time.time()
+                    future_timeout = current_future_timeout()
+                    for future in list(pending_futures):
+                        t0 = submit_time.get(future)
+                        if t0 is not None and (now - t0) > future_timeout:
+                            future.cancel()
+                            pending_futures.discard(future)
+                            key, section_name, section_outdir = future_to_key[future]
+                            submit_time.pop(future, None)
+                            future_to_key.pop(future, None)
+                            last_progress_time = time.time()
+                            if handle_time_failure(key, section_name, section_outdir, "slow", f"exceeded {future_timeout}s"):
+                                log.warning(f"  ↻ SLOW TASK ({completed+failed}/{len(tasks)}): {section_name} - exceeded {future_timeout}s, will retry")
+                            else:
+                                log.error(f"  ✗ SLOW TASK CANCELLED ({completed+failed}/{len(tasks)}): {section_name} - exceeded {future_timeout}s")
+
                     # Use short timeout on as_completed to check for stalls
+                    if not pending_futures:
+                        # All in-flight futures were just cancelled/re-queued;
+                        # wait a beat before the next iteration resubmits them.
+                        time.sleep(1)
+                        continue
                     try:
                         done_iter = as_completed(pending_futures, timeout=5)
                         for future in done_iter:
                             pending_futures.discard(future)
-                            key, section_name = future_to_key[future]
+                            submit_time.pop(future, None)
+                            key, section_name, section_outdir = future_to_key[future]
+                            future_to_key.pop(future, None)
                             
                             # Process the completed future
                             try:
@@ -947,51 +1138,80 @@ EXAMPLES:
                                 # Progress update every 5 completions or at key milestones
                                 if completed % 5 == 0 or completed in [1, 10, 25, 50, 100]:
                                     log.info(f"  ✓ Progress: {completed}/{len(tasks)} completed, {failed} failed, {submitted_count - completed - failed} submitted pending")
-                            except TimeoutError:
-                                failed += 1
+                            except (TimeoutError, FuturesTimeoutError):
                                 last_progress_time = time.time()
-                                log.error(f"  ✗ TIMEOUT ({completed+failed}/{len(tasks)}): {section_name} - exceeded 2 minutes")
+                                tto = task_timeout_by_key.get(key, BASE_TASK_TIMEOUT)
+                                if handle_time_failure(key, section_name, section_outdir, "timeout", f"exceeded {tto}s"):
+                                    log.warning(f"  ↻ TIMEOUT ({completed+failed}/{len(tasks)}): {section_name} - exceeded {tto}s, will retry")
+                                else:
+                                    log.error(f"  ✗ TIMEOUT ({completed+failed}/{len(tasks)}): {section_name} - exceeded {tto}s")
                             except Exception as e:
                                 failed += 1
                                 last_progress_time = time.time()
                                 # Check if it's a worker crash (common patterns in error message)
                                 if "process" in str(e).lower() and ("terminate" in str(e).lower() or "crash" in str(e).lower() or "abrupt" in str(e).lower()):
                                     log.error(f"  ✗ CRASH ({completed+failed}/{len(tasks)}): {section_name} - worker OOM or crash")
+                                    record_failure(section_name, key, section_outdir, "crash", "worker OOM or crash")
                                 else:
                                     log.error(f"  ✗ ERROR ({completed+failed}/{len(tasks)}): {section_name} - {type(e).__name__}")
+                                    record_failure(section_name, key, section_outdir, "error", f"{type(e).__name__}: {e}")
                             
                             # CRITICAL: Submit next task to maintain max_pending_tasks in flight
-                            # This lazy submission keeps memory usage constant regardless of total tasks
+                            # This lazy submission keeps memory usage constant regardless of total tasks.
+                            # Retried tasks (retry_queue) are submitted before new ones.
                             if len(pending_futures) < max_pending_tasks:
                                 try:
-                                    df_source, cols, info, outdir, name, key, stat_test, bmk_filter, max_bmks = next(task_iter)
-                                    new_future = executor.submit(analyze_section_wrapper, (df_source, cols, info, outdir, name, key, stat_test, bmk_filter, max_bmks))
-                                    future_to_key[new_future] = (key, name)
-                                    pending_futures.add(new_future)
-                                    submitted_count += 1
-                                    # Explicitly free the df_source reference to help GC
-                                    del df_source
+                                    submit_task(next_task())
                                     # Log every 50 submissions
                                     if submitted_count % 50 == 0:
-                                        log.info(f"  → Submitted up to {submitted_count}/{len(tasks)} tasks (lazy mode)")
+                                        log.info(f"  → Submitted up to {submitted_count}/{len(tasks)} tasks (lazy mode, {len(retry_queue)} retries queued)")
                                 except StopIteration:
                                     pass  # No more tasks to submit
                             
                             # Break inner loop to check stall timeout
                             break
-                    except TimeoutError:
-                        # No futures completed in 5 seconds, check for stall
+                    except (TimeoutError, FuturesTimeoutError):
+                        # No futures completed in 5 seconds, check for stall.
+                        # This is the LAST-RESORT safety net (stall_timeout >
+                        # future_timeout): it only fires when NO future has
+                        # completed for longer than the per-future budget,
+                        # i.e. a true deadlock (all workers stuck).
                         elapsed_since_progress = time.time() - last_progress_time
-                        if elapsed_since_progress > stall_timeout:
+                        if elapsed_since_progress > current_stall_timeout():
                             log.error(f"  ✗ DEADLOCK DETECTED: No progress for {elapsed_since_progress:.0f}s")
                             log.error(f"     Cancelling {len(pending_futures)} remaining tasks to prevent infinite hang")
-                            # Cancel all pending futures
-                            for future in pending_futures:
+                            # Cancel all pending futures, retrying each with a
+                            # doubled timeout (bounded by MAX_RETRIES).
+                            any_retry = False
+                            for future in list(pending_futures):
                                 future.cancel()
-                                key, section_name = future_to_key[future]
-                                log.error(f"     ✗ CANCELLED: {section_name}")
-                                failed += 1
-                            break
+                                pending_futures.discard(future)
+                                key, section_name, section_outdir = future_to_key[future]
+                                submit_time.pop(future, None)
+                                future_to_key.pop(future, None)
+                                if handle_time_failure(key, section_name, section_outdir, "deadlock", f"no progress for {elapsed_since_progress:.0f}s"):
+                                    any_retry = True
+                                else:
+                                    log.error(f"     ✗ CANCELLED: {section_name}")
+                            last_progress_time = time.time()
+                            if not any_retry:
+                                # Nothing left to retry: record the not-yet-run
+                                # tasks (retry queue + main queue) and stop.
+                                for task_tuple in list(retry_queue):
+                                    _, _, _, _, name, key, _, _, _ = task_tuple
+                                    record_failure(name, key, task_tuple[3], "deadlock", "no progress (stall)")
+                                    failed += 1
+                                retry_queue.clear()
+                                while True:
+                                    try:
+                                        task_tuple = next(task_iter)
+                                    except StopIteration:
+                                        break
+                                    _, _, _, _, name, key, _, _, _ = task_tuple
+                                    record_failure(name, key, task_tuple[3], "deadlock", "no progress (stall)")
+                                    failed += 1
+                                submit_time.clear()
+                                break
                 
                 if failed > 0:
                     log.warning(f"  {failed} tasks failed or cancelled out of {len(tasks)} total")
@@ -1004,7 +1224,21 @@ EXAMPLES:
                     df = pickle.loads(df_source[1])
                 else:
                     df = pd.DataFrame(df_source)
-                results = analyze_section(df, cols, info, section_outdir, name, stat_test=stat_test, bmk_filter_cols=bmk_filter, max_bmks=max_bmks)
+                try:
+                    results = analyze_section(df, cols, info, section_outdir, name, stat_test=stat_test, bmk_filter_cols=bmk_filter, max_bmks=max_bmks)
+                except Exception as e:
+                    log.error(f"  ✗ ERROR: {name} - {type(e).__name__}: {e}")
+                    failed_analyses.append({
+                        "vtype": vtype,
+                        "mtype": key[0],
+                        "section_key": key[1],
+                        "section_name": name,
+                        "section_outdir": section_outdir,
+                        "reason": "error",
+                        "detail": f"{type(e).__name__}: {e}",
+                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    })
+                    continue
                 
                 # Create slim results dict (same as parallel mode for consistency)
                 # NOTE: must match the parallel-mode path (5_differential/), which is where
@@ -1092,6 +1326,17 @@ EXAMPLES:
             }
             with open(os.path.join(vtype_dir, mtype, "manifest.json"), "w") as f:
                 json.dump(manifest, f, indent=2, default=str)
+
+    # Write the failed/cancelled analyses log so the user can re-run them later.
+    if failed_analyses:
+        failed_log_path = os.path.join(args.outdir, "failed_analyses.tsv")
+        pd.DataFrame(failed_analyses).to_csv(failed_log_path, sep="\t", index=False)
+        log.warning(f"\n{len(failed_analyses)} analyses failed or were cancelled. See {failed_log_path} to re-run them.")
+    else:
+        # Remove a stale log from a previous run so it doesn't mislead.
+        stale = os.path.join(args.outdir, "failed_analyses.tsv")
+        if os.path.isfile(stale):
+            os.remove(stale)
 
     log.info(f"\nAnalysis complete. Results saved to {args.outdir}/")
 

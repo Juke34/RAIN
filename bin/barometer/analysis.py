@@ -791,7 +791,11 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
     # ============================================================================
     log.info(f"  Applying FDR correction to p-values...")
 
-    pval_cols = [c for c in res_df.columns if "pval" in str(c).lower()]
+    # Only numeric p-value columns get an FDR-corrected padj column.
+    # Non-numeric "pval" columns (e.g. shapiro_pvals stored as a comma-joined
+    # string) would crash np.isnan and abort the whole differential step.
+    pval_cols = [c for c in res_df.columns
+                 if "pval" in str(c).lower() and pd.api.types.is_numeric_dtype(res_df[c])]
     adj_cols = [c.replace("_pval", "_padj") for c in pval_cols]
 
     # Create all padj columns at once (single multi-column assignment) to
@@ -1277,6 +1281,17 @@ def classification_analysis(df, sample_cols, sample_info, outdir, max_bmks=500, 
     else:
         log.warning(f"Go ahead we have enough biomarkers for classification")
 
+    # NOTE (nested CV, future work): la sélection des BMKs ci-dessus est faite
+    # sur l'ensemble des données AVANT la CV, ce qui introduit un léger
+    # leakage (la sélection est basée sur les p-values du differential, pas sur
+    # la performance du classifieur, donc le biais est faible). Pour une
+    # sélection intégrée à la CV (nested CV), il faudrait :
+    #   - À chaque fold externe : sélectionner les BMKs sur le train seul
+    #     (padj < 0.05 sur le train), entraîner le classifieur sur le train
+    #     avec ces BMKs, et évaluer sur le test.
+    #   - Cela évite tout leakage de la sélection dans l'estimation de
+    #     performance, au coût d'une sélection × n_folds (plus lent).
+    #   - Référence : https://scikit-learn.org/stable/modules/computing.html#nested-cross-validation
     # Use LOO or stratified k-fold depending on sample count
     if n_samples < 10:
         cv = LeaveOneOut()
@@ -1527,6 +1542,57 @@ def section_heatmap(df, sample_cols, sample_info, outdir, title="", max_rows=100
 
 
 # ---------------------------------------------------------------------------
+# Selection helper: differential BMKs with top-variance fallback
+# ---------------------------------------------------------------------------
+def _select_differential_bmks(df, sample_cols, outdir, min_bmks=10, fallback_n=50):
+    """Build the selected-BMK dataframe for selection-dependent steps.
+
+    Reads the differential_results.csv just written by differential_analysis
+    (in outdir/5_differential/), keeps BMKs with padj < 0.05 in any test, and
+    falls back to the top-N BMKs by variance when fewer than min_bmks BMKs are
+    significant or when the CSV is missing (differential failed / disabled).
+
+    Returns (selected_df, n_significant) where selected_df is a subset of df
+    (same index semantics) and n_significant is the count of significant BMKs
+    (0 when the CSV is missing).
+    """
+    diff_csv = os.path.join(outdir, "5_differential", "differential_results.csv")
+    sig_index = None
+    n_sig = 0
+    if os.path.exists(diff_csv):
+        try:
+            # differential_results.csv is indexed by the original df index
+            # (differential_analysis does res_df.set_index("index") where
+            # "index" is df.index), so match on the index, not on uid.
+            # low_memory=False: metadata columns (e.g. ParentIDs) have mixed
+            # types and would otherwise trigger a DtypeWarning.
+            diff = pd.read_csv(diff_csv, index_col=0, low_memory=False)
+            padj_cols = [c for c in diff.columns if c.endswith("_padj")]
+            if padj_cols:
+                sig_mask = diff[padj_cols].lt(0.05).any(axis=1)
+                # Compare as strings: the CSV round-trip can change index dtype
+                sig_index = set(map(str, diff.index[sig_mask]))
+                n_sig = int(sig_mask.sum())
+        except Exception as e:
+            log.warning(f"  Could not read differential results for selection: {e}")
+
+    if sig_index is not None and n_sig >= min_bmks:
+        sel = df.loc[df.index.map(str).isin(sig_index)]
+        log.info(f"  Selection: {n_sig} differential BMKs (padj < 0.05) for downstream steps")
+        return sel, n_sig
+
+    # Fallback: top-N by variance
+    log.info(f"  Selection fallback: <{min_bmks} significant BMKs (n_sig={n_sig}), "
+             f"using top-{fallback_n} by variance")
+    if not sample_cols:
+        return df, n_sig
+    ndf = numeric_df(df, sample_cols)
+    var = ndf[sample_cols].var(axis=1)
+    top_idx = var.nlargest(min(fallback_n, len(var))).index
+    return df.loc[top_idx], n_sig
+
+
+# ---------------------------------------------------------------------------
 # Top-level orchestration per section
 # ---------------------------------------------------------------------------
 # df arrive complete here
@@ -1657,15 +1723,9 @@ def analyze_section(df, sample_cols, sample_info, outdir, section_name, stat_tes
         except Exception as e:
             log.warning(f"{log_prefix} Descriptive stats failed: {e}")
 
-    # 4. Multivariate Analysis (PCA, clustering)
-    if is_active("multivariate"):
-        try:
-            log.info(f"{log_prefix} Multivariate analysis...")
-            results["multivariate"] = multivariate_analysis(df, sample_cols, sample_info, os.path.join(outdir, "4_multivariate"))
-        except Exception as e:
-            log.warning(f"{log_prefix} Multivariate analysis failed: {e}")
-
-    # 5. Differential Editing Analysis
+    # 4. Differential Editing Analysis
+    #    Runs BEFORE the selection-dependent steps so its results
+    #    (differential_results.csv) drive the BMK selection below.
     if is_active("differential"):
         try:
             log.info(f"{log_prefix} Differential analysis...")
@@ -1675,43 +1735,64 @@ def analyze_section(df, sample_cols, sample_info, outdir, section_name, stat_tes
                 raise
             log.warning(f"{log_prefix} Differential analysis failed: {e}")
 
-    # 6. Correlation / Network Analysis
+    # 5. Build the selected-BMK dataframe (differential BMKs, top-variance
+    #    fallback) for the selection-dependent steps below.
+    selection_steps = {"multivariate", "correlation", "ranking",
+                       "classification", "stability", "heatmap"}
+    if active & selection_steps:
+        try:
+            sel_df, n_sig = _select_differential_bmks(df, sample_cols, outdir)
+            results["n_differential_bmks"] = n_sig
+            results["n_selected_bmks"] = len(sel_df)
+        except Exception as e:
+            log.warning(f"{log_prefix} BMK selection failed, using full df: {e}")
+            sel_df = df
+
+    # 6. Multivariate Analysis (PCA, clustering) — on selected BMKs
+    if is_active("multivariate"):
+        try:
+            log.info(f"{log_prefix} Multivariate analysis...")
+            results["multivariate"] = multivariate_analysis(sel_df, sample_cols, sample_info, os.path.join(outdir, "4_multivariate"))
+        except Exception as e:
+            log.warning(f"{log_prefix} Multivariate analysis failed: {e}")
+
+    # 7. Correlation / Network Analysis — on selected BMKs
     if is_active("correlation"):
         try:
             log.info(f"{log_prefix} Correlation / Network analysis...")
-            results["correlation"] = correlation_network(df, sample_cols, os.path.join(outdir, "6_correlation"))
+            results["correlation"] = correlation_network(sel_df, sample_cols, os.path.join(outdir, "6_correlation"))
         except Exception as e:
             log.warning(f"{log_prefix} Correlation analysis failed: {e}")
 
-    # 7. Feature Selection / Biomarker Ranking
+    # 8. Feature Selection / Biomarker Ranking — on selected BMKs
     if is_active("ranking"):
         try:
             log.info(f"{log_prefix} Feature ranking...")
-            results["ranking"] = feature_ranking(df, sample_cols, sample_info, os.path.join(outdir, "7_ranking"), max_bmks=max_bmks, bmk_filter_cols=bmk_filter_cols)
+            results["ranking"] = feature_ranking(sel_df, sample_cols, sample_info, os.path.join(outdir, "7_ranking"), max_bmks=max_bmks, bmk_filter_cols=bmk_filter_cols)
         except Exception as e:
             log.warning(f"{log_prefix} Feature ranking failed: {e}")
 
-    # 8. Classification / Predictive Modeling
+    # 9. Classification / Predictive Modeling — on selected BMKs
     if is_active("classification"):
         try:
             log.info(f"{log_prefix} Classification...")
-            results["classification"] = classification_analysis(df, sample_cols, sample_info, os.path.join(outdir, "8_classification"), max_bmks=max_bmks, bmk_filter_cols=bmk_filter_cols)
+            results["classification"] = classification_analysis(sel_df, sample_cols, sample_info, os.path.join(outdir, "8_classification"), max_bmks=max_bmks, bmk_filter_cols=bmk_filter_cols)
         except Exception as e:
             log.warning(f"{log_prefix} Classification failed: {e}")
 
-    # 9. Stability / Robustness (replicate concordance)
+    # 10. Stability / Robustness (replicate concordance) — on selected BMKs
     if is_active("stability"):
         try:
             log.info(f"{log_prefix} Stability analysis...")
-            results["stability"] = stability_analysis(df, sample_cols, sample_info, os.path.join(outdir, "9_stability"))
+            results["stability"] = stability_analysis(sel_df, sample_cols, sample_info, os.path.join(outdir, "9_stability"))
         except Exception as e:
             log.warning(f"{log_prefix} Stability analysis failed: {e}")
 
-    # 10. Heatmap
+    # 11. Heatmap — on selected BMKs
     if is_active("heatmap"):
         log.info(f"{log_prefix} Heatmap generation...")
         try:
-            section_heatmap(df, sample_cols, sample_info, outdir, title=section_name)
+            section_heatmap(sel_df, sample_cols, sample_info, outdir, title=section_name)
             log.info(f"{log_prefix} Heatmap generation completed")
         except Exception as e:
             log.warning(f"{log_prefix} Heatmap failed: {e}")
