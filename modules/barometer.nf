@@ -15,7 +15,7 @@ process barometer_analyze {
         tuple val(editType), val(vtype), val(mtype), path(input_file)
 
     output:
-        tuple val(editType), val(vtype), val(mtype), path("barometer_${vtype}_${mtype}"), emit: results
+        tuple val(editType), val(vtype), val(mtype), path("barometer_${vtype}_${mtype}/"), emit: results
         path("barometer_*.log"), emit: log
 
     script:

@@ -865,14 +865,14 @@ workflow {
                 .groupTuple(by: 0)
                 .map { et, vtypes, mtypes, files ->
                     // Stable order (groupTuple follows arrival order) so the task hash is cacheable
-                    def idx = (0..<vtypes.size()).sort { vtypes[it] + '/' + mtypes[it] }
+                    def idx = (0..<vtypes.size()).toList().sort { vtypes[it] + '/' + mtypes[it] }
                     tuple(et, idx.collect { files[it] }, idx.collect { vtypes[it] + '/' + mtypes[it] })
                 }
 
             barometer_merge_input = barometer_analyze.out.results
                 .groupTuple(by: 0)
                 .map { et, vtypes, mtypes, paths ->
-                    def idx = (0..<vtypes.size()).sort { vtypes[it] + '/' + mtypes[it] }
+                    def idx = (0..<vtypes.size()).toList().sort { vtypes[it] + '/' + mtypes[it] }
                     tuple(et, idx.collect { paths[it] })
                 }
                 .join(barometer_raw_by_edit)
@@ -889,7 +889,7 @@ workflow {
                 .map { et, vtypes, mtypes, paths ->
                     def espf = []
                     def espr = []
-                    def order = (0..<vtypes.size()).sort { vtypes[it] + '/' + mtypes[it] }
+                    def order = (0..<vtypes.size()).toList().sort { vtypes[it] + '/' + mtypes[it] }
                     for (i in order) {
                         if (vtypes[i] == "espf") espf << paths[i]
                         else if (vtypes[i] == "espr") espr << paths[i]
