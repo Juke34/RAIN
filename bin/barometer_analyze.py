@@ -228,15 +228,10 @@ def create_uid_column(df=None, meta_cols=["SeqID", "ParentIDs", "ID", "Mtype", "
     # Supprimer doubles tirets et tirets devant/derrière
     uid = uid.str.replace(r"-+", "-", regex=True).str.strip("-")
 
-    df = df.copy()  # Defragment DataFrame before adding columns to avoid PerformanceWarning
-    df["uid"] = uid
-    
     # Mettre uid en première colonne
-    cols = ["uid"] + [c for c in df.columns if c != "uid"]
+    df.insert(0, "uid", uid)  # in-place, no copy needed (df is a fresh DataFrame from slurp_file)
     
-    #df[cols].to_csv(os.path.join("test.csv"))
-    #sys.exit(0)
-    return df[cols]
+    return df
 
 def parse_sample_columns(columns):
     """Parse sample column names like 'test1::rain_chr21_small::rep1::espf'.
@@ -1024,13 +1019,14 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
     log.info(f"  Applying FDR correction to p-values...")
 
     pval_cols = [c for c in res_df.columns if "pval" in str(c).lower()]
-    
-    res_df = res_df.copy()  # Defragment DataFrame before adding padj columns to avoid PerformanceWarning
+
+    # Adding the padj columns in-place may emit a harmless pandas
+    # PerformanceWarning ("DataFrame is fragmented")
     n_padj_created = 0
     for col in pval_cols:  # FIXED: Iterate over filtered list instead of checking endswith
         adj_col = col.replace("_pval", "_padj")
         res_df[adj_col] = np.nan  # Always create the column
-        
+
         pvals = res_df[col].values
         mask = ~np.isnan(pvals)
         if mask.sum() > 0:
@@ -1774,9 +1770,7 @@ def global_ranking(all_results, outdir, stat_test="auto"):
                 if diff_path and os.path.exists(diff_path):
 
                     ddf = slurp_file(diff_path, separator=",")
-                    # Defragment DataFrame before adding columns to avoid PerformanceWarning
-                    ddf = ddf.copy()
-                    # Add metadata columns
+                    # MEMORY: no ddf.copy() — ddf is fresh from slurp_file, only 2 cols added
                     ddf["value_type"] = vtype
                     #ddf["mtype"] = mtype
                     ddf["section"] = section
@@ -1903,8 +1897,15 @@ def global_ranking(all_results, outdir, stat_test="auto"):
 
             global_sig = ranked[ranked["primary_padj"] < 0.05].copy()
             if len(global_sig) > 0:
-                global_sig.to_csv(os.path.join(global_dir, "significant_bmks.csv"), index=False)
+                global_sig_csv = os.path.join(global_dir, "significant_bmks.csv")
+                global_sig.to_csv(global_sig_csv, index=False)
                 log.info(f"  Saved global-significant subset: {len(global_sig)} biomarkers (primary_padj < 0.05)")
+
+                # Heatmap de significativité (complément du bar chart ci-dessous)
+                try:
+                    generate_diagram(global_sig_csv, global_dir)
+                except Exception as e:
+                    log.warning(f"  generate_diagram (global) failed: {e}")
 
                 # Top 50 plot for global-significant BMKs
                 top_n_g = min(50, len(global_sig))
@@ -2030,7 +2031,7 @@ def generate_diagram(sig_csv_path, outdir):
     ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.15, 1))
 
     # 💾 Save
-    output_path = os.path.join(outdir, "global_ranking_significant_by_condition.png")
+    output_path = os.path.join(outdir, "ranking_plot.png")
     log.debug(f"Saving to {output_path}")
     plt.savefig(
         output_path, 
@@ -2055,6 +2056,7 @@ def split_significant_bmks(sig_csv_path, outdir):
     safe_mkdir(outdir)
 
     df = pd.read_csv(sig_csv_path)
+    df_orig = df.copy()  # garde les colonnes primary_padj_* pour le plot
     padj_cols = [c for c in df.columns if c.startswith("primary_padj_")]
     rename_map = {c: c.replace("primary_padj_", "") for c in padj_cols}
     df = df.rename(columns=rename_map)
@@ -2071,6 +2073,17 @@ def split_significant_bmks(sig_csv_path, outdir):
         if not all_sig_df.empty:
             os.makedirs(comp_dir, exist_ok=True)
             all_sig_df.to_csv(os.path.join(comp_dir, "all_significant.csv"), index=False)
+            # ranking_plot.png : heatmap de significativité des BMKs de cette comparaison
+            orig_col = rename_map[comp]  # ex: "primary_padj_long.non.cleared_vs_negative"
+            comp_sig_orig = df_orig[df_orig[orig_col] < alpha]
+            if not comp_sig_orig.empty:
+                comp_sig_csv = os.path.join(comp_dir, "_ranking_input.csv")
+                comp_sig_orig.to_csv(comp_sig_csv, index=False)
+                try:
+                    generate_diagram(comp_sig_csv, comp_dir)
+                    os.remove(comp_sig_csv)  # on ne garde que le plot
+                except Exception as e:
+                    log.warning(f"  generate_diagram ({comp}) failed: {e}")
         # 2. BMKs uniques à cette comparaison
         is_unique = (binary_df[comp]) & (binary_df.drop(columns=[comp]).sum(axis=1) == 0)
         unique_df = df[df["uid"].isin(binary_df.index[is_unique])]
@@ -2641,6 +2654,10 @@ EXAMPLES:
         # Strip whitespace from string columns
         for col in agg_df.select_dtypes(include=['object', 'string']).columns:
             agg_df[col] = agg_df[col].str.strip() if agg_df[col].dtype in ['object', 'string'] else agg_df[col]
+        # MEMORY: convert low-cardinality columns to category (saves ~50-90 bytes/row/col)
+        for col in ("Mtype", "Ptype", "Type", "Ctype", "Mode", "Strand", "SeqID"):
+            if col in agg_df.columns:
+                agg_df[col] = agg_df[col].astype("category")
         log.info(f"  Aggregates: {len(agg_df)} rows")
     else:
         log.info("Skipping aggregates (no file provided)")
@@ -2657,6 +2674,10 @@ EXAMPLES:
         # Strip whitespace from string columns
         for col in feat_df.select_dtypes(include=['object', 'string']).columns:
             feat_df[col] = feat_df[col].str.strip() if feat_df[col].dtype in ['object', 'string'] else feat_df[col]
+        # MEMORY: convert low-cardinality columns to category (saves ~50-90 bytes/row/col)
+        for col in ("Mtype", "Ptype", "Type", "Ctype", "Mode", "Strand", "SeqID"):
+            if col in feat_df.columns:
+                feat_df[col] = feat_df[col].astype("category")
         log.info(f"  Features: {len(feat_df)} rows")
     else:
         log.info("Skipping features (no file provided)")
@@ -2948,7 +2969,7 @@ EXAMPLES:
         # ===============================================================
         if feat_df is not None:
             log.info(f"\n--- FEATURES for {vtype} ---")
-            feat_data = feat_df.copy()  # Mtype is always "feature" in features file
+            feat_data = feat_df  # Mtype is always "feature" in features file (no copy: read-only usage)
             feat_dir = os.path.join(vtype_dir, "feature")
 
             if site_mode:
