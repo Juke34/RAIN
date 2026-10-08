@@ -792,14 +792,14 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
     log.info(f"  Applying FDR correction to p-values...")
 
     pval_cols = [c for c in res_df.columns if "pval" in str(c).lower()]
+    adj_cols = [c.replace("_pval", "_padj") for c in pval_cols]
 
-    # Adding the padj columns in-place may emit a harmless pandas
-    # PerformanceWarning ("DataFrame is fragmented")
+    # Create all padj columns at once (single multi-column assignment) to
+    # avoid pandas fragmentation warnings; the loop below only fills values.
+    res_df[adj_cols] = np.nan
+
     n_padj_created = 0
-    for col in pval_cols:  # FIXED: Iterate over filtered list instead of checking endswith
-        adj_col = col.replace("_pval", "_padj")
-        res_df[adj_col] = np.nan  # Always create the column
-
+    for col, adj_col in zip(pval_cols, adj_cols):
         pvals = res_df[col].values
         mask = ~np.isnan(pvals)
         if mask.sum() > 0:

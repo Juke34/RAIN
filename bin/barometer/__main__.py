@@ -16,6 +16,15 @@ import sys
 import time
 import warnings
 
+# Limit implicit BLAS/LAPACK multi-threading so each of the -j worker
+# processes uses at most 1 core (total CPU usage = n_jobs, not n_jobs^2).
+# Must be set before numpy/scipy/sklearn are imported.
+os.environ.setdefault('OMP_NUM_THREADS', '1')
+os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+os.environ.setdefault('MKL_NUM_THREADS', '1')
+os.environ.setdefault('VECLIB_MAXIMUM_THREADS', '1')
+os.environ.setdefault('NUMEXPR_NUM_THREADS', '1')
+
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 try:
