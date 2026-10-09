@@ -6,8 +6,13 @@ process drip {
     input:
         tuple(val(tool), val(meta_tsv))
         val prefix
+        val samples_min
         val samples_pct
-        val group_pct
+        val group_samples_pct
+        val group_samples
+        val group_samples_edited
+        val group_samples_pct_edited
+        val bps
 
     output:
         path("*_espr/*.tsv"), emit: editing_all_espr
@@ -29,8 +34,15 @@ process drip {
         }
         
         def args_str = args.join(" ")
+        def samplesMinArg = samples_min != null ? "--min-samples ${samples_min}" : ""
+        def samplesPctArg = samples_pct != null ? "--min-samples-pct ${samples_pct}" : ""
+        def groupSamplesArg = group_samples != null ? "--min-group-samples ${group_samples}" : ""
+        def groupSamplesPctArg = group_samples_pct != null ? "--min-group-samples-pct ${group_samples_pct}" : ""
+        def groupSamplesEditedArg = group_samples_edited != null ? "--min-group-samples-edited ${group_samples_edited}" : ""
+        def groupSamplesPctEditedArg = group_samples_pct_edited != null ? "--min-group-samples-pct-edited ${group_samples_pct_edited}" : ""
+        def bpsArg = bps ? "--bps ${bps.join(',')}" : ""
 
         """ 
-        drip.py --threads ${task.cpus} --min-samples-pct ${samples_pct} --min-group-pct ${group_pct} ${countAwareArgs} --output drip_${prefix} ${args_str} 
+        drip.py --threads ${task.cpus} ${samplesMinArg} ${samplesPctArg} ${groupSamplesPctArg} ${groupSamplesArg} ${groupSamplesEditedArg} ${groupSamplesPctEditedArg} ${bpsArg} ${countAwareArgs} --output drip_${prefix} ${args_str} 
         """
 }

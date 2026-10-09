@@ -67,7 +67,7 @@ flowchart TD
 
 For CSV-based runs, Barometer uses a beta-binomial model by default. DRIP keeps the existing ESPF/ESPR proportion columns and adds per-sample `successes` and `trials` columns to the same TSV files. Technical replicates are summed by biological sample before fitting; uncovered observations remain missing, while covered zero-edit observations are retained. At least two biological samples per condition are required to estimate between-sample overdispersion.
 
-The test is performed at Barometer's existing feature/aggregate level, not per editing site. Set `--barometer_stat_test nonparametric` to use the legacy proportion-based tests instead. In beta-binomial mode, DRIP preserves covered features rather than filtering them by the percentage of samples with non-zero editing.
+The test is performed at Barometer's existing feature/aggregate level, not per editing site. Set `--barometer_stat_test nonparametric` to use the legacy proportion-based tests instead. In beta-binomial mode, DRIP adds the `::successes`/`::trials` count columns to its output (via `--preserve-covered-features`) so Barometer can fit the model on raw counts; row filtering is applied in two stages — coverage (e.g. `--min-samples-pct`, `--min-group-samples-pct`, counting non-NA cells) and editing (e.g. `--min-group-samples-edited`, counting non-NA non-zero cells).
 
 ## Installation
 

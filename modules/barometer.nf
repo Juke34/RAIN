@@ -27,7 +27,7 @@ process barometer_analyze {
             -j ${task.cpus} \\
             --stat-test ${params.barometer_stat_test} \\
             --max-bmks ${params.barometer_max_bmks} \\
-            &> barometer_${vtype}_${mtype}.log
+            &> barometer_${vtype}_${mtype}.log 
         """
 }
 
@@ -51,7 +51,7 @@ process barometer_merge {
 
     output:
         tuple val(editType), path("barometer_merged"), emit: results
-        path("barometer_*.log"), emit: log
+        path("barometer_merged/*.log"), emit: log
 
     script:
         // Local work-dir paths of the raw DRIP TSVs (Nextflow interpolates the
@@ -69,6 +69,7 @@ process barometer_merge {
         def rawInputsJson = groovy.json.JsonOutput.toJson(rawMap)
         def resultsStr = results.collect { it.toString() }.join(" ")
         """
+        mkdir -p barometer_merged
         barometer_wrapper.py \\
             --merge \\
             --results-dir ${resultsStr} \\
@@ -76,7 +77,7 @@ process barometer_merge {
             -o barometer_merged \\
             --stat-test ${params.barometer_stat_test} \\
             --max-bmks ${params.barometer_max_bmks} \\
-            &> barometer_merge.log
+            &> barometer_merged/barometer_merge.log
         """
 }
 

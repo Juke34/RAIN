@@ -6,7 +6,7 @@ Tests unitaires des scripts d'analyse de `bin/` (drip, barometer, pluviometer).
 
 | Fichier | Cadre | Ce qu'il teste | Environnement |
 |---------|-------|----------------|---------------|
-| `test_drip_counts.py` | unittest | `drip.merge_samples` : ratios espf/espr, colonnes successes/trials, seuil de couverture, `preserve_covered_features` | Conteneur `drip` (Python 3.12, numpy, pandas) |
+| `test_drip_counts.py` | unittest | `drip.merge_samples` : ratios espf/espr, colonnes successes/trials, seuil de couverture, `preserve_covered_features` (ajoute les colonnes de compte sans modifier le filtrage de lignes), filtres de couverture `min_samples` (AND avec `min_samples_pct` sur le compteur global) et `min_group_samples` (AND avec `min_group_samples_pct` sur le même groupe, protège du bruit 1-sample), filtres d'édition `min_group_samples_edited` / `min_group_samples_pct_edited` (AND sur le même groupe, défaut 1/0), zéros couverts comptent pour la couverture mais pas pour l'édition | Conteneur `drip` (Python 3.12, numpy, pandas) |
 | `test_barometer_beta_binomial.py` | unittest | Pont `barometer_analyze.run_beta_binomial_analysis` vers le script R `barometer_beta_binomial.R` (mapping des résultats, agrégation des répliques techniques) | Conteneur `barometer` (Python 3.12, seaborn, R 4.4 + glmmTMB) |
 | `test_site_format.py` | pytest | Format de sortie 16 colonnes de `pluviometer.site_file_writer` et traitement en aval par `drip.py` (lancé en subprocess) | Conteneur `pluviometer` (Python 3.12, Biopython) ; le subprocess `drip.py` n'a besoin que de pandas/numpy (conteneur `drip`) |
 

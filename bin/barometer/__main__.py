@@ -26,10 +26,9 @@ os.environ.setdefault('VECLIB_MAXIMUM_THREADS', '1')
 os.environ.setdefault('NUMEXPR_NUM_THREADS', '1')
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
-# On Python < 3.11, concurrent.futures.TimeoutError is a DIFFERENT class from
-# the builtin TimeoutError (unified only in 3.11). as_completed()/result()
-# raise the futures one, so we must catch both to be version-agnostic.
-from concurrent.futures import TimeoutError as FuturesTimeoutError
+# The container runs Python 3.12, where concurrent.futures.TimeoutError IS the
+# builtin TimeoutError (unified in 3.11). A plain `except TimeoutError:` is
+# sufficient; no separate futures import is needed.
 
 try:
     import psutil
@@ -425,6 +424,10 @@ EXAMPLES:
     agg_df = None
     feat_df = None
     sites_df = None
+    # mtypes whose file was provided but had no data rows: no analysis is
+    # run, but the mtype dir + manifest are still written so downstream
+    # consumers (Nextflow) find the expected output.
+    empty_mtypes = set()
 
     if args.aggregates:
         if not os.path.exists(args.aggregates):
@@ -444,6 +447,10 @@ EXAMPLES:
             if col in agg_df.columns:
                 agg_df[col] = agg_df[col].astype("category")
         log.info(f"  Aggregates: {len(agg_df)} rows")
+        if len(agg_df) == 0:
+            log.warning("  Aggregates file has no data rows — no analysis will be run "
+                        "(mtype dir + manifest are still written).")
+            empty_mtypes.add("aggregate")
     else:
         log.info("Skipping aggregates (no file provided)")
     
@@ -464,6 +471,10 @@ EXAMPLES:
             if col in feat_df.columns:
                 feat_df[col] = feat_df[col].astype("category")
         log.info(f"  Features: {len(feat_df)} rows")
+        if len(feat_df) == 0:
+            log.warning("  Features file has no data rows — no analysis will be run "
+                        "(mtype dir + manifest are still written).")
+            empty_mtypes.add("feature")
     else:
         log.info("Skipping features (no file provided)")
 
@@ -484,6 +495,10 @@ EXAMPLES:
             if col in sites_df.columns:
                 sites_df[col] = sites_df[col].astype("category")
         log.info(f"  Sites: {len(sites_df)} rows")
+        if len(sites_df) == 0:
+            log.warning("  Sites file has no data rows — no analysis will be run "
+                        "(mtype dir + manifest are still written).")
+            empty_mtypes.add("sites")
     else:
         log.info("Skipping sites (no file provided)")
 
@@ -556,7 +571,7 @@ EXAMPLES:
         # ===============================================================
         # AGGREGATES
         # ===============================================================
-        if agg_df is not None:
+        if agg_df is not None and len(agg_df) > 0:
             log.info(f"\n--- AGGREGATES for {vtype} ---")
             agg_data = agg_df[agg_df["Mtype"] == "aggregate"].copy()
 
@@ -771,12 +786,12 @@ EXAMPLES:
                                     args.max_bmks
                                 ))
         else:
-            log.info(f"\n--- Skipping AGGREGATES for {vtype} (no aggregates file) ---")
+            log.info(f"\n--- Skipping AGGREGATES for {vtype} (no aggregates data) ---")
 
         # ===============================================================
         # FEATURES
         # ===============================================================
-        if feat_df is not None:
+        if feat_df is not None and len(feat_df) > 0:
             log.info(f"\n--- FEATURES for {vtype} ---")
             feat_data = feat_df  # Mtype is always "feature" in features file (no copy: read-only usage)
             feat_dir = os.path.join(vtype_dir, "feature")
@@ -853,12 +868,12 @@ EXAMPLES:
                         args.max_bmks
                     ))
         else:
-            log.info(f"\n--- Skipping FEATURES for {vtype} (no features file) ---")
+            log.info(f"\n--- Skipping FEATURES for {vtype} (no features data) ---")
 
         # ===============================================================
         # SITES
         # ===============================================================
-        if sites_df is not None:
+        if sites_df is not None and len(sites_df) > 0:
             log.info(f"\n--- SITES for {vtype} ---")
             sites_data = sites_df
             tasks.append((
@@ -871,7 +886,7 @@ EXAMPLES:
                 args.max_bmks
             ))
         else:
-            log.info(f"\n--- Skipping SITES for {vtype} (no sites file) ---")
+            log.info(f"\n--- Skipping SITES for {vtype} (no sites data) ---")
 
         # Resume mode: keep only the sections listed in failed_analyses.tsv.
         if resume_keys is not None:
@@ -1138,7 +1153,7 @@ EXAMPLES:
                                 # Progress update every 5 completions or at key milestones
                                 if completed % 5 == 0 or completed in [1, 10, 25, 50, 100]:
                                     log.info(f"  ✓ Progress: {completed}/{len(tasks)} completed, {failed} failed, {submitted_count - completed - failed} submitted pending")
-                            except (TimeoutError, FuturesTimeoutError):
+                            except TimeoutError:
                                 last_progress_time = time.time()
                                 tto = task_timeout_by_key.get(key, BASE_TASK_TIMEOUT)
                                 if handle_time_failure(key, section_name, section_outdir, "timeout", f"exceeded {tto}s"):
@@ -1170,7 +1185,7 @@ EXAMPLES:
                             
                             # Break inner loop to check stall timeout
                             break
-                    except (TimeoutError, FuturesTimeoutError):
+                    except TimeoutError:
                         # No futures completed in 5 seconds, check for stall.
                         # This is the LAST-RESORT safety net (stall_timeout >
                         # future_timeout): it only fires when NO future has
@@ -1326,6 +1341,29 @@ EXAMPLES:
             }
             with open(os.path.join(vtype_dir, mtype, "manifest.json"), "w") as f:
                 json.dump(manifest, f, indent=2, default=str)
+
+        # mtypes whose input file was provided but had no data rows: no
+        # analysis ran, but the mtype dir + manifest are still written so
+        # downstream consumers (Nextflow) find the expected output.
+        for mtype in empty_mtypes:
+            mtype_dir = os.path.join(vtype_dir, mtype)
+            safe_mkdir(mtype_dir)
+            if mtype == "aggregate":
+                counts = {"n_aggregates": 0}
+            elif mtype == "feature":
+                counts = {"n_features": 0}
+            else:  # sites
+                counts = {"n_sites": 0}
+            manifest = {
+                "value_types": value_types,
+                "outdir": args.outdir,
+                "mtype": mtype,
+                **counts,
+                "sample_info": sample_info,
+            }
+            with open(os.path.join(mtype_dir, "manifest.json"), "w") as f:
+                json.dump(manifest, f, indent=2, default=str)
+            log.info(f"  Wrote empty mtype dir + manifest: {mtype_dir}")
 
     # Write the failed/cancelled analyses log so the user can re-run them later.
     if failed_analyses:

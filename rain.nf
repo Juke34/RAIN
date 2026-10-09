@@ -19,23 +19,44 @@ params.outdir       = "rain_result"
 params.clip_overlap  = false
 params.clean_duplicate  = true
 
+// HYPER EDITING
+params.hyper_editing = "with" // with (normal + hyper-editing reads), without (normal only) or only (hyper-editing only)
+
+// Site-level differential analysis (supplementary, covers all sites, inside or outside GFF features)
+params.site_analysis = true
+
 // Edit counting params
 edit_site_tools = ["reditools2", "reditools3", "jacusa2", "sapin"]
 params.edit_site_tool = "reditools3"
-params.edit_threshold = 1 // Minimal number of edited reads to count a site as edited
-params.cov_threshold = 10 // Minimal coverage to consider a site for editing detection
-// When both flags below are provided → OR: keep if either condition is satisfied independently.
-params.min_samples_pct = 50 // Minimal percentage of samples in which a site must be edited to be kept in the analysis (drip filtering)
-params.min_group_pct = 75 // Minimal percentage of groups in which a site must be edited to be kept in the analysis (drip filtering)
+
+// Pluviometer 
+// Site analyses may need higher coverage and/or edit thresholds than aggregate or feature mode
 params.aggregation_mode = "all" // used by pluviometer
-params.hyper_editing = "with" // with (normal + hyper-editing reads), without (normal only) or only (hyper-editing only)
-// Site-level differential analysis (supplementary, covers all sites, inside or outside GFF features)
-params.site_analysis = true
-params.site_cov_threshold = 30 // Minimal coverage of a site in a sample (stricter than cov_threshold)
-params.site_edit_threshold = 3 // Minimal number of edited reads for a non-reference base at a site
+params.cov_threshold = 10 // Minimal coverage to consider a site for editing detection (aggregate or feature mode)
+params.edit_threshold = 1 // Minimal number of edited reads to count a site as edited (aggregate or feature mode)
+params.site_cov_threshold = 30 //  Minimal coverage to consider a site for editing detection (per site analysis (stricter than cov_threshold))
+params.site_edit_threshold = 2 // Minimal number of edited reads to count a site as edited   (per site analysis)
+
+// Drip
+//    Row filtering is done in two stages.  A row is kept only if it passes
+//    BOTH stages:
+//        keep = COVERAGE AND EDITING
+//        COVERAGE = (min-samples AND min-samples-pct) OR (min-group-samples AND min-group-samples-pct)
+//        EDITING  = (min-group-samples-edited AND min-group-samples-pct-edited)
+// Coverage filters (count covered, non-NA; 0.0 counts as covered)
+params.drip_bps = ['AC', 'AG', 'AT', 'CA', 'CG', 'CT', 'GA', 'GC', 'GT', 'TA', 'TC', 'TG']  // Base pairs to analyze, e.g. ['AC','AG','CA']. null = all 12 (AC, AG, AT, CA, CG, CT, GA, GC, GT, TA, TC, TG).
+params.min_samples_pct = 50        // Keep a row only if at least X% of all samples are covered (non-NA).
+params.min_samples = 3             // Keep a row only if at least N samples (across all groups) are covered (non-NA). Guards against single-sample noise in small groups.
+params.min_group_samples_pct = 75  // Keep a row only if at least one group has at least Y% of its samples covered (non-NA).
+params.min_group_samples = 3       // Keep a row only if at least one group has at least N covered samples. Guards against single-sample noise in small groups.
+// Editing filters (count edited, non-NA and non-zero)
+params.min_group_samples_pct_edited = 75   // Keep a row only if at least one group has at least Y% of its samples edited. 0 = disabled. Combined with min_group_samples_edited: both must be met by the same group (AND).
+params.min_group_samples_edited = 3        // Keep a row only if at least one group has at least N edited samples. Set to 0 to keep rows even without any editing.
+
 // Barometer params
 params.barometer_stat_test = "beta-binomial"
 params.barometer_max_bmks = 500
+
 // Report params
 params.multiqc_config = "$baseDir/config/multiqc_config.yaml" // MultiQC config file
 
@@ -812,7 +833,7 @@ workflow {
         }
         
         // Run pluviometer on editing analysis results to get aggregates and features values
-        pluviometer(editing_analysis, clean_annotation.collect())
+        pluviometer(editing_analysis, params.cov_threshold, params.edit_threshold, params.site_cov_threshold, params.site_edit_threshold, params.aggregation_mode, clean_annotation.collect())
 
         if(via_csv){
             // Collect pluviometer outputs by tool (group by element at index 1 = tool name)
@@ -820,8 +841,8 @@ workflow {
             features_by_tool = pluviometer.out.tuple_sample_feature.map { meta, tool, file -> tuple(tool, [meta, file]) }.groupTuple()
 
             // drip - compute espn, espf, merge different sample in one, and output by type of mutation (AG, AC, etc..)
-            drip_aggregates(aggregates_by_tool, "aggregates", params.min_samples_pct, params.min_group_pct)
-            drip_features(features_by_tool, "features", params.min_samples_pct, params.min_group_pct)
+            drip_aggregates(aggregates_by_tool, "aggregates", params.min_samples, params.min_samples_pct, params.min_group_samples_pct, params.min_group_samples, params.min_group_samples_edited, params.min_group_samples_pct_edited, params.drip_bps)
+            drip_features(features_by_tool, "features", params.min_samples, params.min_samples_pct, params.min_group_samples_pct, params.min_group_samples, params.min_group_samples_edited, params.min_group_samples_pct_edited, params.drip_bps)
 
             // ------------------- BAROMETER ANALYSIS (independent runs) -----------------
             // Each DRIP output is analysed independently: 6 runs per edit type
@@ -844,7 +865,7 @@ workflow {
             // ------------------- SITE-LEVEL ANALYSIS (supplementary) -----------------
             if (params.site_analysis) {
                 sites_by_tool = pluviometer.out.tuple_sample_sites.map { meta, tool, file -> tuple(tool, [meta, file]) }.groupTuple()
-                drip_sites(sites_by_tool, "sites", params.min_samples_pct, params.min_group_pct)
+                drip_sites(sites_by_tool, "sites", params.min_samples, params.min_samples_pct, params.min_group_samples_pct, params.min_group_samples, params.min_group_samples_edited, params.min_group_samples_pct_edited, params.drip_bps)
                 barom_espf_sites = drip_sites.out.editing_all_espf
                         .flatten()
                         .map { file -> tuple(file.baseName.tokenize('_').last(), "espf", "sites", file) }

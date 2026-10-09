@@ -276,6 +276,18 @@ def build_section_content(section_dir, section_name, table_counter):
     return content
 
 
+def _mtype_dir_has_content(mtype_dir):
+    """True if the mtype dir contains at least one result CSV or figure.
+
+    An empty mtype dir (e.g. "sites" created for a section that had no data
+    rows) must not produce an empty tab in the report.
+    """
+    for _root, _dirs, files in os.walk(mtype_dir):
+        if any(f.endswith((".csv", ".png")) for f in files):
+            return True
+    return False
+
+
 def build_report_data(results_dirs):
     """Build the report structure from one or more results directories.
 
@@ -326,7 +338,7 @@ def build_report_data(results_dirs):
                 )
                 vtype_dir = results_dir if direct_layout else os.path.join(results_dir, vtype)
                 mtype_dir = os.path.join(vtype_dir, mtype)
-                if os.path.isdir(mtype_dir):
+                if os.path.isdir(mtype_dir) and _mtype_dir_has_content(mtype_dir):
                     mtype_dirs.append((mtype, mtype_dir))
                     break
 
