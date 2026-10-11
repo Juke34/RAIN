@@ -454,6 +454,15 @@ def run_beta_binomial_analysis(df, sample_info, groups, outdir):
                 f"{completed.stderr[-4000:]}"
             )
         fitted = pd.read_csv(output_path, sep="\t", dtype={"row_id": str})
+        # Coerce the numeric result columns. A diverged R fit can emit a
+        # non-numeric or out-of-range value (e.g. a dispersion of ~1e19 that
+        # overflows int64); read_csv would then keep the column as object
+        # (strings) and the .at assignment below would raise TypeError.
+        # Coercing turns any such value into NaN instead of crashing.
+        for _col in ("statistic", "estimate", "mean1", "mean2",
+                     "p_value", "dispersion"):
+            if _col in fitted.columns:
+                fitted[_col] = pd.to_numeric(fitted[_col], errors="coerce")
 
     index_by_row_id = {str(index): index for index in df.index}
     for row in fitted.itertuples(index=False):

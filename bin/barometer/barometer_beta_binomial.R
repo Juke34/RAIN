@@ -89,6 +89,13 @@ for (row_id in unique(counts$row_id)) {
         if (any(!is.finite(covariance))) {
             stop("fixed-effect covariance contains non-finite values")
         }
+        # A diverged optimizer can "converge" to a garbage point with an
+        # astronomically large dispersion (e.g. ~1e19). Treat that as a fit
+        # failure rather than emitting a value that overflows downstream.
+        dispersion <- as.numeric(sigma(full_fit))
+        if (!is.finite(dispersion) || dispersion > 1e6) {
+            stop(paste0("beta-binomial dispersion out of range (", dispersion, ")"))
+        }
         condition_coefficients <- coefficients[-1]
         condition_covariance <- covariance[-1, -1, drop = FALSE]
         statistic <- as.numeric(
@@ -104,7 +111,7 @@ for (row_id in unique(counts$row_id)) {
             covariance = covariance,
             coefficients = coefficients,
             means = means,
-            dispersion = as.numeric(sigma(full_fit))
+            dispersion = dispersion
         )
     }, error = function(error) {
         fit_status <<- paste0("fit_failed: ", conditionMessage(error))
