@@ -57,7 +57,10 @@ def csv_to_html_table(path, max_rows=500, table_id=None):
     if not os.path.exists(path):
         return ""
     try:
-        df = pd.read_csv(path)
+        # low_memory=False reads the whole file at once so columns with
+        # mixed empty/value cells get a single consistent dtype instead of
+        # triggering a DtypeWarning from chunked inference.
+        df = pd.read_csv(path, low_memory=False)
     except Exception:
         return ""
     if len(df) > max_rows:
