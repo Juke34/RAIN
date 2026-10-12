@@ -35,7 +35,7 @@ process barometer_analyze {
 /*
  * Barometer - "truly global" cross-mtype / cross-vtype ranking.
  *
- * Consumes the per-mtype global_ranking CSVs produced by the six independent
+ * Consumes the per-mtype cross_section_ranking CSVs produced by the six independent
  * barometer_analyze runs, merges them into a single global ranking, and runs
  * a second-pass analysis by redistributing the significant biomarkers back
  * to their value type. One invocation per edit type.

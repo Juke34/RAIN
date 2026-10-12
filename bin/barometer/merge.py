@@ -1,6 +1,6 @@
 """barometer.merge – Cross-mtype / cross-vtype "truly global" ranking.
 
-Consumes the per-mtype ``global_ranking`` CSVs produced by the independent
+Consumes the per-mtype ``cross_section_ranking`` CSVs produced by the independent
 ``barometer_analyze`` runs (espf/aggregate, espf/feature, espf/sites,
 espr/aggregate, espr/feature, espr/sites), merges them into a single
 *truly global* ranking, and runs a second-pass analysis by redistributing
@@ -52,7 +52,7 @@ def _load_raw_df(path):
     """Load a raw DRIP TSV and prepare it (strip, harmonize, uid, categories).
 
     Mirrors the preparation done in ``main()`` so that uids computed here match
-    the uids present in the per-mtype global_ranking CSVs.
+    the uids present in the per-mtype cross_section_ranking CSVs.
     """
     df = slurp_file(path, separator="\t")
     df.columns = df.columns.str.strip()
@@ -83,7 +83,7 @@ def merge_global_rankings(results_dirs, outdir, stat_test="auto",
     Args:
         results_dirs: a single dir (str) or a list of dirs, each containing
             ``espf/`` and/or ``espr/`` subdirs holding the per-mtype
-            (aggregate / feature / sites) ``global_ranking`` CSVs. In Nextflow
+            (aggregate / feature / sites) ``cross_section_ranking`` CSVs. In Nextflow
             each barometer_analyze invocation produces its own results dir, so
             several are passed and their CSVs are pooled.
         outdir: output dir for the merged ranking.
@@ -100,8 +100,8 @@ def merge_global_rankings(results_dirs, outdir, stat_test="auto",
         results_dirs = [results_dirs]
 
     # ------------------------------------------------------------------
-    # 1. Collect the per-mtype global_ranking_primary_padj.csv files
-    #    Layout: <results_dir>/<vtype>/<mtype>/global_ranking/...
+    # 1. Collect the per-mtype cross_section_ranking_primary_padj.csv files
+    #    Layout: <results_dir>/<vtype>/<mtype>/cross_section_ranking/...
     # ------------------------------------------------------------------
     gr_csvs = []
     for results_dir in results_dirs:
@@ -112,13 +112,13 @@ def merge_global_rankings(results_dirs, outdir, stat_test="auto",
             if not os.path.isdir(vtype_dir):
                 continue
             for mtype in ("aggregate", "feature", "sites"):
-                gr_csv = os.path.join(vtype_dir, mtype, "global_ranking",
-                                      "global_ranking_primary_padj.csv")
+                gr_csv = os.path.join(vtype_dir, mtype, "cross_section_ranking",
+                                      "cross_section_ranking_primary_padj.csv")
                 if os.path.isfile(gr_csv):
                     gr_csvs.append(gr_csv)
 
     if not gr_csvs:
-        log.warning("No per-mtype global_ranking CSVs found in %s; nothing to merge", results_dirs)
+        log.warning("No per-mtype cross_section_ranking CSVs found in %s; nothing to merge", results_dirs)
         return outdir
 
     log.info(f"Merging {len(gr_csvs)} per-mtype global rankings...")

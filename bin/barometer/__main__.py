@@ -336,7 +336,7 @@ EXAMPLES:
                         help="Merge mode: combine the per-mtype global rankings into a truly-global ranking and run a second pass by redistribution per value type.")
     parser.add_argument("--results-dir", nargs="+", default=None,
                         help="In --merge mode: one or more barometer_results dirs, each containing "
-                             "espf/ and/or espr/ subdirs with per-mtype (aggregate/feature/sites) global_ranking CSVs.")
+                             "espf/ and/or espr/ subdirs with per-mtype (aggregate/feature/sites) cross_section_ranking CSVs.")
     parser.add_argument("--raw-inputs", default=None,
                         help="In --merge mode: JSON mapping of vtype -> raw TSVs, e.g. "
                              '\'{"espf": {"aggregates": "a.tsv", "features": "f.tsv", "sites": "s.tsv"}, '
@@ -1274,8 +1274,8 @@ EXAMPLES:
         # ===============================================================
         # GLOBAL RANKING per mtype for this value_type
         # ===============================================================
-        # Each mtype (aggregate / feature / sites) gets its own global_ranking dir:
-        #   <vtype_dir>/<mtype>/global_ranking/
+        # Each mtype (aggregate / feature / sites) gets its own cross_section_ranking dir:
+        #   <vtype_dir>/<mtype>/cross_section_ranking/
         # The second-pass analysis is run per mtype as well, so that the
         # significant BMKs are re-analysed within their own mtype context.
         for mtype in ("aggregate", "feature", "sites"):
@@ -1287,7 +1287,7 @@ EXAMPLES:
             # second pass: sites for the sites mtype, features otherwise.
             feat_like_df = sites_df if mtype == "sites" else feat_df
 
-            gr_dir = os.path.join(vtype_dir, mtype, "global_ranking")
+            gr_dir = os.path.join(vtype_dir, mtype, "cross_section_ranking")
             log.info(f"\n--- GLOBAL RANKING for {vtype} / {mtype} ---")
             global_ranking({vtype: {mtype: mdata}}, gr_dir, stat_test=args.stat_test)
 

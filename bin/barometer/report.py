@@ -298,7 +298,7 @@ def build_report_data(results_dirs):
         results_dirs: dict of {vtype: path_or_list_of_paths}. Each path may
                       either be the parent containing a vtype subdirectory, or
                       the vtype directory itself, with aggregate/, feature/,
-                      sites/, global_ranking/, and manifest.json inside.
+                      sites/, cross_section_ranking/, and manifest.json inside.
                       Several dirs per vtype are supported (one per mtype,
                       produced by the independent barometer_analyze runs).
     """
@@ -315,7 +315,7 @@ def build_report_data(results_dirs):
         for results_dir in results_dirs_vtype:
             direct_layout = os.path.isfile(os.path.join(results_dir, "manifest.json")) or any(
                 os.path.isdir(os.path.join(results_dir, name))
-                for name in ("aggregate", "feature", "sites", "global_ranking")
+                for name in ("aggregate", "feature", "sites", "cross_section_ranking")
             )
             vtype_dir = results_dir if direct_layout else os.path.join(results_dir, vtype)
             # Manifest is now per-mtype: <vtype>/<mtype>/manifest.json
@@ -337,7 +337,7 @@ def build_report_data(results_dirs):
             for results_dir in results_dirs_vtype:
                 direct_layout = os.path.isfile(os.path.join(results_dir, "manifest.json")) or any(
                     os.path.isdir(os.path.join(results_dir, name))
-                    for name in ("aggregate", "feature", "sites", "global_ranking")
+                    for name in ("aggregate", "feature", "sites", "cross_section_ranking")
                 )
                 vtype_dir = results_dir if direct_layout else os.path.join(results_dir, vtype)
                 mtype_dir = os.path.join(vtype_dir, mtype)
@@ -352,8 +352,8 @@ def build_report_data(results_dirs):
             report[vtype][mtype] = OrderedDict()
             # Walk all section directories
             for root, dirs, files in os.walk(mtype_dir):
-                # Skip global_ranking (handled separately by the gr_dir block)
-                if os.path.basename(root) == "global_ranking":
+                # Skip cross_section_ranking (handled separately by the gr_dir block)
+                if os.path.basename(root) == "cross_section_ranking":
                     dirs[:] = []
                     continue
                 # Only process leaf directories that contain actual results
@@ -494,7 +494,7 @@ def build_report_data(results_dirs):
 
         # Global ranking for this value type (per mtype: aggregate / feature / sites)
         for mtype, mtype_dir in mtype_dirs:
-            gr_dir = os.path.join(mtype_dir, "global_ranking")
+            gr_dir = os.path.join(mtype_dir, "cross_section_ranking")
             if not os.path.isdir(gr_dir):
                 continue
             for csv_path in find_csvs(gr_dir):
@@ -519,7 +519,7 @@ def build_report_data(results_dirs):
 def build_merged_content(merged_dir, table_counter):
     """Build HTML for the truly-global (merged) ranking directory.
 
-    Walks the merged results dir (global_ranking CSVs/plots + the
+    Walks the merged results dir (cross_section_ranking CSVs/plots + the
     significant_bmks_* subsets + the second_pass analyses) and renders every
     CSV as a DataTable and every figure as an image, grouped by relative path.
     """

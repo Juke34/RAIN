@@ -84,41 +84,53 @@ def build_global_ranking(all_diff, outdir, stat_test="auto"):
         # Rank by primary_padj
         if "primary_padj" in all_diff.columns:
             ranked = all_diff.dropna(subset=["primary_padj"]).sort_values("primary_padj")
-            save_csv(ranked, os.path.join(outdir, "global_ranking_primary_padj.csv"), index=False)
+            save_csv(ranked, os.path.join(outdir, "cross_section_ranking_primary_padj.csv"), index=False)
             
             # Log statistics
             best_padj = ranked["primary_padj"].min() if len(ranked) > 0 else float('nan')
             log.info(f"  Saved global ranking: {len(ranked)} biomarkers (best padj: {best_padj:.2e})")
 
             # -----------------------------------------------------------------------
-            # Top 50 plot (ranking complet) — reste au top-level
+            # Top 50 plot (meilleur padj de n'importe quelle comparaison) — top-level
+            # Le CSV adjacent reste trié par primary_padj (test global) ; ce plot
+            # classe par le meilleur padj global OU pairwise.
             # -----------------------------------------------------------------------
-            top_n = min(50, len(ranked))
-            top = ranked.head(top_n)
-            fig, ax = plt.subplots(figsize=(8, max(4, top_n * 0.3)))
-            neg_log_p = -np.log10(top["primary_padj"].clip(lower=1e-300))
-
-            # Enhanced labels with n_sections_significant
-            if "n_sections_significant" in top.columns:
-                labels = [f"{row['uid']} [{row['section']}] (×{int(row['n_sections_significant'])} sec)" 
-                          if row['n_sections_significant'] > 1 else f"{row['uid']} [{row['section']}]"
-                          for _, row in top.iterrows()]
+            if stat_test == "beta-binomial":
+                root_padj_cols = [c for c in ranked.columns
+                                  if c == "beta_binomial_padj" or c.startswith("beta_binomial_padj_")]
             else:
-                labels = top["uid"].astype(str) + " [" + top["section"].astype(str) + "]"
+                root_padj_cols = [c for c in ranked.columns
+                                  if c == "primary_padj" or c.startswith("primary_padj_")]
+            if root_padj_cols:
+                best_padj = ranked[root_padj_cols].min(axis=1)
+                best_src = ranked[root_padj_cols].idxmin(axis=1)
+                ranked_best = ranked.assign(_best_padj=best_padj, _best_src=best_src)
+                ranked_best = ranked_best.dropna(subset=["_best_padj"]).sort_values("_best_padj")
+                top_n = min(50, len(ranked_best))
+                top = ranked_best.head(top_n)
+                fig, ax = plt.subplots(figsize=(8, max(4, top_n * 0.3)))
+                neg_log_p = -np.log10(top["_best_padj"].clip(lower=1e-300))
 
-            ax.barh(range(top_n), neg_log_p.values[::-1])
-            ax.set_yticks(range(top_n))
-            ax.set_yticklabels(labels[::-1], fontsize=6)
-            ax.set_xlabel("-log10(adjusted p-value)")
-            ax.set_title("Global BMK Ranking by Significance (top 50)\n(×N sec = significant in N sections)")
+                # Label = uid [section] (comparaison qui donne le meilleur padj)
+                prefix = root_padj_cols[0].rsplit("_padj", 1)[0] + "_padj"
+                def _src_label(col):
+                    return "global" if col == prefix else col[len(prefix):].lstrip("_")
+                labels = [f"{row['uid']} [{row['value_type']}] [{row['section']}] ({_src_label(row['_best_src'])})"
+                          for _, row in top.iterrows()]
 
-            # Add reference lines for p-value thresholds
-            ax.axvline(-np.log10(0.05), color='red', linestyle='--', linewidth=1, alpha=0.7, label='p=0.05')
-            ax.axvline(-np.log10(0.1), color='orange', linestyle='--', linewidth=1, alpha=0.7, label='p=0.1')
-            ax.legend(loc='lower right', fontsize=8)
+                ax.barh(range(top_n), neg_log_p.values[::-1])
+                ax.set_yticks(range(top_n))
+                ax.set_yticklabels(labels[::-1], fontsize=6)
+                ax.set_xlabel("-log10(adjusted p-value)")
+                ax.set_title("Top 50 BMKs by Best Adjusted p-value (any comparison)\n(label = comparison giving the best padj)")
 
-            save_fig(fig, os.path.join(outdir, "global_ranking_plot.png"))
-            plt.close(fig)
+                # Add reference lines for p-value thresholds
+                ax.axvline(-np.log10(0.05), color='red', linestyle='--', linewidth=1, alpha=0.7, label='p=0.05')
+                ax.axvline(-np.log10(0.1), color='orange', linestyle='--', linewidth=1, alpha=0.7, label='p=0.1')
+                ax.legend(loc='lower right', fontsize=8)
+
+                save_fig(fig, os.path.join(outdir, "top50_significance_bars.png"))
+                plt.close(fig)
 
             # -----------------------------------------------------------------------
             # ANY comparison (union global ∪ pairwise)
@@ -195,11 +207,11 @@ def build_global_ranking(all_diff, outdir, stat_test="auto"):
                 fig_g, ax_g = plt.subplots(figsize=(8, max(4, top_n_g * 0.3)))
                 neg_log_p_g = -np.log10(top_g["primary_padj"].clip(lower=1e-300))
                 if "n_sections_significant" in top_g.columns:
-                    labels_g = [f"{row['uid']} [{row['section']}] (×{int(row['n_sections_significant'])} sec)" 
-                                if row['n_sections_significant'] > 1 else f"{row['uid']} [{row['section']}]"
+                    labels_g = [f"{row['uid']} [{row['value_type']}] [{row['section']}] (×{int(row['n_sections_significant'])} sec)"
+                                if row['n_sections_significant'] > 1 else f"{row['uid']} [{row['value_type']}] [{row['section']}]"
                                 for _, row in top_g.iterrows()]
                 else:
-                    labels_g = top_g["uid"].astype(str) + " [" + top_g["section"].astype(str) + "]"
+                    labels_g = top_g["uid"].astype(str) + " [" + top_g["value_type"].astype(str) + "] [" + top_g["section"].astype(str) + "]"
                 ax_g.barh(range(top_n_g), neg_log_p_g.values[::-1])
                 ax_g.set_yticks(range(top_n_g))
                 ax_g.set_yticklabels(labels_g[::-1], fontsize=6)
@@ -208,7 +220,7 @@ def build_global_ranking(all_diff, outdir, stat_test="auto"):
                 ax_g.axvline(-np.log10(0.05), color='red', linestyle='--', linewidth=1, alpha=0.7, label='p=0.05')
                 ax_g.axvline(-np.log10(0.1), color='orange', linestyle='--', linewidth=1, alpha=0.7, label='p=0.1')
                 ax_g.legend(loc='lower right', fontsize=8)
-                save_fig(fig_g, os.path.join(global_dir, "global_ranking_plot.png"))
+                save_fig(fig_g, os.path.join(global_dir, "top50_significance_bars.png"))
                 plt.close(fig_g)
             else:
                 log.info(f"  No global-significant biomarkers (primary_padj < 0.05)")
@@ -218,7 +230,7 @@ def build_global_ranking(all_diff, outdir, stat_test="auto"):
 # ---------------------------------------------------------------------------
 
 def generate_diagram(sig_csv_path, outdir):
-    """Génère un diagramme de Venn pour les sections présentes dans global_ranking_significant.csv"""
+    """Génère un diagramme de Venn pour les sections présentes dans significant_bmks.csv"""
     safe_mkdir(outdir)
 
     # Charger le fichier
@@ -254,17 +266,23 @@ def generate_diagram(sig_csv_path, outdir):
     
     log.debug(f"sig_matrix value counts:\n{sig_matrix.stack().value_counts()}")
     
-    # Utiliser uid comme index si disponible
+    # Utiliser uid comme index si disponible (qualifié par value_type pour
+    # distinguer espf/espr quand le même uid apparaît dans les deux)
     if "uid" in df.columns:
-        sig_matrix.index = df["uid"]
+        if "value_type" in df.columns:
+            sig_matrix.index = df["uid"].astype(str) + " (" + df["value_type"].astype(str) + ")"
+        else:
+            sig_matrix.index = df["uid"]
         log.debug(f"Using uid as index")
     
     # 📊 4. plot avec palette à 3 couleurs
     n_rows = sig_matrix.shape[0]
+    n_cols = sig_matrix.shape[1]
     fig_height = max(6, n_rows * 0.3)
-    log.debug(f"Creating figure {12}x{fig_height} for {n_rows} rows")
+    fig_width = max(4, 2 + n_cols * 2)  # adaptatif : 1 colonne → 4", 5 colonnes → 12"
+    log.debug(f"Creating figure {fig_width}x{fig_height} for {n_rows} rows × {n_cols} cols")
     
-    fig, ax = plt.subplots(figsize=(12, fig_height))
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
     
     # Import nécessaire
     from matplotlib.colors import ListedColormap
@@ -311,7 +329,7 @@ def generate_diagram(sig_csv_path, outdir):
     ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.15, 1))
 
     # 💾 Save
-    output_path = os.path.join(outdir, "ranking_plot.png")
+    output_path = os.path.join(outdir, "significance_heatmap.png")
     log.debug(f"Saving to {output_path}")
     plt.savefig(
         output_path, 
@@ -353,12 +371,38 @@ def split_significant_bmks(sig_csv_path, outdir):
         if not all_sig_df.empty:
             os.makedirs(comp_dir, exist_ok=True)
             save_csv(all_sig_df, os.path.join(comp_dir, "all_significant.csv"), index=False)
-            # ranking_plot.png : heatmap de significativité des BMKs de cette comparaison
+            # top50_significance_bars.png : bar chart du top 50 BMKs pour cette comparaison
+            try:
+                comp_sorted = all_sig_df.sort_values(comp)
+                top_n = min(50, len(comp_sorted))
+                top = comp_sorted.head(top_n)
+                fig, ax = plt.subplots(figsize=(8, max(4, top_n * 0.3)))
+                neg_log_p = -np.log10(top[comp].clip(lower=1e-300))
+                if "value_type" in top.columns:
+                    labels = top["uid"].astype(str) + " [" + top["value_type"].astype(str) + "] [" + top["section"].astype(str) + "]"
+                else:
+                    labels = top["uid"].astype(str) + " [" + top["section"].astype(str) + "]"
+                ax.barh(range(top_n), neg_log_p.values[::-1])
+                ax.set_yticks(range(top_n))
+                ax.set_yticklabels(labels[::-1], fontsize=6)
+                ax.set_xlabel("-log10(adjusted p-value)")
+                ax.set_title(f"Top {top_n} BMKs — {comp}\n(by adjusted p-value)")
+                ax.axvline(-np.log10(0.05), color='red', linestyle='--', linewidth=1, alpha=0.7, label='p=0.05')
+                ax.axvline(-np.log10(0.1), color='orange', linestyle='--', linewidth=1, alpha=0.7, label='p=0.1')
+                ax.legend(loc='lower right', fontsize=8)
+                save_fig(fig, os.path.join(comp_dir, "top50_significance_bars.png"))
+                plt.close(fig)
+            except Exception as e:
+                log.warning(f"  top50_significance_bars ({comp}) failed: {e}")
+            # significance_heatmap.png : heatmap de significativité des BMKs de cette comparaison
+            # (une seule colonne : la comparaison courante, pour une lecture plus claire)
             orig_col = rename_map[comp]  # ex: "primary_padj_long.non.cleared_vs_negative"
             comp_sig_orig = df_orig[df_orig[orig_col] < alpha]
             if not comp_sig_orig.empty:
+                keep_cols = [c for c in ("uid", "value_type", "mtype", "section") if c in comp_sig_orig.columns]
+                keep_cols.append(orig_col)
                 comp_sig_csv = os.path.join(comp_dir, "_ranking_input.csv")
-                save_csv(comp_sig_orig, comp_sig_csv, index=False)
+                save_csv(comp_sig_orig[keep_cols], comp_sig_csv, index=False)
                 try:
                     generate_diagram(comp_sig_csv, comp_dir)
                     os.remove(comp_sig_csv)  # on ne garde que le plot

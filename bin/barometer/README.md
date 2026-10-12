@@ -119,7 +119,7 @@ jusqu'à ce que le fichier soit vide.
 ### 6. Classement global et second passage
 
 Pour chaque type de valeur et chaque mtype (aggregate / feature / sites),
-`global_ranking` agrège les tables différentielles des sections en un classement
+`cross_section_ranking` agrège les tables différentielles des sections en un classement
 unique, et identifie les BMK significatifs :
 
 - `significant_bmks_any_comparison/` — union de toutes les comparaisons.
