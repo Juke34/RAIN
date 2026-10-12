@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-from .utils import slurp_file, safe_mkdir, save_fig
+from .utils import slurp_file, safe_mkdir, save_fig, save_csv
 
 log = logging.getLogger(__name__)
 
@@ -84,7 +84,7 @@ def build_global_ranking(all_diff, outdir, stat_test="auto"):
         # Rank by primary_padj
         if "primary_padj" in all_diff.columns:
             ranked = all_diff.dropna(subset=["primary_padj"]).sort_values("primary_padj")
-            ranked.to_csv(os.path.join(outdir, "global_ranking_primary_padj.csv"), index=False)
+            save_csv(ranked, os.path.join(outdir, "global_ranking_primary_padj.csv"), index=False)
             
             # Log statistics
             best_padj = ranked["primary_padj"].min() if len(ranked) > 0 else float('nan')
@@ -148,7 +148,7 @@ def build_global_ranking(all_diff, outdir, stat_test="auto"):
 
             if len(sig_ranked) > 0:
                 sig_csv_path = os.path.join(any_dir, "significant_bmks.csv")
-                sig_ranked.to_csv(sig_csv_path, index=False)
+                save_csv(sig_ranked, sig_csv_path, index=False)
                 log.info(f"  Saved any-comparison subset: {len(sig_ranked)} biomarkers ({sig_desc})")
                 # -----------------------------------------------------------------------
                 # Create figure from significant_bmks.csv
@@ -180,7 +180,7 @@ def build_global_ranking(all_diff, outdir, stat_test="auto"):
             global_sig = ranked[ranked["primary_padj"] < 0.05].copy()
             if len(global_sig) > 0:
                 global_sig_csv = os.path.join(global_dir, "significant_bmks.csv")
-                global_sig.to_csv(global_sig_csv, index=False)
+                save_csv(global_sig, global_sig_csv, index=False)
                 log.info(f"  Saved global-significant subset: {len(global_sig)} biomarkers (primary_padj < 0.05)")
 
                 # Heatmap de significativité (complément du bar chart ci-dessous)
@@ -352,13 +352,13 @@ def split_significant_bmks(sig_csv_path, outdir):
         all_sig_df = df[df[comp] < alpha]
         if not all_sig_df.empty:
             os.makedirs(comp_dir, exist_ok=True)
-            all_sig_df.to_csv(os.path.join(comp_dir, "all_significant.csv"), index=False)
+            save_csv(all_sig_df, os.path.join(comp_dir, "all_significant.csv"), index=False)
             # ranking_plot.png : heatmap de significativité des BMKs de cette comparaison
             orig_col = rename_map[comp]  # ex: "primary_padj_long.non.cleared_vs_negative"
             comp_sig_orig = df_orig[df_orig[orig_col] < alpha]
             if not comp_sig_orig.empty:
                 comp_sig_csv = os.path.join(comp_dir, "_ranking_input.csv")
-                comp_sig_orig.to_csv(comp_sig_csv, index=False)
+                save_csv(comp_sig_orig, comp_sig_csv, index=False)
                 try:
                     generate_diagram(comp_sig_csv, comp_dir)
                     os.remove(comp_sig_csv)  # on ne garde que le plot
@@ -370,7 +370,7 @@ def split_significant_bmks(sig_csv_path, outdir):
         if not unique_df.empty:
             unique_dir = os.path.join(comp_dir, "unique")
             os.makedirs(unique_dir, exist_ok=True)
-            unique_df.to_csv(os.path.join(unique_dir, "unique.csv"), index=False)
+            save_csv(unique_df, os.path.join(unique_dir, "unique.csv"), index=False)
         # 3. BMKs communs avec chaque autre comparaison
         for other in padj_cols:
             if other == comp:
@@ -380,4 +380,4 @@ def split_significant_bmks(sig_csv_path, outdir):
             if not common_df.empty:
                 common_dir = os.path.join(comp_dir, "common")
                 os.makedirs(common_dir, exist_ok=True)
-                common_df.to_csv(os.path.join(common_dir, f"{other}.csv"), index=False)
+                save_csv(common_df, os.path.join(common_dir, f"{other}.csv"), index=False)

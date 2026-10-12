@@ -35,6 +35,7 @@ from .utils import (
     numeric_df,
     save_fig,
     group_for_col,
+    save_csv,
 )
 
 log = logging.getLogger(__name__)
@@ -74,13 +75,13 @@ def qc_analysis(df, sample_cols, outdir):
     total = len(ndf)
     missing_pct = (missing / total * 100).round(2)
     miss_df = pd.DataFrame({"missing_count": missing, "missing_pct": missing_pct})
-    miss_df.to_csv(os.path.join(outdir, "missing_values.csv"))
+    save_csv(miss_df, os.path.join(outdir, "missing_values.csv"))
     results["missing"] = miss_df.to_dict()
 
     # Distribution summary per sample
     log.info("Distribution summary per sample")
     desc = ndf[sample_cols].describe().T
-    desc.to_csv(os.path.join(outdir, "distribution_summary.csv"))
+    save_csv(desc, os.path.join(outdir, "distribution_summary.csv"))
 
     # Box plot of all samples
     log.info("Box plot of all samples")
@@ -192,7 +193,7 @@ def descriptive_stats(df, sample_cols, sample_info, outdir):
             "q75": float(np.percentile(vals, 75)),
         }
     gs_df = pd.DataFrame(group_stats).T
-    gs_df.to_csv(os.path.join(outdir, "group_statistics.csv"))
+    save_csv(gs_df, os.path.join(outdir, "group_statistics.csv"))
     results["group_stats"] = group_stats
 
     # Per-BMK mean by group
@@ -203,7 +204,7 @@ def descriptive_stats(df, sample_cols, sample_info, outdir):
     bmk_mean_df = pd.DataFrame(bmk_means, index=df.index)
     if "ID" in df.columns:
         bmk_mean_df.index = df["ID"]
-    bmk_mean_df.to_csv(os.path.join(outdir, "bmk_mean_by_group.csv"))
+    save_csv(bmk_mean_df, os.path.join(outdir, "bmk_mean_by_group.csv"))
 
     # Violin plot by group (optimized with pd.melt)
     sample_cols_list = [s["col"] for s in sample_info]
@@ -258,13 +259,13 @@ def multivariate_analysis(df, sample_cols, sample_info, outdir):
                           index=mat.index)
     pca_df["group"] = labels
     pca_df["sample"] = sample_labels
-    pca_df.to_csv(os.path.join(outdir, "pca_coordinates.csv"))
+    save_csv(pca_df, os.path.join(outdir, "pca_coordinates.csv"))
 
     # Variance explained
     var_df = pd.DataFrame({"PC": [f"PC{i+1}" for i in range(len(var_exp))],
                            "variance_explained": var_exp,
                            "cumulative": np.cumsum(var_exp)})
-    var_df.to_csv(os.path.join(outdir, "pca_variance.csv"), index=False)
+    save_csv(var_df, os.path.join(outdir, "pca_variance.csv"), index=False)
 
     # Scree plot
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -308,7 +309,7 @@ def multivariate_analysis(df, sample_cols, sample_info, outdir):
 
     # Sample correlation heatmap
     corr = mat.T.corr()
-    corr.to_csv(os.path.join(outdir, "sample_correlation.csv"))
+    save_csv(corr, os.path.join(outdir, "sample_correlation.csv"))
     fig, ax = plt.subplots(figsize=(max(6, len(sample_cols) * 0.8), max(5, len(sample_cols) * 0.6)))
     short_labels = [s.split("::")[0] + "::" + s.split("::")[1] for s in corr.index]
     sns.heatmap(corr, annot=True, fmt=".2f", cmap="RdBu_r", center=0, ax=ax,
@@ -842,7 +843,7 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
     # ============================================================================
     # OUTPUT RESULTS
     # ============================================================================
-    res_df.to_csv(os.path.join(outdir, "differential_results.csv"), index=True)
+    save_csv(res_df, os.path.join(outdir, "differential_results.csv"), index=True)
     results["table"] = os.path.join(outdir, "differential_results.csv")
     results["stat_test_method"] = stat_test
 
@@ -866,7 +867,7 @@ def differential_analysis(df, sample_cols, sample_info, outdir, stat_test="auto"
             sig_df = sig_df.sort_values("min_padj")
             
             sig_file = os.path.join(outdir, "significant_biomarkers.csv")
-            sig_df.to_csv(sig_file, index=False)
+            save_csv(sig_df, sig_file, index=False)
             results["significant_table"] = sig_file
             log.info(f"  Found {len(sig_df)} significant biomarkers (padj < 0.05 in any test)")
         else:
@@ -988,7 +989,7 @@ def correlation_network(df, sample_cols, outdir, max_bmks=50):
     if len(sub) >= 2:
         # Compute correlation matrix (memory intensive: N×N)
         corr = sub.T.corr()
-        corr.to_csv(os.path.join(outdir, "bmk_correlation.csv"))
+        save_csv(corr, os.path.join(outdir, "bmk_correlation.csv"))
 
         # ── Heatmap simple (sans clustering) ──────────────────────────────────
         fig_width  = min(45, max(16, len(sub) * 0.40))  
@@ -1160,7 +1161,7 @@ def feature_ranking(df, sample_cols, sample_info, outdir, max_bmks=500, bmk_filt
             importances = rf.feature_importances_
             imp_df = pd.DataFrame({"bmk": mat_filtered.columns, "importance": importances})
             imp_df = imp_df.sort_values("importance", ascending=False)
-            imp_df.to_csv(os.path.join(outdir, "rf_importance.csv"), index=False)
+            save_csv(imp_df, os.path.join(outdir, "rf_importance.csv"), index=False)
             results["rf_top10"] = imp_df.head(10).to_dict(orient="records")
 
             # Plot top 30
@@ -1180,7 +1181,7 @@ def feature_ranking(df, sample_cols, sample_info, outdir, max_bmks=500, bmk_filt
     var_scores = ndf[sample_cols].var(axis=1)
     var_df = pd.DataFrame({"bmk": bmk_ids, "variance": var_scores.values})
     var_df = var_df.sort_values("variance", ascending=False)
-    var_df.to_csv(os.path.join(outdir, "variance_ranking.csv"), index=False)
+    save_csv(var_df, os.path.join(outdir, "variance_ranking.csv"), index=False)
 
     # Kruskal-Wallis based ranking (from differential analysis if available)
     diff_file = os.path.join(os.path.dirname(outdir), "5_differential", "differential_results.csv")
@@ -1190,7 +1191,7 @@ def feature_ranking(df, sample_cols, sample_info, outdir, max_bmks=500, bmk_filt
 
         if "kruskal_padj" in diff_df.columns:
             rank_df = diff_df[[id_col, "kruskal_padj"]].dropna().sort_values("kruskal_padj")
-            rank_df.to_csv(os.path.join(outdir, "kruskal_ranking.csv"), index=False)
+            save_csv(rank_df, os.path.join(outdir, "kruskal_ranking.csv"), index=False)
             results["kruskal_top10"] = rank_df.head(10).to_dict(orient="records")
 
     return results
@@ -1343,7 +1344,7 @@ def classification_analysis(df, sample_cols, sample_info, outdir, max_bmks=500, 
          "n_bmks_used": v.get("n_bmks_used", n_bmks)}
         for k, v in clf_results.items()
     ])
-    clf_df.to_csv(os.path.join(outdir, "classification_results.csv"), index=False)
+    save_csv(clf_df, os.path.join(outdir, "classification_results.csv"), index=False)
 
     # Plot
     if clf_results:
@@ -1392,7 +1393,7 @@ def stability_analysis(df, sample_cols, sample_info, outdir):
 
     if rep_corrs:
         rc_df = pd.DataFrame(rep_corrs)
-        rc_df.to_csv(os.path.join(outdir, "replicate_correlation.csv"), index=False)
+        save_csv(rc_df, os.path.join(outdir, "replicate_correlation.csv"), index=False)
         results["replicate_correlations"] = rc_df.to_dict(orient="records")
 
     # Coefficient of variation per BMK across all samples
@@ -1400,7 +1401,7 @@ def stability_analysis(df, sample_cols, sample_info, outdir):
     cv_df = pd.DataFrame({"bmk": df["uid"].values if "uid" in df.columns else range(len(df)),
                            "cv": cv_vals.values})
     cv_df = cv_df.sort_values("cv")
-    cv_df.to_csv(os.path.join(outdir, "coefficient_variation.csv"), index=False)
+    save_csv(cv_df, os.path.join(outdir, "coefficient_variation.csv"), index=False)
 
     # CV histogram
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -1705,7 +1706,7 @@ def analyze_section(df, sample_cols, sample_info, outdir, section_name, stat_tes
             results["n_bmks_after_size_limit"] = len_df
 
         # Save filtered data
-        df.to_csv(os.path.join(outdir, "data.csv"), index=True)
+        save_csv(df, os.path.join(outdir, "data.csv"), index=True)
     
 
     # 1. Quality Control

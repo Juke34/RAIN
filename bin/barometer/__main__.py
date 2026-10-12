@@ -53,6 +53,7 @@ from .utils import (
     sample_info_for_vtype,
     prepare_df_for_task,
     filter_significant,
+    set_decimals,
 )
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -329,6 +330,8 @@ EXAMPLES:
                         help="Priority list for significant BMK selection (default: primary_padj only for beta-binomial; legacy cascade otherwise).")
     parser.add_argument("--max-bmks", type=int, default=500,
                         help="Maximum number of BMKs to use for RandomForest and classification (default: 500). Prevents memory crashes with large datasets.")
+    parser.add_argument("--decimals", type=int, default=6,
+                        help="Number of significant figures for float values in output CSVs (default: 6)")
     parser.add_argument("--merge", action="store_true",
                         help="Merge mode: combine the per-mtype global rankings into a truly-global ranking and run a second pass by redistribution per value type.")
     parser.add_argument("--results-dir", nargs="+", default=None,
@@ -345,6 +348,9 @@ EXAMPLES:
                              "The new failed_analyses.tsv then contains only the sections that "
                              "still failed, so --resume can be iterated until it is empty.")
     args = parser.parse_args()
+
+    # Set float precision for output CSVs before any analysis/merge/report work.
+    set_decimals(args.decimals)
 
     # Resume mode: load the set of (vtype, mtype, section_key) to re-run.
     resume_keys = None

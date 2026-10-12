@@ -22,6 +22,28 @@ log = logging.getLogger(__name__)
 # DataFrame helpers
 # ---------------------------------------------------------------------------
 
+# Number of significant figures used when writing float values to result
+# CSVs. Significant figures (not fixed decimals) so tiny p-values such as
+# 2.77e-10 survive instead of rounding to 0.0.
+DECIMALS = 6
+
+
+def set_decimals(n):
+    """Set the number of significant figures for result CSV output."""
+    global DECIMALS
+    if not isinstance(n, int) or n < 1:
+        raise ValueError("--decimals must be a positive integer")
+    DECIMALS = n
+
+
+def save_csv(df, path, **kwargs):
+    """Write a result DataFrame to CSV with floats limited to DECIMALS
+    significant figures (``%.Ng``). Only float columns are affected; string
+    and integer columns are written unchanged. Formatting happens at write
+    time, so no data copy or rounding is performed in memory."""
+    df.to_csv(path, float_format=lambda x: f"{x:.{DECIMALS}g}", **kwargs)
+
+
 # to avoid DtypeWarning
 def slurp_file(path, sample_cols=None, separator=None):
     if sample_cols:

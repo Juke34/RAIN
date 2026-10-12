@@ -56,6 +56,7 @@ params.min_group_samples_edited = 3        // Keep a row only if at least one gr
 // Barometer params
 params.barometer_stat_test = "beta-binomial"
 params.barometer_max_bmks = 500
+params.barometer_decimals = 6
 
 // Report params
 params.multiqc_config = "$baseDir/config/multiqc_config.yaml" // MultiQC config file
@@ -184,6 +185,7 @@ def helpMSG() {
     --edit_threshold            Minimal number of edited reads to count a site as edited [default: $params.edit_threshold]
     --fastqc                    run fastqc on main steps [default: $params.fastqc]
     --barometer_stat_test       Differential test: beta-binomial (default) or a legacy proportion test [default: $params.barometer_stat_test]
+    --barometer_decimals        Number of significant figures for float values in barometer result CSVs [default: $params.barometer_decimals]
     --site_analysis             Also run the per-site differential analysis (beta-binomial, ESPR) on all sites [default: $params.site_analysis]
     --site_cov_threshold        Minimal coverage of a site in a sample for the per-site analysis [default: $params.site_cov_threshold]
     --site_edit_threshold       Minimal number of edited reads at a site for the per-site analysis [default: $params.site_edit_threshold]

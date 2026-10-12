@@ -27,6 +27,7 @@ process barometer_analyze {
             -j ${task.cpus} \\
             --stat-test ${params.barometer_stat_test} \\
             --max-bmks ${params.barometer_max_bmks} \\
+            --decimals ${params.barometer_decimals} \\
             &> barometer_${vtype}_${mtype}.log 
         """
 }
@@ -77,6 +78,7 @@ process barometer_merge {
             -o barometer_merged \\
             --stat-test ${params.barometer_stat_test} \\
             --max-bmks ${params.barometer_max_bmks} \\
+            --decimals ${params.barometer_decimals} \\
             &> barometer_merged/barometer_merge.log
         """
 }
