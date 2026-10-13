@@ -1089,7 +1089,7 @@ def feature_ranking(df, sample_cols, sample_info, outdir, max_bmks=500, bmk_filt
     filter_log = []
     
     if os.path.exists(diff_file):
-        diff_df = pd.read_csv(diff_file)
+        diff_df = pd.read_csv(diff_file, dtype={"SeqID": str})
         
         # ⭐ Déterminer quelle colonne utiliser pour l'ID ⭐
         id_col = "uid" if "uid" in diff_df.columns else "index" if "index" in diff_df.columns else None
@@ -1186,7 +1186,7 @@ def feature_ranking(df, sample_cols, sample_info, outdir, max_bmks=500, bmk_filt
     # Kruskal-Wallis based ranking (from differential analysis if available)
     diff_file = os.path.join(os.path.dirname(outdir), "5_differential", "differential_results.csv")
     if os.path.exists(diff_file):
-        diff_df = pd.read_csv(diff_file)
+        diff_df = pd.read_csv(diff_file, dtype={"SeqID": str})
         id_col = "uid" if "uid" in diff_df.columns else "index" if "index" in diff_df.columns else None
 
         if "kruskal_padj" in diff_df.columns:
@@ -1242,7 +1242,7 @@ def classification_analysis(df, sample_cols, sample_info, outdir, max_bmks=500, 
     filter_log = []
     
     if os.path.exists(diff_file):
-        diff_df = pd.read_csv(diff_file)
+        diff_df = pd.read_csv(diff_file, dtype={"SeqID": str})
         
         # Cascade through filter columns in priority order
         for filter_col in bmk_filter_cols:
